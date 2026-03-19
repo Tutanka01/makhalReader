@@ -1,0 +1,13 @@
+{$CADDY_DOMAIN} {
+    tls {
+        # Let's Encrypt automatic TLS
+    }
+
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+}

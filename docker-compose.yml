@@ -1,0 +1,78 @@
+version: "3.9"
+
+networks:
+  makhal-net:
+    driver: bridge
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:
+
+services:
+  api:
+    build: ./backend/api
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - data:/data
+    networks:
+      - makhal-net
+    expose:
+      - "8000"
+
+  extractor:
+    build: ./backend/extractor
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - makhal-net
+    expose:
+      - "8001"
+
+  scorer:
+    build: ./backend/scorer
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - makhal-net
+    expose:
+      - "8002"
+    depends_on:
+      - api
+
+  poller:
+    build: ./backend/poller
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - makhal-net
+    depends_on:
+      - api
+      - extractor
+      - scorer
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks:
+      - makhal-net
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - makhal-net
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+      - frontend

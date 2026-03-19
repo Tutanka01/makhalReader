@@ -1,0 +1,26 @@
+# Overrides for local development — loaded automatically by docker compose
+# Do NOT commit secrets; keep this file local or add it to .gitignore
+
+services:
+  caddy:
+    volumes:
+      - ./caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      # 443 not needed locally
+
+  # Expose the API directly so you can hit http://localhost:8000/docs
+  api:
+    ports:
+      - "8000:8000"
+
+  # Allow scorer/poller to reach Ollama running on the host (macOS)
+  scorer:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  poller:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
