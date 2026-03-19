@@ -14,6 +14,7 @@ interface ArticlesState {
   fetchArticle: (id: number) => Promise<void>
   markRead: (id: number) => Promise<void>
   markUnread: (id: number) => Promise<void>
+  markAllRead: () => Promise<void>
   toggleBookmark: (id: number) => Promise<void>
   setFilter: (partial: Partial<ArticleFilter>) => void
   prependArticle: (article: ArticleListItem) => void
@@ -34,6 +35,9 @@ function buildQueryParams(filter: ArticleFilter, limit: number, offset: number):
   if (filter.bookmarked) {
     params.set('bookmarked', 'true')
   }
+  if (filter.minScore > 0) {
+    params.set('min_score', String(filter.minScore))
+  }
   return params.toString()
 }
 
@@ -46,6 +50,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     sort: 'score',
     status: 'unread',
     bookmarked: false,
+    minScore: 0,
   },
   loading: false,
   hasMore: true,
@@ -102,6 +107,24 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       }))
     } catch (err) {
       console.error('Failed to mark article as read:', err)
+    }
+  },
+
+  markAllRead: async () => {
+    const state = get()
+    const params = new URLSearchParams()
+    if (state.filter.category && state.filter.category !== 'All') {
+      params.set('category', state.filter.category)
+    }
+    if (state.filter.minScore > 0) {
+      params.set('min_score', String(state.filter.minScore))
+    }
+    try {
+      await fetch(`/api/articles/read-all?${params}`, { method: 'POST' })
+      // Refresh the list
+      get().fetchArticles(true)
+    } catch (err) {
+      console.error('Failed to mark all as read:', err)
     }
   },
 

@@ -147,6 +147,7 @@ async def list_articles(
     category: Optional[str] = Query(None),
     bookmarked: Optional[bool] = Query(None),
     url: Optional[str] = Query(None),
+    min_score: Optional[float] = Query(None, ge=0, le=10),
     db: Session = Depends(get_db),
 ):
     query = db.query(Article, Feed.name.label("feed_name")).join(
@@ -172,6 +173,9 @@ async def list_articles(
 
     if bookmarked is not None:
         query = query.filter(Article.bookmarked == bookmarked)
+
+    if min_score is not None:
+        query = query.filter(Article.score >= min_score)
 
     if sort == "score":
         query = query.order_by(Article.score.desc().nullslast(), Article.created_at.desc())
@@ -229,6 +233,22 @@ async def mark_unread(article_id: int, db: Session = Depends(get_db)):
     article.read_at = None
     db.commit()
     return {"status": "ok"}
+
+
+@app.post("/api/articles/read-all")
+async def mark_all_read(
+    category: Optional[str] = Query(None),
+    min_score: Optional[float] = Query(None, ge=0, le=10),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Article).filter(Article.read_at.is_(None))
+    if category and category not in ("All", "all"):
+        query = query.join(Feed, Article.feed_id == Feed.id).filter(Feed.category == category)
+    if min_score is not None:
+        query = query.filter(Article.score >= min_score)
+    count = query.update({"read_at": datetime.utcnow()}, synchronize_session=False)
+    db.commit()
+    return {"marked_read": count}
 
 
 @app.post("/api/articles/{article_id}/bookmark")

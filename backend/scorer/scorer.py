@@ -102,7 +102,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://makhalreader.app",
+                "HTTP-Referer": "https://github.com/makhalreader",
                 "X-Title": "MakhalReader",
             },
             json={
@@ -116,12 +116,16 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
             },
             timeout=60,
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            # Log full body so the user can see the actual OpenRouter error
+            print(f"OpenRouter error {resp.status_code}: {resp.text[:500]}")
+            return None
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
             return validate_score_result(parsed)
+        print(f"OpenRouter: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"OpenRouter scoring failed: {e}")
 
@@ -129,6 +133,9 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
 
 
 async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+    if not OLLAMA_URL:
+        return None
+
     try:
         resp = await client.post(
             f"{OLLAMA_URL}/api/chat",
@@ -146,12 +153,15 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
             },
             timeout=120,
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            print(f"Ollama error {resp.status_code}: {resp.text[:300]}")
+            return None
         data = resp.json()
         content = data["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
             return validate_score_result(parsed)
+        print(f"Ollama: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"Ollama scoring failed: {e}")
 

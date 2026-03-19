@@ -57,4 +57,5 @@ export interface ArticleFilter {
   sort: SortOption
   status: StatusOption
   bookmarked: boolean
+  minScore: number  // 0 = all, 6 = 6+, 8 = 8+
 }
