@@ -14,6 +14,12 @@ import {
 import { useArticlesStore } from '../store/articles'
 import { ScoreBar } from './ScoreBar'
 
+// Heuristic: does this string look like HTML rather than plain text?
+// Checks for at least one block-level or common inline HTML tag.
+function looksLikeHtml(text: string): boolean {
+  return /<(p|div|h[1-6]|ul|ol|li|blockquote|pre|code|a|strong|em|br|img|table|thead|tbody|tr|td|th)\b/i.test(text)
+}
+
 const FONT_SIZE_KEY = 'makhal_reader_font_size'
 const FONT_SIZE_MIN = 14
 const FONT_SIZE_MAX = 22
@@ -35,9 +41,11 @@ interface ReaderViewProps {
   onBack?: () => void
   sidebarOpen: boolean
   onToggleSidebar: () => void
+  onNext?: () => void
+  hasNext?: boolean
 }
 
-export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar }: ReaderViewProps) {
+export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext }: ReaderViewProps) {
   const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark } = useArticlesStore()
   const [fontSize, setFontSize] = useState(getSavedFontSize)
   const [scrollProgress, setScrollProgress] = useState(0)
@@ -297,14 +305,24 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar }: 
               dangerouslySetInnerHTML={{ __html: article.content_html }}
             />
           ) : article.content_text ? (
-            <div
-              className="font-serif text-text-primary space-y-4"
-              style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-            >
-              {article.content_text.split('\n\n').filter(Boolean).map((para, i) => (
-                <p key={i}>{para}</p>
-              ))}
-            </div>
+            // content_text may contain raw HTML (e.g. old articles stored before the
+            // extractor fix, or RSS summaries). Detect and render accordingly.
+            looksLikeHtml(article.content_text) ? (
+              <div
+                className="reader-content"
+                style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
+                dangerouslySetInnerHTML={{ __html: article.content_text }}
+              />
+            ) : (
+              <div
+                className="font-serif text-text-primary space-y-4"
+                style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
+              >
+                {article.content_text.split('\n\n').filter(Boolean).map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+              </div>
+            )
           ) : (
             <div className="text-text-muted text-sm text-center py-8">
               <p>Contenu non disponible.</p>
@@ -331,6 +349,24 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar }: 
               <ExternalLink className="w-4 h-4" />
             </a>
           </div>
+
+          {/* Auto-advance — next article */}
+          {hasNext && onNext && scrollProgress >= 80 && (
+            <button
+              onClick={onNext}
+              className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent-blue/40 hover:bg-bg-elevated transition-all duration-200 group"
+            >
+              <span className="text-xs text-text-muted group-hover:text-text-secondary transition-colors">
+                Article suivant
+              </span>
+              <svg
+                className="w-4 h-4 text-text-muted group-hover:text-accent-blue transition-colors translate-x-0 group-hover:translate-x-0.5 duration-200"
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
         </article>
       </div>
     </div>

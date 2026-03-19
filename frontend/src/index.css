@@ -53,108 +53,187 @@ body,
   display: none;
 }
 
-/* Reader content styling */
+/* ── Reader content styling ────────────────────────────────────────────── */
 .reader-content {
   font-family: 'Lora', Georgia, serif;
-  font-size: 17px;
-  line-height: 1.75;
   color: var(--color-text-primary);
 }
 
+/* Paragraphs */
 .reader-content p {
-  margin-bottom: 1.25em;
+  margin-top: 0;
+  margin-bottom: 1.4em;
 }
+.reader-content p:last-child { margin-bottom: 0; }
 
+/* Headings — use Inter for contrast with Lora body */
 .reader-content h1,
 .reader-content h2,
 .reader-content h3,
-.reader-content h4 {
+.reader-content h4,
+.reader-content h5,
+.reader-content h6 {
   font-family: 'Inter', sans-serif;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary);
-  margin-top: 2em;
-  margin-bottom: 0.75em;
   line-height: 1.3;
+  margin-top: 2.2em;
+  margin-bottom: 0.6em;
 }
-
-.reader-content h1 { font-size: 1.5em; }
-.reader-content h2 { font-size: 1.25em; }
+.reader-content h1 { font-size: 1.55em; }
+.reader-content h2 { font-size: 1.3em;  border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 0.3em; }
 .reader-content h3 { font-size: 1.1em; }
+.reader-content h4 { font-size: 1em; color: var(--color-text-secondary); }
 
+/* First heading after article start — no top margin */
+.reader-content > h1:first-child,
+.reader-content > h2:first-child,
+.reader-content > h3:first-child { margin-top: 0; }
+
+/* Links */
 .reader-content a {
   color: var(--color-accent-blue);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
+.reader-content a:hover { opacity: 0.75; }
 
-.reader-content a:hover {
-  opacity: 0.8;
-}
-
+/* Images */
 .reader-content img {
   max-width: 100%;
   height: auto;
   border-radius: 0.5rem;
-  margin: 1.5em 0;
+  margin: 1.75em auto;
+  display: block;
 }
 
+/* Figures */
+.reader-content figure {
+  margin: 1.75em 0;
+}
+.reader-content figcaption {
+  text-align: center;
+  font-size: 0.82em;
+  color: var(--color-text-muted);
+  margin-top: 0.5em;
+  font-family: 'Inter', sans-serif;
+  font-style: italic;
+}
+
+/* Blockquote */
 .reader-content blockquote {
-  border-left: 3px solid var(--color-border-default);
-  padding-left: 1em;
+  border-left: 3px solid var(--color-accent-blue);
+  padding: 0.5em 0 0.5em 1.25em;
   color: var(--color-text-secondary);
   font-style: italic;
-  margin: 1.5em 0;
+  margin: 1.75em 0;
+  background: var(--color-bg-surface);
+  border-radius: 0 0.4rem 0.4rem 0;
 }
+.reader-content blockquote p { margin-bottom: 0; }
 
+/* Lists */
 .reader-content ul,
 .reader-content ol {
-  padding-left: 1.5em;
-  margin-bottom: 1.25em;
+  padding-left: 1.6em;
+  margin-bottom: 1.4em;
 }
-
 .reader-content li {
+  margin-bottom: 0.45em;
+  padding-left: 0.2em;
+}
+.reader-content li > ul,
+.reader-content li > ol {
+  margin-top: 0.4em;
   margin-bottom: 0.4em;
 }
 
-.reader-content pre {
-  background: var(--color-bg-elevated);
-  padding: 1em;
-  border-radius: 0.5rem;
-  overflow-x: auto;
-  font-size: 0.85em;
-  line-height: 1.6;
-  margin: 1.5em 0;
-}
-
+/* Code — inline */
 .reader-content code {
   background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
   padding: 0.15em 0.4em;
-  border-radius: 0.25rem;
-  font-size: 0.85em;
-  font-family: 'Menlo', 'Monaco', monospace;
+  border-radius: 0.3rem;
+  font-size: 0.82em;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+  color: var(--color-accent-blue);
+  word-break: break-word;
 }
 
+/* Code — block */
+.reader-content pre {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  padding: 1.1em 1.25em;
+  border-radius: 0.6rem;
+  overflow-x: auto;
+  line-height: 1.6;
+  margin: 1.75em 0;
+  font-size: 0.84em;
+}
 .reader-content pre code {
   background: none;
+  border: none;
   padding: 0;
+  color: var(--color-text-primary);
+  font-size: 1em;
+  word-break: normal;
 }
 
+/* Tables */
+.reader-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.75em 0;
+  font-size: 0.88em;
+  font-family: 'Inter', sans-serif;
+  overflow-x: auto;
+  display: block;
+}
+.reader-content th {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.6em 0.8em;
+  border-bottom: 2px solid var(--color-border-default);
+}
+.reader-content td {
+  padding: 0.5em 0.8em;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+.reader-content tr:last-child td { border-bottom: none; }
+
+/* Horizontal rule */
 .reader-content hr {
   border: none;
   border-top: 1px solid var(--color-border-subtle);
-  margin: 2em 0;
+  margin: 2.5em 0;
 }
 
-.reader-content figure {
+/* Details / Summary */
+.reader-content details {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.75em 1em;
   margin: 1.5em 0;
 }
-
-.reader-content figcaption {
-  text-align: center;
-  font-size: 0.85em;
-  color: var(--color-text-muted);
-  margin-top: 0.5em;
+.reader-content summary {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-text-secondary);
 }
+
+/* Strong / em */
+.reader-content strong { font-weight: 700; color: var(--color-text-primary); }
+.reader-content em { font-style: italic; }
+
+/* Readability sometimes wraps in a div — neutralize it */
+.reader-content > div { display: contents; }
 
 /* Line clamp utilities */
 .line-clamp-1 {

@@ -9,6 +9,7 @@ export default function App() {
   const [feeds, setFeeds] = useState<Feed[]>([])
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [showHelp, setShowHelp] = useState(false)
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE()
@@ -28,6 +29,14 @@ export default function App() {
   const handleBack = useCallback(() => {
     setShowReader(false)
   }, [])
+
+  const currentIndex = articles.findIndex(a => a.id === selectedId)
+  const hasNext = currentIndex >= 0 && currentIndex < articles.length - 1
+  const handleNext = useCallback(() => {
+    if (currentIndex >= 0 && currentIndex < articles.length - 1) {
+      handleSelectArticle(articles[currentIndex + 1].id)
+    }
+  }, [currentIndex, articles, handleSelectArticle])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -72,6 +81,10 @@ export default function App() {
         }
         case 'Escape':
           setShowReader(false)
+          setShowHelp(false)
+          break
+        case '?':
+          setShowHelp(v => !v)
           break
       }
     }
@@ -82,6 +95,40 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-bg-base text-text-primary overflow-hidden">
+      {/* Keyboard shortcuts help overlay */}
+      {showHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="bg-bg-surface border border-border-default rounded-2xl p-6 w-80 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-text-primary mb-4 text-center tracking-wide">Raccourcis clavier</h2>
+            <div className="space-y-2">
+              {[
+                ['j / k', 'Article suivant / précédent'],
+                ['r', 'Marquer lu / non-lu'],
+                ['b', 'Bookmark'],
+                ['o', 'Ouvrir l\'original'],
+                ['/', 'Rechercher'],
+                ['[', 'Masquer/afficher sidebar'],
+                ['?', 'Aide'],
+                ['Esc', 'Fermer'],
+              ].map(([key, desc]) => (
+                <div key={key} className="flex items-center justify-between">
+                  <span className="text-xs text-text-muted">{desc}</span>
+                  <kbd className="px-2 py-0.5 bg-bg-elevated rounded text-xs font-mono text-text-secondary border border-border-subtle">
+                    {key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+            <p className="text-center text-xs text-text-muted mt-5">Swipe ← lire · Swipe → bookmark</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Desktop layout ── */}
       <div className="hidden lg:flex w-full h-full">
@@ -110,6 +157,8 @@ export default function App() {
               articleId={selectedId}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen(v => !v)}
+              onNext={handleNext}
+              hasNext={hasNext}
             />
           ) : (
             <EmptyReaderState
@@ -137,6 +186,8 @@ export default function App() {
               onBack={handleBack}
               sidebarOpen={false}
               onToggleSidebar={() => {}}
+              onNext={handleNext}
+              hasNext={hasNext}
             />
           </div>
         )}

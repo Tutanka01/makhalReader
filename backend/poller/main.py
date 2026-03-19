@@ -1,6 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import feedparser
 import httpx
@@ -25,6 +26,35 @@ MAX_ARTICLE_AGE_DAYS = int(os.getenv("MAX_ARTICLE_AGE_DAYS", "7"))
 SCORE_DELAY_SECONDS = float(os.getenv("SCORE_DELAY_SECONDS", "2.0"))
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
+
+# ---------------------------------------------------------------------------
+# URL normalisation — canonical form used for deduplication
+# ---------------------------------------------------------------------------
+
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_cid",
+    "fbclid", "gclid", "msclkid", "yclid", "twclid", "igshid",
+    "_ga", "_gl", "mc_cid", "mc_eid", "ref", "source",
+})
+
+
+def normalize_url(url: str) -> str:
+    """Return a canonical URL: lowercase scheme+host, strip www., remove
+    tracking query params, sort remaining params, strip trailing slash."""
+    try:
+        p = urlparse(url.strip())
+        scheme = p.scheme.lower()
+        netloc = p.netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = p.path.rstrip("/") or "/"
+        params = parse_qs(p.query, keep_blank_values=False)
+        clean = {k: v for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
+        query = urlencode(sorted(clean.items()), doseq=True)
+        return urlunparse((scheme, netloc, path, "", query, ""))
+    except Exception:
+        return url
 
 # Global semaphore: only one LLM call at a time across all concurrent feed processing.
 _score_semaphore = asyncio.Semaphore(1)
@@ -53,10 +83,21 @@ async def check_article_exists(client: httpx.AsyncClient, url: str) -> bool:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-async def extract_article(client: httpx.AsyncClient, url: str, rss_title: str, rss_summary: str) -> dict:
+async def extract_article(
+    client: httpx.AsyncClient,
+    url: str,
+    rss_title: str,
+    rss_summary: str,
+    rss_content: str = "",
+) -> dict:
     resp = await client.post(
         f"{EXTRACTOR_BASE}/extract",
-        json={"url": url, "rss_title": rss_title, "rss_summary": rss_summary},
+        json={
+            "url": url,
+            "rss_title": rss_title,
+            "rss_summary": rss_summary,
+            "rss_content": rss_content,
+        },
         timeout=60,
     )
     resp.raise_for_status()
@@ -160,12 +201,19 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
             log.info(f"Reached MAX_NEW_ARTICLES_PER_FEED={MAX_NEW_PER_FEED}, stopping feed")
             break
 
-        article_url = getattr(entry, "link", None)
-        if not article_url:
+        raw_url = getattr(entry, "link", None)
+        if not raw_url:
             continue
+        article_url = normalize_url(raw_url)
 
         try:
-            if await check_article_exists(client, article_url):
+            # Check both the canonical (normalized) URL and the original URL so that
+            # articles ingested before URL normalization was introduced are not
+            # re-extracted and re-scored on every poll cycle.
+            exists = await check_article_exists(client, article_url)
+            if not exists and raw_url != article_url:
+                exists = await check_article_exists(client, raw_url)
+            if exists:
                 continue
         except Exception as e:
             log.warning("Failed to check article existence", url=article_url, error=str(e))
@@ -173,13 +221,17 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
         rss_title = getattr(entry, "title", "") or ""
         rss_summary = getattr(entry, "summary", "") or ""
+        # content:encoded — full article HTML, present in many newsletter/Ghost feeds
+        rss_content = ""
+        if hasattr(entry, "content") and entry.content:
+            rss_content = entry.content[0].get("value", "") or ""
         rss_author = getattr(entry, "author", "") or None
         published_dt = parse_published_dt(entry)
         published_at = published_dt.isoformat() if published_dt else None
 
         log.info("Extracting article", url=article_url)
         try:
-            extracted = await extract_article(client, article_url, rss_title, rss_summary)
+            extracted = await extract_article(client, article_url, rss_title, rss_summary, rss_content)
         except Exception as e:
             log.error("Extraction failed", url=article_url, error=str(e))
             extracted = {

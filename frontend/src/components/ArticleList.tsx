@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, Clock, CheckCheck, Star } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, Clock, CheckCheck, Star, Search, X } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { useArticlesStore } from '../store/articles'
@@ -16,6 +16,51 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
   const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
+  const [confirmingReadAll, setConfirmingReadAll] = useState(false)
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const handleMarkAllRead = useCallback(() => {
+    if (!confirmingReadAll) {
+      setConfirmingReadAll(true)
+      confirmTimerRef.current = setTimeout(() => setConfirmingReadAll(false), 3000)
+    } else {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+      setConfirmingReadAll(false)
+      markAllRead()
+    }
+  }, [confirmingReadAll, markAllRead])
+
+  useEffect(() => () => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+  }, [])
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true)
+    setTimeout(() => searchInputRef.current?.focus(), 50)
+  }, [])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setSearchQuery('')
+  }, [])
+
+  // `/` key opens search (when not in an input)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === '/') {
+        e.preventDefault()
+        openSearch()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [openSearch])
+
   const touchStartY = useRef(0)
   const isPulling = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -58,6 +103,15 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
 
   const unreadCount = filter.status === 'unread' ? articles.length : null
 
+  const q = searchQuery.toLowerCase().trim()
+  const displayedArticles = q
+    ? articles.filter(a =>
+        a.title.toLowerCase().includes(q) ||
+        a.feed_name.toLowerCase().includes(q) ||
+        a.tags.some(t => t.toLowerCase().includes(q))
+      )
+    : articles
+
   return (
     <div
       ref={containerRef}
@@ -77,6 +131,14 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
           MakhalReader
         </span>
         <div className="flex items-center gap-0.5">
+          {/* Search */}
+          <button
+            onClick={openSearch}
+            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
+            title="Search  /"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
           {/* Refresh */}
           <button
             onClick={() => fetchArticles(true)}
@@ -85,18 +147,47 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
-          {/* Mark all read */}
+          {/* Mark all read — two-step confirmation */}
           {filter.status !== 'read' && (
             <button
-              onClick={markAllRead}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Mark all as read"
+              onClick={handleMarkAllRead}
+              className={`flex items-center gap-1 rounded-md transition-all duration-150 text-xs font-medium ${
+                confirmingReadAll
+                  ? 'px-2 py-1 bg-red-500/15 text-red-400 hover:bg-red-500/25 ring-1 ring-red-500/40'
+                  : 'p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary'
+              }`}
+              title={confirmingReadAll ? 'Tap again to confirm' : 'Mark all as read'}
             >
-              <CheckCheck className="w-3.5 h-3.5" />
+              <CheckCheck className="w-3.5 h-3.5 flex-shrink-0" />
+              {confirmingReadAll && <span>Confirm?</span>}
             </button>
           )}
         </div>
       </div>
+
+      {/* Search bar */}
+      {searchOpen && (
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
+          <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') closeSearch() }}
+            placeholder="Search title, feed, tag…"
+            className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
+          />
+          {searchQuery && (
+            <span className="text-xs text-text-muted tabular-nums flex-shrink-0">
+              {displayedArticles.length}
+            </span>
+          )}
+          <button onClick={closeSearch} className="p-0.5 rounded text-text-muted hover:text-text-primary">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Category tabs */}
       <CategoryTabs feeds={feeds} />
@@ -170,12 +261,16 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
       </div>
 
       {/* Empty state */}
-      {!loading && articles.length === 0 && (
+      {!loading && displayedArticles.length === 0 && (
         <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
           <div className="text-4xl mb-3 opacity-20">◎</div>
-          <p className="text-sm font-medium text-text-secondary mb-1">Aucun article</p>
+          <p className="text-sm font-medium text-text-secondary mb-1">
+            {q ? 'Aucun résultat' : 'Aucun article'}
+          </p>
           <p className="text-xs text-text-muted leading-relaxed max-w-[200px]">
-            {filter.minScore > 0
+            {q
+              ? `Aucun article ne correspond à "${searchQuery}"`
+              : filter.minScore > 0
               ? `Aucun article avec score ≥ ${filter.minScore}`
               : 'Les articles apparaîtront après le prochain poll.'}
           </p>
@@ -183,11 +278,11 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
       )}
 
       {/* Article list */}
-      {articles.length > 0 && (
+      {displayedArticles.length > 0 && (
         <Virtuoso
           className="flex-1"
-          data={articles}
-          endReached={loadMore}
+          data={displayedArticles}
+          endReached={q ? undefined : loadMore}
           overscan={200}
           itemContent={(_, article) => (
             <ArticleCard
@@ -197,7 +292,7 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
               onClick={() => onSelect(article.id)}
             />
           )}
-          components={{ Footer }}
+          components={{ Footer: q ? () => null : Footer }}
         />
       )}
 

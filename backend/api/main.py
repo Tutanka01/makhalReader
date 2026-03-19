@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import feedparser
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -41,27 +42,49 @@ app.add_middleware(
 _sse_queues: Dict[str, asyncio.Queue] = {}
 
 DEFAULT_FEEDS = [
-    # Infra/Cloud
-    {"url": "https://kubernetes.io/feed.xml", "name": "Kubernetes Blog", "category": "Infra"},
-    {"url": "https://thenewstack.io/feed/", "name": "The New Stack", "category": "Infra"},
-    {"url": "https://netflixtechblog.com/feed", "name": "Netflix Tech Blog", "category": "Infra"},
-    {"url": "https://blog.cloudflare.com/rss/", "name": "Cloudflare Blog", "category": "Infra"},
-    {"url": "https://engineering.fb.com/feed/", "name": "Meta Engineering", "category": "Infra"},
-    {"url": "https://www.brendangregg.com/blog/rss.xml", "name": "Brendan Gregg", "category": "Infra"},
-    {"url": "https://www.cncf.io/feed/", "name": "CNCF", "category": "Infra"},
-    # AI/LLM
-    {"url": "https://huyenchip.com/feed", "name": "Huyen Chip", "category": "AI"},
-    {"url": "https://www.anthropic.com/news/rss.xml", "name": "Anthropic", "category": "AI"},
-    {"url": "https://huggingface.co/blog/feed.xml", "name": "HuggingFace Blog", "category": "AI"},
-    {"url": "https://lilianweng.github.io/feed.xml", "name": "Lilian Weng", "category": "AI"},
-    {"url": "https://bair.berkeley.edu/blog/feed.xml", "name": "BAIR Blog", "category": "AI"},
-    # Security
-    {"url": "https://portswigger.net/research/rss", "name": "PortSwigger Research", "category": "Sec"},
-    {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default", "name": "Google Project Zero", "category": "Sec"},
-    # High-signal
-    {"url": "https://simonwillison.net/atom/everything/", "name": "Simon Willison", "category": "High-signal"},
-    {"url": "https://jvns.ca/atom.xml", "name": "Julia Evans", "category": "High-signal"},
-    {"url": "https://news.ycombinator.com/rss", "name": "Hacker News", "category": "High-signal"},
+    # ── Infra / Cloud / Platform ──────────────────────────────────────────
+    {"url": "https://kubernetes.io/feed.xml",                            "name": "Kubernetes Blog",       "category": "Infra"},
+    {"url": "https://www.cncf.io/feed/",                                 "name": "CNCF",                  "category": "Infra"},
+    {"url": "https://thenewstack.io/feed/",                              "name": "The New Stack",          "category": "Infra"},
+    {"url": "https://blog.cloudflare.com/rss/",                          "name": "Cloudflare Blog",        "category": "Infra"},
+    {"url": "https://netflixtechblog.com/feed",                          "name": "Netflix Tech Blog",      "category": "Infra"},
+    {"url": "https://engineering.fb.com/feed/",                          "name": "Meta Engineering",       "category": "Infra"},
+    {"url": "https://fly.io/blog/feed.xml",                              "name": "Fly.io Blog",            "category": "Infra"},
+    {"url": "https://www.brendangregg.com/blog/rss.xml",                 "name": "Brendan Gregg",          "category": "Infra"},
+    {"url": "https://charity.wtf/feed/",                                 "name": "Charity Majors",         "category": "Infra"},
+    {"url": "https://martinfowler.com/feed.atom",                        "name": "Martin Fowler",          "category": "Infra"},
+    # ── Linux / Systems / Containers internals ────────────────────────────
+    {"url": "https://iximiuz.com/en/posts.rss",                          "name": "iximiuz",                "category": "Infra"},
+    {"url": "https://lwn.net/headlines/rss",                             "name": "LWN.net",                "category": "Infra"},
+    {"url": "https://fasterthanli.me/index.xml",                         "name": "fasterthanli.me",        "category": "Infra"},
+    {"url": "https://danluu.com/atom.xml",                               "name": "Dan Luu",                "category": "Infra"},
+    # ── Networking / eBPF ─────────────────────────────────────────────────
+    {"url": "https://tailscale.com/blog/index.xml",                      "name": "Tailscale Blog",         "category": "Infra"},
+    {"url": "https://isovalent.com/blog/index.xml",                      "name": "Isovalent (Cilium/eBPF)","category": "Infra"},
+    # ── Self-hosting / Homelab ────────────────────────────────────────────
+    {"url": "https://blog.alexellis.io/rss/",                            "name": "Alex Ellis",             "category": "Infra"},
+    # ── AI / LLM / Agents ────────────────────────────────────────────────
+    {"url": "https://huyenchip.com/feed",                                "name": "Huyen Chip",             "category": "AI"},
+    {"url": "https://lilianweng.github.io/feed.xml",                     "name": "Lilian Weng",            "category": "AI"},
+    {"url": "https://www.anthropic.com/news/rss.xml",                    "name": "Anthropic",              "category": "AI"},
+    {"url": "https://huggingface.co/blog/feed.xml",                      "name": "HuggingFace Blog",       "category": "AI"},
+    {"url": "https://bair.berkeley.edu/blog/feed.xml",                   "name": "BAIR Blog",              "category": "AI"},
+    {"url": "https://eugeneyan.com/rss.xml",                             "name": "Eugene Yan",             "category": "AI"},
+    {"url": "https://magazine.sebastianraschka.com/feed",                "name": "Sebastian Raschka",      "category": "AI"},
+    {"url": "https://www.interconnects.ai/feed",                         "name": "interconnects.ai",       "category": "AI"},
+    # ── Cybersécurité ─────────────────────────────────────────────────────
+    {"url": "https://portswigger.net/research/rss",                      "name": "PortSwigger Research",   "category": "Sec"},
+    {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default","name": "Google Project Zero",    "category": "Sec"},
+    {"url": "https://blog.trailofbits.com/feed/",                        "name": "Trail of Bits",          "category": "Sec"},
+    {"url": "https://lcamtuf.substack.com/feed",                         "name": "lcamtuf",                "category": "Sec"},
+    {"url": "https://secret.club/feed.xml",                              "name": "secret.club",            "category": "Sec"},
+    # ── High-signal généraliste ───────────────────────────────────────────
+    {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",         "category": "High-signal"},
+    {"url": "https://jvns.ca/atom.xml",                                  "name": "Julia Evans",            "category": "High-signal"},
+    {"url": "https://rachelbythebay.com/w/atom.xml",                     "name": "rachelbythebay",         "category": "High-signal"},
+    {"url": "https://news.ycombinator.com/rss",                          "name": "Hacker News",            "category": "High-signal"},
+    {"url": "https://lobste.rs/rss",                                     "name": "Lobsters",               "category": "High-signal"},
+    {"url": "https://newsletter.pragmaticengineer.com/feed",             "name": "Pragmatic Engineer",     "category": "High-signal"},
 ]
 
 
@@ -123,12 +146,18 @@ async def startup():
     asyncio.create_task(cleanup_old_articles())
     db = SessionLocal()
     try:
-        count = db.query(Feed).count()
-        if count == 0:
-            for feed_data in DEFAULT_FEEDS:
-                feed = Feed(**feed_data)
-                db.add(feed)
+        # Upsert DEFAULT_FEEDS: add any feed whose URL is not already in the DB.
+        # This runs on every startup so new feeds added to DEFAULT_FEEDS are
+        # picked up automatically when the container restarts.
+        existing_urls = {url for (url,) in db.query(Feed.url).all()}
+        added = 0
+        for feed_data in DEFAULT_FEEDS:
+            if feed_data["url"] not in existing_urls:
+                db.add(Feed(**feed_data))
+                added += 1
+        if added:
             db.commit()
+            print(f"[startup] Added {added} new default feed(s)")
     finally:
         db.close()
 
@@ -386,6 +415,112 @@ async def internal_create_article(
     db.commit()
     db.refresh(article)
     return {"id": article.id, "created": True}
+
+
+@app.delete("/api/admin/articles/broken")
+async def delete_broken_articles(db: Session = Depends(get_db)):
+    """
+    Delete articles that have garbled content or no meaningful title.
+    Call once after upgrading the extractor to clean up old bad data.
+    """
+    import re as _re
+
+    def _is_garbled(text: Optional[str]) -> bool:
+        if not text or len(text) < 20:
+            return False
+        sample = text[:1000]
+        bad = sum(1 for c in sample if c == "\ufffd" or (ord(c) < 32 and c not in "\t\n\r"))
+        return (bad / len(sample)) > 0.04
+
+    def _is_no_title(title: str) -> bool:
+        t = (title or "").strip()
+        return not t or t in ("[no-title]", "no-title", "Untitled", "") or len(t) < 3
+
+    articles = db.query(Article).all()
+    to_delete = []
+    for a in articles:
+        if _is_garbled(a.content_text) or _is_garbled(a.content_html):
+            to_delete.append(a.id)
+        elif _is_no_title(a.title) and not a.bookmarked:
+            to_delete.append(a.id)
+
+    if to_delete:
+        db.query(Article).filter(Article.id.in_(to_delete)).delete(synchronize_session=False)
+        db.commit()
+
+    return {"deleted": len(to_delete)}
+
+
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_cid",
+    "fbclid", "gclid", "msclkid", "yclid", "twclid", "igshid",
+    "_ga", "_gl", "mc_cid", "mc_eid", "ref", "source",
+})
+
+
+def _normalize_url(url: str) -> str:
+    try:
+        p = urlparse(url.strip())
+        scheme = p.scheme.lower()
+        netloc = p.netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = p.path.rstrip("/") or "/"
+        params = parse_qs(p.query, keep_blank_values=False)
+        clean = {k: v for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
+        query = urlencode(sorted(clean.items()), doseq=True)
+        return urlunparse((scheme, netloc, path, "", query, ""))
+    except Exception:
+        return url
+
+
+@app.post("/api/admin/normalize-urls")
+async def normalize_article_urls(db: Session = Depends(get_db)):
+    """
+    One-time migration: normalize all article URLs already in the DB so they
+    match the canonical form now used by the poller.  Safe to call multiple
+    times — idempotent.  Merges duplicate normalized URLs by keeping the
+    article with richer content and deleting the other.
+    """
+    articles = db.query(Article).all()
+    updated = 0
+    merged = 0
+    skipped = 0
+
+    for article in articles:
+        canonical = _normalize_url(article.url)
+        if canonical == article.url:
+            continue  # already canonical
+
+        # Check if another article already holds this canonical URL
+        conflict = db.query(Article).filter(
+            Article.url == canonical,
+            Article.id != article.id,
+        ).first()
+
+        if conflict:
+            # Keep whichever has more content; delete the other
+            keep = conflict if len(conflict.content_text or "") >= len(article.content_text or "") else article
+            drop = article if keep is conflict else conflict
+            # Preserve bookmark status
+            if drop.bookmarked:
+                keep.bookmarked = True
+            db.delete(drop)
+            if keep.url != canonical:
+                keep.url = canonical
+            merged += 1
+        else:
+            article.url = canonical
+            updated += 1
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
+
+    return {"updated": updated, "merged": merged, "skipped": skipped}
 
 
 @app.post("/api/internal/articles/{article_id}/score")
