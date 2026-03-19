@@ -3,12 +3,56 @@ import { ArticleList } from './components/ArticleList'
 import { ReaderView } from './components/ReaderView'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
 import { OfflineBanner } from './components/OfflineBanner'
+import { LoginView } from './components/LoginView'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import type { Feed } from './types'
 
+// ---------------------------------------------------------------------------
+// Auth gate — checks session on load, shows LoginView if unauthenticated
+// ---------------------------------------------------------------------------
+
+type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
+
+function useAuth(): [AuthState, () => void] {
+  const [state, setState] = useState<AuthState>('loading')
+
+  const check = useCallback(() => {
+    fetch('/auth/status', { credentials: 'include' })
+      .then(r => setState(r.ok ? 'authenticated' : 'unauthenticated'))
+      .catch(() => setState('unauthenticated'))
+  }, [])
+
+  useEffect(() => { check() }, [check])
+
+  return [state, check]
+}
+
 export default function App() {
+  const [authState, recheckAuth] = useAuth()
+
+  if (authState === 'loading') {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
+        <div className="flex items-center gap-3 text-text-muted text-sm">
+          <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M21 12a9 9 0 11-6.219-8.56"/>
+          </svg>
+          Loading…
+        </div>
+      </div>
+    )
+  }
+
+  if (authState === 'unauthenticated') {
+    return <LoginView onLogin={recheckAuth} />
+  }
+
+  return <AuthenticatedApp onLogout={recheckAuth} />
+}
+
+function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [feeds, setFeeds] = useState<Feed[]>([])
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -17,15 +61,18 @@ export default function App() {
   const [appView, setAppView] = useState<'feed' | 'digest'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
-  useSSE()
+  useSSE(onLogout)
   const isOnline = useOnlineStatus()
 
   const refreshFeeds = useCallback(() => {
-    fetch('/api/feeds')
-      .then(r => r.json())
-      .then(setFeeds)
+    fetch('/api/feeds', { credentials: 'include' })
+      .then(r => {
+        if (r.status === 401) { onLogout(); return [] }
+        return r.json()
+      })
+      .then(data => { if (Array.isArray(data)) setFeeds(data) })
       .catch(console.error)
-  }, [])
+  }, [onLogout])
 
   useEffect(() => { refreshFeeds() }, [refreshFeeds])
 
@@ -166,6 +213,7 @@ export default function App() {
               onOpenFeedManager={() => setFeedManagerOpen(true)}
               currentView={appView}
               onViewChange={setAppView}
+              onLogout={onLogout}
             />
           </div>
         </div>
@@ -200,6 +248,7 @@ export default function App() {
               onOpenFeedManager={() => setFeedManagerOpen(true)}
               currentView={appView}
               onViewChange={setAppView}
+              onLogout={onLogout}
             />
           </div>
         ) : (

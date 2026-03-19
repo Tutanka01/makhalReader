@@ -3,7 +3,23 @@
         # Let's Encrypt automatic TLS
     }
 
+    # Security headers — applied to all responses
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:"
+        # Remove server fingerprinting
+        -Server
+    }
+
     handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle /auth/* {
         reverse_proxy api:8000
     }
 

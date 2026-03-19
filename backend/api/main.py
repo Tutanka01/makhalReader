@@ -3,18 +3,33 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timedelta
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import feedparser
 import xml.etree.ElementTree as ET
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, text
+from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from auth import (
+    COOKIE_NAME,
+    _check_rate_limit,
+    _clear_failure,
+    _client_ip,
+    _record_failure,
+    clear_session_cookie,
+    create_session,
+    delete_session,
+    purge_expired_sessions,
+    require_session,
+    set_session_cookie,
+    verify_password,
+)
 from database import Article, Feed, SessionLocal, get_db, init_db
 from models import (
     ArticleListItem,
@@ -27,19 +42,22 @@ from models import (
 )
 
 API_SECRET = os.getenv("API_SECRET", "changeme")
-# Keep at most this many articles per feed in the DB (oldest non-bookmarked read ones pruned first).
 MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
-# Delete articles older than this many days (0 = disabled).
 ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
 
-app = FastAPI(title="MakhalReader API")
+# CORS: in production, lock to your actual domain.
+# Set CORS_ORIGIN=https://reader.yourdomain.com in .env
+_cors_origin = os.getenv("CORS_ORIGIN", "")
+_cors_origins = [_cors_origin] if _cors_origin else []
+
+app = FastAPI(title="MakhalReader API", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Internal-Secret"],
 )
 
 # SSE queue registry: maps client_id -> asyncio.Queue
@@ -47,48 +65,74 @@ _sse_queues: Dict[str, asyncio.Queue] = {}
 
 DEFAULT_FEEDS = [
     # ── Infra / Cloud / Platform ──────────────────────────────────────────
-    {"url": "https://kubernetes.io/feed.xml",                            "name": "Kubernetes Blog",       "category": "Infra"},
-    {"url": "https://www.cncf.io/feed/",                                 "name": "CNCF",                  "category": "Infra"},
-    {"url": "https://thenewstack.io/feed/",                              "name": "The New Stack",          "category": "Infra"},
-    {"url": "https://blog.cloudflare.com/rss/",                          "name": "Cloudflare Blog",        "category": "Infra"},
-    {"url": "https://netflixtechblog.com/feed",                          "name": "Netflix Tech Blog",      "category": "Infra"},
-    {"url": "https://engineering.fb.com/feed/",                          "name": "Meta Engineering",       "category": "Infra"},
-    {"url": "https://fly.io/blog/feed.xml",                              "name": "Fly.io Blog",            "category": "Infra"},
-    {"url": "https://www.brendangregg.com/blog/rss.xml",                 "name": "Brendan Gregg",          "category": "Infra"},
-    {"url": "https://charity.wtf/feed/",                                 "name": "Charity Majors",         "category": "Infra"},
-    {"url": "https://martinfowler.com/feed.atom",                        "name": "Martin Fowler",          "category": "Infra"},
+    {"url": "https://kubernetes.io/feed.xml",                            "name": "Kubernetes Blog",            "category": "Infra"},
+    {"url": "https://www.cncf.io/feed/",                                 "name": "CNCF",                       "category": "Infra"},
+    {"url": "https://thenewstack.io/feed/",                              "name": "The New Stack",              "category": "Infra"},
+    {"url": "https://blog.cloudflare.com/rss/",                          "name": "Cloudflare Blog",            "category": "Infra"},
+    {"url": "https://netflixtechblog.com/feed",                          "name": "Netflix Tech Blog",          "category": "Infra"},
+    {"url": "https://engineering.fb.com/feed/",                          "name": "Meta Engineering",           "category": "Infra"},
+    {"url": "https://fly.io/blog/feed.xml",                              "name": "Fly.io Blog",                "category": "Infra"},
+    {"url": "https://www.brendangregg.com/blog/rss.xml",                 "name": "Brendan Gregg",              "category": "Infra"},
+    {"url": "https://charity.wtf/feed/",                                 "name": "Charity Majors",             "category": "Infra"},
+    {"url": "https://martinfowler.com/feed.atom",                        "name": "Martin Fowler",              "category": "Infra"},
+    {"url": "https://grafana.com/blog/index.xml",                        "name": "Grafana Blog",               "category": "Infra"},
+    {"url": "https://www.datadoghq.com/blog/feed/",                      "name": "Datadog Engineering",        "category": "Infra"},
+    {"url": "https://blog.bytebytego.com/feed",                          "name": "ByteByteGo",                 "category": "Infra"},
     # ── Linux / Systems / Containers internals ────────────────────────────
-    {"url": "https://iximiuz.com/en/posts.rss",                          "name": "iximiuz",                "category": "Infra"},
-    {"url": "https://lwn.net/headlines/rss",                             "name": "LWN.net",                "category": "Infra"},
-    {"url": "https://fasterthanli.me/index.xml",                         "name": "fasterthanli.me",        "category": "Infra"},
-    {"url": "https://danluu.com/atom.xml",                               "name": "Dan Luu",                "category": "Infra"},
+    {"url": "https://iximiuz.com/en/posts.rss",                          "name": "iximiuz",                    "category": "Infra"},
+    {"url": "https://lwn.net/headlines/rss",                             "name": "LWN.net",                    "category": "Infra"},
+    {"url": "https://fasterthanli.me/index.xml",                         "name": "fasterthanli.me",            "category": "Infra"},
+    {"url": "https://danluu.com/atom.xml",                               "name": "Dan Luu",                    "category": "Infra"},
+    {"url": "https://xeiaso.net/blog.rss",                               "name": "Xe Iaso",                    "category": "Infra"},
+    {"url": "https://drewdevault.com/blog/index.xml",                    "name": "Drew DeVault",               "category": "Infra"},
+    {"url": "https://notes.eatonphil.com/rss.xml",                       "name": "Phil Eaton",                 "category": "Infra"},
+    {"url": "https://www.phoronix.com/rss.php",                          "name": "Phoronix",                   "category": "Infra"},
+    {"url": "https://blog.jessfraz.com/index.xml",                       "name": "Jessie Frazelle",            "category": "Infra"},
     # ── Networking / eBPF ─────────────────────────────────────────────────
-    {"url": "https://tailscale.com/blog/index.xml",                      "name": "Tailscale Blog",         "category": "Infra"},
-    {"url": "https://isovalent.com/blog/index.xml",                      "name": "Isovalent (Cilium/eBPF)","category": "Infra"},
+    {"url": "https://tailscale.com/blog/index.xml",                      "name": "Tailscale Blog",             "category": "Infra"},
+    {"url": "https://isovalent.com/blog/index.xml",                      "name": "Isovalent (Cilium/eBPF)",    "category": "Infra"},
+    {"url": "https://www.polarsignals.com/blog/feed",                     "name": "Polar Signals (eBPF)",       "category": "Infra"},
     # ── Self-hosting / Homelab ────────────────────────────────────────────
-    {"url": "https://blog.alexellis.io/rss/",                            "name": "Alex Ellis",             "category": "Infra"},
+    {"url": "https://blog.alexellis.io/rss/",                            "name": "Alex Ellis",                 "category": "Infra"},
+    {"url": "https://selfh.st/feed/",                                    "name": "selfh.st",                   "category": "Infra"},
     # ── AI / LLM / Agents ────────────────────────────────────────────────
-    {"url": "https://huyenchip.com/feed",                                "name": "Huyen Chip",             "category": "AI"},
-    {"url": "https://lilianweng.github.io/feed.xml",                     "name": "Lilian Weng",            "category": "AI"},
-    {"url": "https://www.anthropic.com/news/rss.xml",                    "name": "Anthropic",              "category": "AI"},
-    {"url": "https://huggingface.co/blog/feed.xml",                      "name": "HuggingFace Blog",       "category": "AI"},
-    {"url": "https://bair.berkeley.edu/blog/feed.xml",                   "name": "BAIR Blog",              "category": "AI"},
-    {"url": "https://eugeneyan.com/rss.xml",                             "name": "Eugene Yan",             "category": "AI"},
-    {"url": "https://magazine.sebastianraschka.com/feed",                "name": "Sebastian Raschka",      "category": "AI"},
-    {"url": "https://www.interconnects.ai/feed",                         "name": "interconnects.ai",       "category": "AI"},
+    {"url": "https://huyenchip.com/feed",                                "name": "Huyen Chip",                 "category": "AI"},
+    {"url": "https://lilianweng.github.io/feed.xml",                     "name": "Lilian Weng",                "category": "AI"},
+    {"url": "https://www.anthropic.com/news/rss.xml",                    "name": "Anthropic",                  "category": "AI"},
+    {"url": "https://huggingface.co/blog/feed.xml",                      "name": "HuggingFace Blog",           "category": "AI"},
+    {"url": "https://bair.berkeley.edu/blog/feed.xml",                   "name": "BAIR Blog",                  "category": "AI"},
+    {"url": "https://eugeneyan.com/rss.xml",                             "name": "Eugene Yan",                 "category": "AI"},
+    {"url": "https://magazine.sebastianraschka.com/feed",                "name": "Sebastian Raschka",          "category": "AI"},
+    {"url": "https://www.interconnects.ai/feed",                         "name": "interconnects.ai",           "category": "AI"},
+    {"url": "https://www.latent.space/feed",                             "name": "Latent Space",               "category": "AI"},
+    {"url": "https://mlabonne.github.io/blog/feed.xml",                  "name": "Maxime Labonne",             "category": "AI"},
+    {"url": "https://vickiboykis.com/index.xml",                         "name": "Vicky Boykis",               "category": "AI"},
+    {"url": "https://www.deeplearning.ai/the-batch/feed/rss/",           "name": "The Batch (Andrew Ng)",      "category": "AI"},
+    {"url": "https://hamel.dev/feed.xml",                                "name": "Hamel Husain",               "category": "AI"},
+    {"url": "https://timdettmers.com/feed/",                             "name": "Tim Dettmers",               "category": "AI"},
     # ── Cybersécurité ─────────────────────────────────────────────────────
-    {"url": "https://portswigger.net/research/rss",                      "name": "PortSwigger Research",   "category": "Sec"},
-    {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default","name": "Google Project Zero",    "category": "Sec"},
-    {"url": "https://blog.trailofbits.com/feed/",                        "name": "Trail of Bits",          "category": "Sec"},
-    {"url": "https://lcamtuf.substack.com/feed",                         "name": "lcamtuf",                "category": "Sec"},
-    {"url": "https://secret.club/feed.xml",                              "name": "secret.club",            "category": "Sec"},
+    {"url": "https://portswigger.net/research/rss",                      "name": "PortSwigger Research",       "category": "Sec"},
+    {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default","name": "Google Project Zero",        "category": "Sec"},
+    {"url": "https://blog.trailofbits.com/feed/",                        "name": "Trail of Bits",              "category": "Sec"},
+    {"url": "https://lcamtuf.substack.com/feed",                         "name": "lcamtuf",                    "category": "Sec"},
+    {"url": "https://secret.club/feed.xml",                              "name": "secret.club",                "category": "Sec"},
+    {"url": "https://krebsonsecurity.com/feed/",                         "name": "Krebs on Security",          "category": "Sec"},
+    {"url": "https://www.schneier.com/feed/atom/",                       "name": "Bruce Schneier",             "category": "Sec"},
+    {"url": "https://posts.specterops.io/feed",                          "name": "SpecterOps",                 "category": "Sec"},
+    {"url": "https://research.nccgroup.com/feed/",                       "name": "NCC Group Research",         "category": "Sec"},
+    {"url": "https://blog.xpnsec.com/rss.xml",                          "name": "Adam Chester (XPN)",         "category": "Sec"},
+    {"url": "https://objective-see.org/rss.xml",                         "name": "Objective-See",              "category": "Sec"},
     # ── High-signal généraliste ───────────────────────────────────────────
-    {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",         "category": "High-signal"},
-    {"url": "https://jvns.ca/atom.xml",                                  "name": "Julia Evans",            "category": "High-signal"},
-    {"url": "https://rachelbythebay.com/w/atom.xml",                     "name": "rachelbythebay",         "category": "High-signal"},
-    {"url": "https://news.ycombinator.com/rss",                          "name": "Hacker News",            "category": "High-signal"},
-    {"url": "https://lobste.rs/rss",                                     "name": "Lobsters",               "category": "High-signal"},
-    {"url": "https://newsletter.pragmaticengineer.com/feed",             "name": "Pragmatic Engineer",     "category": "High-signal"},
+    {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",             "category": "High-signal"},
+    {"url": "https://jvns.ca/atom.xml",                                  "name": "Julia Evans",                "category": "High-signal"},
+    {"url": "https://rachelbythebay.com/w/atom.xml",                     "name": "rachelbythebay",             "category": "High-signal"},
+    {"url": "https://news.ycombinator.com/rss",                          "name": "Hacker News",                "category": "High-signal"},
+    {"url": "https://lobste.rs/rss",                                     "name": "Lobsters",                   "category": "High-signal"},
+    {"url": "https://newsletter.pragmaticengineer.com/feed",             "name": "Pragmatic Engineer",         "category": "High-signal"},
+    {"url": "https://queue.acm.org/rss/feeds/queuecontent.xml",          "name": "ACM Queue",                  "category": "High-signal"},
+    {"url": "http://www.paulgraham.com/rss.html",                        "name": "Paul Graham",                "category": "High-signal"},
+    {"url": "https://the.scapegoat.dev/rss.xml",                         "name": "The Scapegoat Dev",          "category": "High-signal"},
+    {"url": "https://matklad.github.io/feed.xml",                        "name": "matklad",                    "category": "High-signal"},
 ]
 
 
@@ -100,7 +144,7 @@ def _run_cleanup() -> int:
 
         # 1. Delete non-bookmarked articles older than ARTICLE_RETENTION_DAYS.
         if ARTICLE_RETENTION_DAYS > 0:
-            cutoff = datetime.utcnow() - timedelta(days=ARTICLE_RETENTION_DAYS)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=ARTICLE_RETENTION_DAYS)
             deleted = (
                 db.query(Article)
                 .filter(Article.created_at < cutoff, Article.bookmarked == False)
@@ -158,12 +202,10 @@ async def cleanup_old_articles():
 @app.on_event("startup")
 async def startup():
     init_db()
+    purge_expired_sessions()
     asyncio.create_task(cleanup_old_articles())
     db = SessionLocal()
     try:
-        # Upsert DEFAULT_FEEDS: add any feed whose URL is not already in the DB.
-        # This runs on every startup so new feeds added to DEFAULT_FEEDS are
-        # picked up automatically when the container restarts.
         existing_urls = {url for (url,) in db.query(Feed.url).all()}
         added = 0
         for feed_data in DEFAULT_FEEDS:
@@ -177,9 +219,65 @@ async def startup():
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Auth routes — public (no session required)
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    password: str
+    remember: bool = False
+
+
+@app.post("/auth/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    ip = _client_ip(request)
+    _check_rate_limit(ip)
+
+    if not verify_password(body.password):
+        _record_failure(ip)
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    _clear_failure(ip)
+    token = create_session(
+        remember=body.remember,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    set_session_cookie(response, token, body.remember)
+    return {"ok": True}
+
+
+@app.post("/auth/logout")
+async def logout(request: Request, response: Response):
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        delete_session(token)
+    clear_session_cookie(response)
+    return {"ok": True}
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    from auth import validate_session
+    token = request.cookies.get(COOKIE_NAME)
+    if not token or not validate_session(token):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Public — health check (no auth, used by Docker and Caddy)
+# ---------------------------------------------------------------------------
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Protected API routes
+# ---------------------------------------------------------------------------
+
+_auth = Depends(require_session)
 
 
 @app.get("/api/articles", response_model=List[ArticleListItem])
@@ -193,6 +291,7 @@ async def list_articles(
     url: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
     db: Session = Depends(get_db),
+    _: None = _auth,
 ):
     query = db.query(Article, Feed.name.label("feed_name")).join(
         Feed, Article.feed_id == Feed.id
@@ -252,7 +351,7 @@ def _row_to_list_item(row) -> ArticleListItem:
 
 
 @app.get("/api/articles/{article_id}", response_model=ArticleOut)
-async def get_article(article_id: int, db: Session = Depends(get_db)):
+async def get_article(article_id: int, db: Session = Depends(get_db), _: None = _auth):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -260,17 +359,17 @@ async def get_article(article_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/articles/{article_id}/read")
-async def mark_read(article_id: int, db: Session = Depends(get_db)):
+async def mark_read(article_id: int, db: Session = Depends(get_db), _: None = _auth):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    article.read_at = datetime.utcnow()
+    article.read_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "ok"}
 
 
 @app.post("/api/articles/{article_id}/unread")
-async def mark_unread(article_id: int, db: Session = Depends(get_db)):
+async def mark_unread(article_id: int, db: Session = Depends(get_db), _: None = _auth):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -284,19 +383,20 @@ async def mark_all_read(
     category: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
     db: Session = Depends(get_db),
+    _: None = _auth,
 ):
     query = db.query(Article).filter(Article.read_at.is_(None))
     if category and category not in ("All", "all"):
         query = query.join(Feed, Article.feed_id == Feed.id).filter(Feed.category == category)
     if min_score is not None:
         query = query.filter(Article.score >= min_score)
-    count = query.update({"read_at": datetime.utcnow()}, synchronize_session=False)
+    count = query.update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
     db.commit()
     return {"marked_read": count}
 
 
 @app.post("/api/articles/{article_id}/bookmark")
-async def toggle_bookmark(article_id: int, db: Session = Depends(get_db)):
+async def toggle_bookmark(article_id: int, db: Session = Depends(get_db), _: None = _auth):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -306,7 +406,7 @@ async def toggle_bookmark(article_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/feeds", response_model=List[FeedWithCount])
-async def list_feeds(db: Session = Depends(get_db)):
+async def list_feeds(db: Session = Depends(get_db), _: None = _auth):
     results = (
         db.query(Feed, func.count(Article.id).label("article_count"))
         .outerjoin(Article, Feed.id == Article.feed_id)
@@ -325,7 +425,7 @@ async def list_feeds(db: Session = Depends(get_db)):
 
 
 @app.post("/api/feeds/opml")
-async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), _: None = _auth):
     content = await file.read()
     try:
         root = ET.fromstring(content.decode("utf-8", errors="replace"))
@@ -380,8 +480,9 @@ async def get_digest(
     hours: int = Query(24, ge=1, le=168),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
+    _: None = _auth,
 ):
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     results = (
         db.query(Article, Feed.name.label("feed_name"))
         .join(Feed, Article.feed_id == Feed.id)
@@ -394,7 +495,7 @@ async def get_digest(
 
 
 @app.post("/api/feeds", response_model=FeedOut)
-async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db)):
+async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None = _auth):
     # Validate the URL by trying to parse it
     parsed = feedparser.parse(feed_data.url)
     if parsed.bozo and not parsed.entries:
@@ -417,7 +518,7 @@ async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/feeds/{feed_id}")
-async def delete_feed(feed_id: int, db: Session = Depends(get_db)):
+async def delete_feed(feed_id: int, db: Session = Depends(get_db), _: None = _auth):
     feed = db.query(Feed).filter(Feed.id == feed_id).first()
     if not feed:
         raise HTTPException(status_code=404, detail="Feed not found")
@@ -443,7 +544,7 @@ async def _sse_event_generator(request: Request, queue: asyncio.Queue) -> AsyncG
 
 
 @app.get("/api/stream")
-async def sse_stream(request: Request):
+async def sse_stream(request: Request, _: None = _auth):
     client_id = str(id(request))
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     _sse_queues[client_id] = queue
@@ -478,9 +579,37 @@ async def _broadcast_new_article(article_data: dict):
         _sse_queues.pop(client_id, None)
 
 
-def _verify_internal_secret(x_internal_secret: Optional[str] = Header(None)):
+
+@app.get("/api/internal/feeds")
+async def internal_list_feeds(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
     if x_internal_secret != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
+    results = (
+        db.query(Feed, func.count(Article.id).label("article_count"))
+        .outerjoin(Article, Feed.id == Article.feed_id)
+        .filter(Feed.active == True)
+        .group_by(Feed.id)
+        .all()
+    )
+    return [
+        {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
+        for feed, _ in results
+    ]
+
+
+@app.get("/api/internal/articles/exists")
+async def internal_article_exists(
+    url: str = Query(...),
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    exists = db.query(Article.id).filter(Article.url == url).first() is not None
+    return {"exists": exists}
 
 
 @app.post("/api/internal/articles")
@@ -502,7 +631,7 @@ async def internal_create_article(
     # The short window avoids false positives on recurring titles like
     # "Weekly Digest" that would match across different issues.
     fp = _title_fingerprint(article_data.title)
-    cutoff = datetime.utcnow() - timedelta(days=3)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
     title_dup = (
         db.query(Article)
         .filter(
@@ -524,7 +653,7 @@ async def internal_create_article(
         content_text=article_data.content_text,
         images_json=json.dumps(article_data.images),
         extraction_failed=article_data.extraction_failed,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         title_fingerprint=fp,
     )
     db.add(article)
@@ -534,7 +663,7 @@ async def internal_create_article(
 
 
 @app.delete("/api/admin/articles/broken")
-async def delete_broken_articles(db: Session = Depends(get_db)):
+async def delete_broken_articles(db: Session = Depends(get_db), _: None = _auth):
     """
     Delete articles that have garbled content or no meaningful title.
     Call once after upgrading the extractor to clean up old bad data.
@@ -606,7 +735,7 @@ def _normalize_url(url: str) -> str:
 
 
 @app.post("/api/admin/normalize-urls")
-async def normalize_article_urls(db: Session = Depends(get_db)):
+async def normalize_article_urls(db: Session = Depends(get_db), _: None = _auth):
     """
     One-time migration: normalize all article URLs already in the DB so they
     match the canonical form now used by the poller.  Safe to call multiple

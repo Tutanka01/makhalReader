@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, Clock, CheckCheck, Star, Search, X, Settings, Sparkles } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { DigestView } from './DigestView'
@@ -14,9 +14,10 @@ interface ArticleListProps {
   onOpenFeedManager: () => void
   currentView: 'feed' | 'digest'
   onViewChange: (v: 'feed' | 'digest') => void
+  onLogout: () => void
 }
 
-export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange }: ArticleListProps) {
+export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange, onLogout }: ArticleListProps) {
   const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
@@ -192,6 +193,17 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             title="Gérer les feeds"
           >
             <Settings className="w-3.5 h-3.5" />
+          </button>
+          {/* Logout */}
+          <button
+            onClick={async () => {
+              await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
+              onLogout()
+            }}
+            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-red-400"
+            title="Se déconnecter"
+          >
+            <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

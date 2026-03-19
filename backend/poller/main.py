@@ -66,7 +66,11 @@ _score_semaphore = asyncio.Semaphore(1)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def fetch_feeds(client: httpx.AsyncClient) -> list:
-    resp = await client.get(f"{API_BASE}/api/feeds", timeout=30)
+    resp = await client.get(
+        f"{API_BASE}/api/internal/feeds",
+        headers=INTERNAL_HEADERS,
+        timeout=30,
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -74,12 +78,13 @@ async def fetch_feeds(client: httpx.AsyncClient) -> list:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def check_article_exists(client: httpx.AsyncClient, url: str) -> bool:
     resp = await client.get(
-        f"{API_BASE}/api/articles",
-        params={"url": url, "status": "all", "limit": 1},
+        f"{API_BASE}/api/internal/articles/exists",
+        params={"url": url},
+        headers=INTERNAL_HEADERS,
         timeout=10,
     )
     resp.raise_for_status()
-    return len(resp.json()) > 0
+    return resp.json().get("exists", False)
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

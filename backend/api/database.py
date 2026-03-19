@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -72,12 +72,24 @@ class Article(Base):
     read_at = Column(DateTime, nullable=True)
     bookmarked = Column(Boolean, default=False, nullable=False)
     extraction_failed = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     title_fingerprint = Column(String(16), nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
     )
+
+
+class AuthSession(Base):
+    """Persistent login sessions. One row per active login."""
+    __tablename__ = "auth_sessions"
+
+    id = Column(String(64), primary_key=True)          # secrets.token_hex(32)
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_seen = Column(DateTime, nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    remember_me = Column(Boolean, default=False, nullable=False)
 
 
 def get_db():
@@ -90,7 +102,7 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    # Add columns introduced after the initial schema (SQLite-safe, idempotent).
+    # Additive migrations — safe to run multiple times.
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
     ]
