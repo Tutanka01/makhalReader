@@ -146,24 +146,43 @@ async def score_article_rate_limited(
 # Entry helpers
 # ---------------------------------------------------------------------------
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
 def parse_published_dt(entry) -> datetime | None:
     """Return a timezone-aware datetime or None."""
+    # Primary: standard published_parsed field
     if hasattr(entry, "published_parsed") and entry.published_parsed:
         try:
             return datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
         except Exception:
             pass
+    # Fallback: updated_parsed (used by some Atom feeds instead of published)
+    if hasattr(entry, "updated_parsed") and entry.updated_parsed:
+        try:
+            return datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+        except Exception:
+            pass
     return None
 
 
+def entry_recency_key(entry) -> datetime:
+    """Sort key: dated entries by their date, undated entries last."""
+    dt = parse_published_dt(entry)
+    return dt if dt is not None else _EPOCH
+
+
 def is_too_old(entry) -> bool:
-    """Return True if the article is older than MAX_ARTICLE_AGE_DAYS."""
+    """Return True if the article is older than MAX_ARTICLE_AGE_DAYS.
+
+    Undated entries are kept only if the feed itself is mostly undated
+    (some aggregators never set dates). In practice, they are processed
+    last thanks to the sort, so the MAX_NEW_PER_FEED cap naturally
+    prioritises dated recent entries over undated ones.
+    """
     dt = parse_published_dt(entry)
     if dt is None:
-        # No date in the feed → keep it (can't know, and first-time feeds
-        # often have undated entries; they will be skipped on next cycle
-        # because they'll already exist in the DB).
-        return False
+        return False  # Can't determine age — let sort order handle priority
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=MAX_ARTICLE_AGE_DAYS)
     return dt < cutoff
 
@@ -188,7 +207,13 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
     all_entries = parsed.entries
     log.info(f"Feed has {len(all_entries)} entries in RSS")
 
-    # 1. Drop entries that are too old before any DB check.
+    # 1. Sort entries newest-first BEFORE any filtering.
+    #    This is critical: it ensures MAX_NEW_PER_FEED always captures the
+    #    most recent articles regardless of how the feed orders its entries.
+    #    Undated entries sort to the end and are processed last.
+    all_entries = sorted(all_entries, key=entry_recency_key, reverse=True)
+
+    # 2. Drop entries that are too old.
     fresh_entries = [e for e in all_entries if not is_too_old(e)]
     skipped_old = len(all_entries) - len(fresh_entries)
     if skipped_old:

@@ -59,7 +59,7 @@ export default function App() {
           setSidebarOpen(v => !v)
           break
         case 'j':
-          if (currentIndex < articles.length - 1) {
+          if (currentIndex >= 0 && currentIndex < articles.length - 1) {
             handleSelectArticle(articles[currentIndex + 1].id)
           }
           break

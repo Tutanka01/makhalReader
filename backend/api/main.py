@@ -92,56 +92,67 @@ DEFAULT_FEEDS = [
 ]
 
 
-async def cleanup_old_articles():
-    """Nightly task: prune old and excess articles to keep the DB lean."""
-    while True:
-        await asyncio.sleep(86400)  # run once every 24h
-        db = SessionLocal()
-        try:
-            total_deleted = 0
+def _run_cleanup() -> int:
+    """Synchronous cleanup logic — returns number of deleted articles."""
+    db = SessionLocal()
+    try:
+        total_deleted = 0
 
-            # 1. Delete articles older than ARTICLE_RETENTION_DAYS (skip bookmarked).
-            if ARTICLE_RETENTION_DAYS > 0:
-                cutoff = datetime.utcnow() - timedelta(days=ARTICLE_RETENTION_DAYS)
+        # 1. Delete non-bookmarked articles older than ARTICLE_RETENTION_DAYS.
+        if ARTICLE_RETENTION_DAYS > 0:
+            cutoff = datetime.utcnow() - timedelta(days=ARTICLE_RETENTION_DAYS)
+            deleted = (
+                db.query(Article)
+                .filter(Article.created_at < cutoff, Article.bookmarked == False)
+                .delete(synchronize_session=False)
+            )
+            total_deleted += deleted
+
+        # 2. Per-feed cap: keep only the MAX_ARTICLES_PER_FEED most recent articles.
+        feeds = db.query(Feed).filter(Feed.active == True).all()
+        for feed in feeds:
+            count = db.query(Article).filter(Article.feed_id == feed.id).count()
+            if count > MAX_ARTICLES_PER_FEED:
+                keep_ids = (
+                    db.query(Article.id)
+                    .filter(Article.feed_id == feed.id)
+                    .order_by(Article.created_at.desc())
+                    .limit(MAX_ARTICLES_PER_FEED)
+                    .subquery()
+                )
                 deleted = (
                     db.query(Article)
-                    .filter(Article.created_at < cutoff, Article.bookmarked == False)
+                    .filter(
+                        Article.feed_id == feed.id,
+                        Article.id.notin_(keep_ids),
+                        Article.bookmarked == False,
+                    )
                     .delete(synchronize_session=False)
                 )
                 total_deleted += deleted
 
-            # 2. Per-feed cap: keep only the MAX_ARTICLES_PER_FEED most recent articles.
-            feeds = db.query(Feed).filter(Feed.active == True).all()
-            for feed in feeds:
-                count = db.query(Article).filter(Article.feed_id == feed.id).count()
-                if count > MAX_ARTICLES_PER_FEED:
-                    # Find the ID cutoff: keep the newest MAX_ARTICLES_PER_FEED.
-                    keep_ids = (
-                        db.query(Article.id)
-                        .filter(Article.feed_id == feed.id)
-                        .order_by(Article.created_at.desc())
-                        .limit(MAX_ARTICLES_PER_FEED)
-                        .subquery()
-                    )
-                    deleted = (
-                        db.query(Article)
-                        .filter(
-                            Article.feed_id == feed.id,
-                            Article.id.notin_(keep_ids),
-                            Article.bookmarked == False,
-                        )
-                        .delete(synchronize_session=False)
-                    )
-                    total_deleted += deleted
+        db.commit()
+        return total_deleted
+    except Exception as e:
+        print(f"[cleanup] Error: {e}")
+        db.rollback()
+        return 0
+    finally:
+        db.close()
 
-            db.commit()
-            if total_deleted:
-                print(f"[cleanup] Deleted {total_deleted} old articles")
-        except Exception as e:
-            print(f"[cleanup] Error: {e}")
-            db.rollback()
-        finally:
-            db.close()
+
+async def cleanup_old_articles():
+    """Run cleanup once at startup, then every 24 h."""
+    # First pass immediately so stale articles are gone before the first poll.
+    deleted = await asyncio.to_thread(_run_cleanup)
+    if deleted:
+        print(f"[cleanup] Startup pass: deleted {deleted} old articles")
+
+    while True:
+        await asyncio.sleep(86400)
+        deleted = await asyncio.to_thread(_run_cleanup)
+        if deleted:
+            print(f"[cleanup] Nightly pass: deleted {deleted} old articles")
 
 
 @app.on_event("startup")

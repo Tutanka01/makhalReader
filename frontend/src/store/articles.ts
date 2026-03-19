@@ -69,12 +69,17 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data: ArticleListItem[] = await resp.json()
 
-      set(prev => ({
-        articles: reset ? data : [...prev.articles, ...data],
-        hasMore: data.length === PAGE_SIZE,
-        offset: offset + data.length,
-        loading: false,
-      }))
+      set(prev => {
+        // Deduplicate on append (score changes between pages can cause overlaps)
+        const existingIds = reset ? new Set<number>() : new Set(prev.articles.map(a => a.id))
+        const fresh = data.filter(a => !existingIds.has(a.id))
+        return {
+          articles: reset ? data : [...prev.articles, ...fresh],
+          hasMore: data.length === PAGE_SIZE,
+          offset: offset + data.length,
+          loading: false,
+        }
+      })
     } catch (err) {
       console.error('Failed to fetch articles:', err)
       set({ loading: false })
@@ -94,19 +99,52 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
   },
 
   markRead: async (id: number) => {
+    const read_at = new Date().toISOString()
+
+    set(state => {
+      const article = state.articles.find(a => a.id === id)
+      const updated = article ? { ...article, read_at } : null
+
+      let articles: ArticleListItem[]
+      if (!updated) {
+        articles = state.articles
+      } else if (updated.bookmarked) {
+        // Bookmarked articles: gray out in place, never move
+        articles = state.articles.map(a => a.id === id ? updated : a)
+      } else {
+        // Regular articles: gray out and sink to the bottom
+        articles = [...state.articles.filter(a => a.id !== id), updated]
+      }
+
+      return {
+        articles,
+        selectedArticle: state.selectedArticle?.id === id
+          ? { ...state.selectedArticle, read_at }
+          : state.selectedArticle,
+      }
+    })
+
     try {
       await fetch(`/api/articles/${id}/read`, { method: 'POST' })
-      set(state => ({
-        articles: state.articles.map(a =>
-          a.id === id ? { ...a, read_at: new Date().toISOString() } : a
-        ),
-        selectedArticle:
-          state.selectedArticle?.id === id
-            ? { ...state.selectedArticle, read_at: new Date().toISOString() }
-            : state.selectedArticle,
-      }))
     } catch (err) {
       console.error('Failed to mark article as read:', err)
+      get().fetchArticles(true)
+    }
+  },
+
+  markUnread: async (id: number) => {
+    set(state => ({
+      articles: state.articles.map(a => a.id === id ? { ...a, read_at: null } : a),
+      selectedArticle: state.selectedArticle?.id === id
+        ? { ...state.selectedArticle, read_at: null }
+        : state.selectedArticle,
+    }))
+
+    try {
+      await fetch(`/api/articles/${id}/unread`, { method: 'POST' })
+    } catch (err) {
+      console.error('Failed to mark article as unread:', err)
+      get().fetchArticles(true)
     }
   },
 
@@ -121,46 +159,52 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     }
     try {
       await fetch(`/api/articles/read-all?${params}`, { method: 'POST' })
-      // Refresh the list
       get().fetchArticles(true)
     } catch (err) {
       console.error('Failed to mark all as read:', err)
     }
   },
 
-  markUnread: async (id: number) => {
-    try {
-      await fetch(`/api/articles/${id}/unread`, { method: 'POST' })
-      set(state => ({
-        articles: state.articles.map(a =>
-          a.id === id ? { ...a, read_at: null } : a
-        ),
-        selectedArticle:
-          state.selectedArticle?.id === id
-            ? { ...state.selectedArticle, read_at: null }
-            : state.selectedArticle,
-      }))
-    } catch (err) {
-      console.error('Failed to mark article as unread:', err)
-    }
-  },
-
   toggleBookmark: async (id: number) => {
+    // Optimistic update first for instant feedback
+    set(state => {
+      const article = state.articles.find(a => a.id === id)
+      if (!article) return {}
+      const bookmarked = !article.bookmarked
+
+      // Only remove from list when explicitly in bookmarks-only view and unbookmarking
+      if (state.filter.bookmarked && !bookmarked) {
+        return {
+          articles: state.articles.filter(a => a.id !== id),
+          selectedArticle: state.selectedArticle?.id === id
+            ? { ...state.selectedArticle, bookmarked }
+            : state.selectedArticle,
+        }
+      }
+
+      return {
+        articles: state.articles.map(a => a.id === id ? { ...a, bookmarked } : a),
+        selectedArticle: state.selectedArticle?.id === id
+          ? { ...state.selectedArticle, bookmarked }
+          : state.selectedArticle,
+      }
+    })
+
     try {
       const resp = await fetch(`/api/articles/${id}/bookmark`, { method: 'POST' })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      // Server response confirms the new bookmarked state — sync it back
       const data = await resp.json()
       set(state => ({
-        articles: state.articles.map(a =>
-          a.id === id ? { ...a, bookmarked: data.bookmarked } : a
-        ),
-        selectedArticle:
-          state.selectedArticle?.id === id
-            ? { ...state.selectedArticle, bookmarked: data.bookmarked }
-            : state.selectedArticle,
+        articles: state.articles.map(a => a.id === id ? { ...a, bookmarked: data.bookmarked } : a),
+        selectedArticle: state.selectedArticle?.id === id
+          ? { ...state.selectedArticle, bookmarked: data.bookmarked }
+          : state.selectedArticle,
       }))
     } catch (err) {
       console.error('Failed to toggle bookmark:', err)
+      // Revert optimistic update on error
+      get().fetchArticles(true)
     }
   },
 
@@ -171,14 +215,22 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       offset: 0,
       hasMore: true,
     }))
-    // Trigger a fresh fetch after filter update
     get().fetchArticles(true)
   },
 
   prependArticle: (article: ArticleListItem) => {
     set(state => {
-      // Don't prepend if it already exists
+      // Skip if already in list
       if (state.articles.some(a => a.id === article.id)) return {}
+
+      const { filter } = state
+
+      // Skip if doesn't match active filters
+      if (filter.bookmarked && !article.bookmarked) return {}
+      if (filter.minScore > 0 && (article.score ?? 0) < filter.minScore) return {}
+      // New articles from SSE are always unread — skip only if filtering to read-only
+      if (filter.status === 'read') return {}
+
       return { articles: [article, ...state.articles] }
     })
   },
