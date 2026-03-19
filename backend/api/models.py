@@ -100,6 +100,10 @@ class ArticleListItem(BaseModel):
         return self
 
 
+class FeedWithCount(FeedOut):
+    article_count: int = 0
+
+
 class InternalArticleCreate(BaseModel):
     feed_id: int
     title: str

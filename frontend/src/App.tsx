@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ArticleList } from './components/ArticleList'
 import { ReaderView } from './components/ReaderView'
+import { FeedManagerPanel } from './components/FeedManagerPanel'
+import { OfflineBanner } from './components/OfflineBanner'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
+import { useOnlineStatus } from './hooks/useOnlineStatus'
 import type { Feed } from './types'
 
 export default function App() {
@@ -10,16 +13,21 @@ export default function App() {
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
+  const [feedManagerOpen, setFeedManagerOpen] = useState(false)
+  const [appView, setAppView] = useState<'feed' | 'digest'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE()
+  const isOnline = useOnlineStatus()
 
-  useEffect(() => {
+  const refreshFeeds = useCallback(() => {
     fetch('/api/feeds')
       .then(r => r.json())
       .then(setFeeds)
       .catch(console.error)
   }, [])
+
+  useEffect(() => { refreshFeeds() }, [refreshFeeds])
 
   const handleSelectArticle = useCallback((id: number) => {
     setSelectedId(id)
@@ -95,6 +103,15 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-bg-base text-text-primary overflow-hidden">
+      <OfflineBanner show={!isOnline} />
+
+      <FeedManagerPanel
+        open={feedManagerOpen}
+        onClose={() => setFeedManagerOpen(false)}
+        feeds={feeds}
+        onFeedsChange={refreshFeeds}
+      />
+
       {/* Keyboard shortcuts help overlay */}
       {showHelp && (
         <div
@@ -146,6 +163,9 @@ export default function App() {
               feeds={feeds}
               onSelect={handleSelectArticle}
               selectedId={selectedId}
+              onOpenFeedManager={() => setFeedManagerOpen(true)}
+              currentView={appView}
+              onViewChange={setAppView}
             />
           </div>
         </div>
@@ -177,6 +197,9 @@ export default function App() {
               feeds={feeds}
               onSelect={handleSelectArticle}
               selectedId={selectedId}
+              onOpenFeedManager={() => setFeedManagerOpen(true)}
+              currentView={appView}
+              onViewChange={setAppView}
             />
           </div>
         ) : (

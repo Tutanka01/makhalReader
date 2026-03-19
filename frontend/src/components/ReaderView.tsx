@@ -51,21 +51,36 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   const [scrollProgress, setScrollProgress] = useState(0)
   const [copied, setCopied] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoReadScheduledForRef = useRef<number | null>(null)
 
   useEffect(() => {
     fetchArticle(articleId)
     // Reset scroll progress on article change
     setScrollProgress(0)
     if (scrollRef.current) scrollRef.current.scrollTop = 0
+    // Cancel any pending auto-read timer when switching articles
+    if (autoReadTimerRef.current) {
+      clearTimeout(autoReadTimerRef.current)
+      autoReadTimerRef.current = null
+      autoReadScheduledForRef.current = null
+    }
   }, [articleId])
 
-  // Auto-mark as read after 5s
+  // Auto-mark as read after 5s — guarded to fire only once per article
   useEffect(() => {
-    if (selectedArticle && !selectedArticle.read_at) {
-      const timer = setTimeout(() => markRead(selectedArticle.id), 5000)
-      return () => clearTimeout(timer)
+    if (
+      selectedArticle &&
+      !selectedArticle.read_at &&
+      autoReadScheduledForRef.current !== selectedArticle.id
+    ) {
+      autoReadScheduledForRef.current = selectedArticle.id
+      autoReadTimerRef.current = setTimeout(() => markRead(selectedArticle.id), 5000)
+      return () => {
+        if (autoReadTimerRef.current) clearTimeout(autoReadTimerRef.current)
+      }
     }
-  }, [selectedArticle?.id])
+  }, [selectedArticle?.id, selectedArticle?.read_at])
 
   const handleScroll = () => {
     const el = scrollRef.current

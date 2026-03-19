@@ -185,8 +185,5 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
 
   setSelectedId: (id: number | null) => {
     set({ selectedId: id })
-    if (id !== null) {
-      get().fetchArticle(id)
-    }
   },
 }))

@@ -112,7 +112,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
-                "max_tokens": 512,
+                "max_tokens": 1024,
             },
             timeout=60,
         )

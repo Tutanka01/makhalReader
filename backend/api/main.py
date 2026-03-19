@@ -8,10 +8,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import feedparser
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+import xml.etree.ElementTree as ET
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from database import Article, Feed, SessionLocal, get_db, init_db
@@ -20,6 +21,7 @@ from models import (
     ArticleOut,
     FeedCreate,
     FeedOut,
+    FeedWithCount,
     InternalArticleCreate,
     InternalScoreUpdate,
 )
@@ -292,10 +294,92 @@ async def toggle_bookmark(article_id: int, db: Session = Depends(get_db)):
     return {"bookmarked": article.bookmarked}
 
 
-@app.get("/api/feeds", response_model=List[FeedOut])
+@app.get("/api/feeds", response_model=List[FeedWithCount])
 async def list_feeds(db: Session = Depends(get_db)):
-    feeds = db.query(Feed).filter(Feed.active == True).all()
-    return [FeedOut.model_validate(f) for f in feeds]
+    results = (
+        db.query(Feed, func.count(Article.id).label("article_count"))
+        .outerjoin(Article, Feed.id == Article.feed_id)
+        .filter(Feed.active == True)
+        .group_by(Feed.id)
+        .all()
+    )
+    return [
+        FeedWithCount(
+            id=feed.id, url=feed.url, name=feed.name,
+            category=feed.category, active=feed.active,
+            last_fetched=feed.last_fetched, article_count=count,
+        )
+        for feed, count in results
+    ]
+
+
+@app.post("/api/feeds/opml")
+async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    content = await file.read()
+    try:
+        root = ET.fromstring(content.decode("utf-8", errors="replace"))
+    except ET.ParseError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OPML file: {e}")
+
+    feeds_to_add: list[dict] = []
+    body = root.find("body")
+    if body is None:
+        raise HTTPException(status_code=400, detail="No <body> found in OPML")
+
+    for top in body:
+        top_url = top.get("xmlUrl") or top.get("xmlurl")
+        if top_url:
+            # Flat OPML: outline has a feed URL directly
+            feeds_to_add.append({
+                "url": top_url,
+                "name": top.get("title") or top.get("text") or top_url,
+                "category": "General",
+            })
+        else:
+            # Nested: this outline is a category folder
+            category = top.get("title") or top.get("text") or "General"
+            for child in top:
+                child_url = child.get("xmlUrl") or child.get("xmlurl")
+                if child_url:
+                    feeds_to_add.append({
+                        "url": child_url,
+                        "name": child.get("title") or child.get("text") or child_url,
+                        "category": category,
+                    })
+
+    added, skipped = 0, 0
+    for f in feeds_to_add:
+        existing = db.query(Feed).filter(Feed.url == f["url"]).first()
+        if existing:
+            if not existing.active:
+                existing.active = True
+                added += 1
+            else:
+                skipped += 1
+            continue
+        db.add(Feed(url=f["url"], name=f["name"], category=f["category"]))
+        added += 1
+
+    db.commit()
+    return {"added": added, "skipped": skipped, "total": len(feeds_to_add)}
+
+
+@app.get("/api/digest", response_model=List[ArticleListItem])
+async def get_digest(
+    hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    results = (
+        db.query(Article, Feed.name.label("feed_name"))
+        .join(Feed, Article.feed_id == Feed.id)
+        .filter(Article.created_at >= cutoff, Article.score.isnot(None))
+        .order_by(Article.score.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_row_to_list_item(row) for row in results]
 
 
 @app.post("/api/feeds", response_model=FeedOut)

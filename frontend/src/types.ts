@@ -5,6 +5,7 @@ export interface Feed {
   category: string
   active: boolean
   last_fetched: string | null
+  article_count?: number
 }
 
 export interface Article {
