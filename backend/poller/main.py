@@ -15,7 +15,7 @@ API_BASE = "http://api:8000"
 EXTRACTOR_BASE = "http://extractor:8001"
 SCORER_BASE = "http://scorer:8002"
 API_SECRET = os.getenv("API_SECRET", "changeme")
-FETCH_INTERVAL_MINUTES = int(os.getenv("FETCH_INTERVAL_MINUTES", "15"))
+FETCH_INTERVAL_MINUTES = int(os.getenv("FETCH_INTERVAL_MINUTES", "720"))
 
 # --- Guardrails ---
 # Max new articles ingested per feed per poll cycle.
