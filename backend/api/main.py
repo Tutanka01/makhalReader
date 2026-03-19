@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -395,9 +397,27 @@ async def internal_create_article(
     if x_internal_secret != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # ── Layer 1: exact URL match ─────────────────────────────────────────────
     existing = db.query(Article).filter(Article.url == article_data.url).first()
     if existing:
         return {"id": existing.id, "created": False}
+
+    # ── Layer 2: title fingerprint (catches syndicated articles) ─────────────
+    # Same normalised title within a 3-day window → treat as duplicate.
+    # The short window avoids false positives on recurring titles like
+    # "Weekly Digest" that would match across different issues.
+    fp = _title_fingerprint(article_data.title)
+    cutoff = datetime.utcnow() - timedelta(days=3)
+    title_dup = (
+        db.query(Article)
+        .filter(
+            Article.title_fingerprint == fp,
+            Article.created_at >= cutoff,
+        )
+        .first()
+    )
+    if title_dup:
+        return {"id": title_dup.id, "created": False}
 
     article = Article(
         feed_id=article_data.feed_id,
@@ -410,6 +430,7 @@ async def internal_create_article(
         images_json=json.dumps(article_data.images),
         extraction_failed=article_data.extraction_failed,
         created_at=datetime.utcnow(),
+        title_fingerprint=fp,
     )
     db.add(article)
     db.commit()
@@ -457,6 +478,20 @@ _TRACKING_PARAMS = frozenset({
     "fbclid", "gclid", "msclkid", "yclid", "twclid", "igshid",
     "_ga", "_gl", "mc_cid", "mc_eid", "ref", "source",
 })
+
+# ---------------------------------------------------------------------------
+# Deduplication helpers
+# ---------------------------------------------------------------------------
+
+def _title_fingerprint(title: str) -> str:
+    """
+    16-char hex fingerprint of a normalised title.
+    Removes punctuation, collapses whitespace, lowercases — so minor formatting
+    differences between syndicated copies don't create separate fingerprints.
+    """
+    t = re.sub(r"[^\w\s]", " ", title.lower())
+    t = re.sub(r"\s+", " ", t).strip()
+    return hashlib.sha1(t.encode()).hexdigest()[:16]
 
 
 def _normalize_url(url: str) -> str:

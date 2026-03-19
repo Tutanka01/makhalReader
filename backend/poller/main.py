@@ -241,7 +241,24 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 "images": [],
                 "author": rss_author,
                 "extraction_failed": True,
+                "canonical_url": None,
             }
+
+        # Use the site's canonical URL if the extractor found one — it is the
+        # most reliable dedup key.  Normalize it the same way as other URLs.
+        canonical_from_html = extracted.get("canonical_url")
+        if canonical_from_html:
+            storage_url = normalize_url(canonical_from_html)
+            if storage_url != article_url:
+                # Guard: the canonical might already be in the DB
+                try:
+                    if await check_article_exists(client, storage_url):
+                        log.info("Skipped (canonical already exists)", canonical=storage_url)
+                        continue
+                except Exception:
+                    pass
+                log.info("Using canonical URL", original=article_url, canonical=storage_url)
+                article_url = storage_url
 
         payload = {
             "feed_id": feed_id,

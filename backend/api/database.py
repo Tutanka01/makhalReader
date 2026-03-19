@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -72,6 +73,11 @@ class Article(Base):
     bookmarked = Column(Boolean, default=False, nullable=False)
     extraction_failed = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    title_fingerprint = Column(String(16), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
+    )
 
 
 def get_db():
@@ -84,3 +90,14 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Add columns introduced after the initial schema (SQLite-safe, idempotent).
+    _migrations = [
+        "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
+    ]
+    with engine.connect() as conn:
+        for stmt in _migrations:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # column already exists

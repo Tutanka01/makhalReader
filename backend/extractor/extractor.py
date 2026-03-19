@@ -47,6 +47,7 @@ class ExtractResponse(BaseModel):
     author: Optional[str] = None
     read_time_minutes: int = 1
     extraction_failed: bool = False
+    canonical_url: Optional[str] = None  # from <link rel="canonical"> in the page HTML
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,31 @@ def is_garbled(text: str) -> bool:
         or (ord(c) < 32 and c not in "\t\n\r") # control chars except whitespace
     )
     return (bad / len(sample)) > 0.04  # >4% bad chars → garbled
+
+
+# ---------------------------------------------------------------------------
+# Canonical URL extraction
+# ---------------------------------------------------------------------------
+
+def extract_canonical_url(html: str, base_url: str) -> Optional[str]:
+    """Return the <link rel="canonical"> href if present and absolute."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        tag = soup.find("link", rel="canonical")
+        if not tag:
+            return None
+        href = (tag.get("href") or "").strip()
+        if not href:
+            return None
+        if href.startswith("http://") or href.startswith("https://"):
+            return href
+        # Resolve relative canonical (e.g. /blog/post)
+        parsed = urlparse(base_url)
+        if href.startswith("/"):
+            return f"{parsed.scheme}://{parsed.netloc}{href}"
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +390,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
         extracted_title: Optional[str] = None
         author: Optional[str] = None
         images: List[str] = []
+        canonical_url: Optional[str] = None
 
         # ── Strategy 1: direct fetch ──────────────────────────────────────
         html = await fetch_url(client, req.url)
@@ -374,6 +401,12 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
             extracted_title = extracted.get("title")
             author = extracted.get("author")
             images = extract_images_from_html(html, req.url)
+            # Extract canonical URL — the site's own authoritative URL for this page.
+            # If it differs from the requested URL, use it as the dedup key so the
+            # same article reached via different paths is only stored once.
+            raw_canonical = extract_canonical_url(html, req.url)
+            if raw_canonical and raw_canonical.rstrip("/") != req.url.rstrip("/"):
+                canonical_url = raw_canonical
 
         # ── Strategy 2: Google cache ──────────────────────────────────────
         if not content_text or len(content_text) < MIN_CONTENT_LENGTH:
@@ -441,6 +474,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
             author=author,
             read_time_minutes=estimate_read_time(content_text or ""),
             extraction_failed=extraction_failed,
+            canonical_url=canonical_url,
         )
 
 
