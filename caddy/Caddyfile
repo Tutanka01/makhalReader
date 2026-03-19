@@ -1,9 +1,7 @@
 {$CADDY_DOMAIN} {
-    tls {
-        # Let's Encrypt automatic TLS
-    }
+    # TLS via Let's Encrypt is automatic — no directive needed.
 
-    # Security headers — applied to all responses
+    # Security headers
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Frame-Options "DENY"
@@ -11,7 +9,6 @@
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "geolocation=(), microphone=(), camera=()"
         Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:"
-        # Remove server fingerprinting
         -Server
     }
 
