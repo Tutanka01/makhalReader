@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { format } from 'date-fns'
 import {
   ExternalLink,
@@ -21,6 +21,18 @@ interface PaperViewProps {
 }
 
 type PdfMode = 'none' | 'panel' | 'full'
+
+/**
+ * Safari on iOS/iPadOS cannot render PDFs in iframes — it shows a blank page.
+ * Detection: classic UA check + iPadOS 13+ (reports as MacIntel with touch).
+ */
+function detectIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  )
+}
 
 function parseAuthors(authorStr: string | null): string[] {
   if (!authorStr) return []
@@ -69,6 +81,7 @@ function ScorePill({ score }: { score: number | null }) {
 
 export function PaperView({ article, fontSize }: PaperViewProps) {
   const [pdfMode, setPdfMode] = useState<PdfMode>('none')
+  const isIOS = useMemo(() => detectIOS(), [])
 
   const paperId = arxivIdFromUrl(article.url)
   const pdfUrl = paperId ? `https://arxiv.org/pdf/${paperId}` : null
@@ -81,25 +94,34 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
 
   const togglePdf = () => {
     if (pdfMode === 'none') {
-      setPdfMode(window.innerWidth >= 1024 ? 'panel' : 'full')
+      // On iOS, iframes can't render PDFs — go directly to ar5iv HTML viewer
+      if (isIOS) {
+        setPdfMode(window.innerWidth >= 1024 ? 'panel' : 'full')
+      } else {
+        setPdfMode(window.innerWidth >= 1024 ? 'panel' : 'full')
+      }
     } else {
       setPdfMode('none')
     }
   }
 
-  // ── Full-screen PDF mode ──────────────────────────────────────────────────
-  if (pdfMode === 'full' && pdfUrl) {
+  // On iOS: the "viewer" iframe shows ar5iv HTML instead of PDF
+  const viewerUrl = isIOS ? htmlUrl : pdfUrl
+  const viewerLabel = isIOS ? 'HTML Viewer' : 'PDF'
+
+  // ── Full-screen viewer mode ───────────────────────────────────────────────
+  if (pdfMode === 'full' && viewerUrl) {
     return (
       <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-        <div className="flex items-center justify-between px-3 py-2 bg-bg-surface border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 bg-bg-surface border-b border-border-subtle flex-shrink-0 gap-2">
           <button
             onClick={() => setPdfMode('none')}
-            className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+            className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors flex-shrink-0"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to abstract
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <button
               onClick={() => setPdfMode('panel')}
               className="hidden lg:flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
@@ -107,17 +129,41 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               <Minimize2 className="w-3 h-3" />
               Split view
             </button>
-            <a
-              href={pdfUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-accent-blue hover:underline"
-            >
-              Open in new tab
-            </a>
+            {pdfUrl && (
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent-blue hover:underline"
+              >
+                {isIOS ? 'Open PDF ↗' : 'Open in new tab'}
+              </a>
+            )}
           </div>
         </div>
-        <iframe src={pdfUrl} className="flex-1 w-full border-0" title="Paper PDF" />
+        {/* iOS notice banner */}
+        {isIOS && (
+          <div className="flex items-center justify-between px-3 py-1.5 bg-bg-elevated border-b border-border-subtle flex-shrink-0">
+            <span className="text-xs text-text-muted">
+              Affichage HTML (ar5iv) — Safari iOS ne supporte pas les PDFs inline
+            </span>
+            {pdfUrl && (
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium text-accent-blue hover:underline flex-shrink-0 ml-3"
+              >
+                📄 Ouvrir le PDF
+              </a>
+            )}
+          </div>
+        )}
+        <iframe
+          src={viewerUrl}
+          className="flex-1 w-full border-0"
+          title={isIOS ? 'Paper HTML (ar5iv)' : 'Paper PDF'}
+        />
       </div>
     )
   }
@@ -279,7 +325,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
 
           {/* Action buttons */}
           <div className="flex flex-wrap gap-3">
-            {pdfUrl && (
+            {(pdfUrl || htmlUrl) && (
               <button
                 onClick={togglePdf}
                 className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95"
@@ -291,7 +337,11 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 }}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
-                {pdfMode !== 'none' ? 'Hide PDF' : 'View PDF'}
+                {pdfMode !== 'none'
+                  ? 'Hide viewer'
+                  : isIOS
+                  ? 'Read paper (HTML)'
+                  : 'View PDF'}
               </button>
             )}
             {htmlUrl && (
@@ -322,11 +372,11 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
         </div>
       </div>
 
-      {/* ── Right: PDF split panel (desktop only) ── */}
-      {pdfMode === 'panel' && pdfUrl && (
+      {/* ── Right: viewer split panel (desktop only) ── */}
+      {pdfMode === 'panel' && viewerUrl && (
         <div className="flex-1 flex flex-col min-h-0 hidden lg:flex">
           <div className="flex items-center justify-between px-3 py-2 bg-bg-surface border-b border-border-subtle flex-shrink-0">
-            <span className="text-xs text-text-muted font-medium">PDF</span>
+            <span className="text-xs text-text-muted font-medium">{viewerLabel}</span>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setPdfMode('full')}
@@ -335,14 +385,16 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 <Maximize2 className="w-3 h-3" />
                 Full screen
               </button>
-              <a
-                href={pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-accent-blue hover:underline"
-              >
-                Open in tab
-              </a>
+              {pdfUrl && (
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent-blue hover:underline"
+                >
+                  {isIOS ? 'PDF ↗' : 'Open in tab'}
+                </a>
+              )}
               <button
                 onClick={() => setPdfMode('none')}
                 className="p-0.5 text-text-muted hover:text-text-primary transition-colors"
@@ -352,9 +404,9 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
             </div>
           </div>
           <iframe
-            src={pdfUrl}
+            src={viewerUrl}
             className="flex-1 w-full border-0 bg-bg-base"
-            title="Paper PDF"
+            title={isIOS ? 'Paper HTML (ar5iv)' : 'Paper PDF'}
           />
         </div>
       )}
