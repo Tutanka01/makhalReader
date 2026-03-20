@@ -105,9 +105,10 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
     }
   }
 
-  // On iOS: the "viewer" iframe shows ar5iv HTML instead of PDF
-  const viewerUrl = isIOS ? htmlUrl : pdfUrl
-  const viewerLabel = isIOS ? 'HTML Viewer' : 'PDF'
+  // Use ar5iv HTML in iframe by default (more reliable than arXiv PDF framing).
+  // PDF stays available via "open in new tab" links.
+  const viewerUrl = htmlUrl || pdfUrl
+  const viewerLabel = htmlUrl ? 'HTML Viewer' : 'PDF'
 
   // ── Full-screen viewer mode ───────────────────────────────────────────────
   if (pdfMode === 'full' && viewerUrl) {
@@ -337,11 +338,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 }}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
-                {pdfMode !== 'none'
-                  ? 'Hide viewer'
-                  : isIOS
-                  ? 'Read paper (HTML)'
-                  : 'View PDF'}
+                {pdfMode !== 'none' ? 'Hide viewer' : htmlUrl ? 'Read paper (HTML)' : 'View PDF'}
               </button>
             )}
             {htmlUrl && (
