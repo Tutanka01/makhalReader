@@ -83,6 +83,10 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
   const isPulling = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => {
+    fetchArticles(true)
+  }, [fetchArticles])
+
   const handleTouchStart = (e: React.TouchEvent) => {
     const scroller = containerRef.current?.querySelector('[data-test-id="virtuoso-scroller"]') as HTMLElement | null
     if (scroller?.scrollTop === 0) {
