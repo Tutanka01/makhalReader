@@ -40,6 +40,7 @@ class ArticleOut(BaseModel):
     bookmarked: bool = False
     extraction_failed: bool = False
     created_at: datetime
+    user_feedback: Optional[int] = None
 
     # Computed fields
     tags: List[str] = []
@@ -80,6 +81,7 @@ class ArticleListItem(BaseModel):
     extraction_failed: bool = False
     created_at: datetime
     feed_name: str = ""
+    user_feedback: Optional[int] = None
 
     # Computed fields
     tags: List[str] = []

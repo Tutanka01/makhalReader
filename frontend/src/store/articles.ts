@@ -9,6 +9,8 @@ interface ArticlesState {
   loading: boolean
   hasMore: boolean
   offset: number
+  searchResults: ArticleListItem[]
+  isSearching: boolean
 
   fetchArticles: (reset?: boolean) => Promise<void>
   fetchArticle: (id: number) => Promise<void>
@@ -16,6 +18,9 @@ interface ArticlesState {
   markUnread: (id: number) => Promise<void>
   markAllRead: () => Promise<void>
   toggleBookmark: (id: number) => Promise<void>
+  submitFeedback: (id: number, value: 1 | -1 | 0) => Promise<void>
+  searchArticles: (query: string) => Promise<void>
+  clearSearch: () => void
   setFilter: (partial: Partial<ArticleFilter>) => void
   prependArticle: (article: ArticleListItem) => void
   setSelectedId: (id: number | null) => void
@@ -55,6 +60,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
   loading: false,
   hasMore: true,
   offset: 0,
+  searchResults: [],
+  isSearching: false,
 
   fetchArticles: async (reset = false) => {
     const state = get()
@@ -207,6 +214,45 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       get().fetchArticles(true)
     }
   },
+
+  submitFeedback: async (id: number, value: 1 | -1 | 0) => {
+    // Optimistic update
+    set(state => ({
+      articles: state.articles.map(a => a.id === id ? { ...a, user_feedback: value === 0 ? null : value } : a),
+      selectedArticle: state.selectedArticle?.id === id
+        ? { ...state.selectedArticle, user_feedback: value === 0 ? null : value }
+        : state.selectedArticle,
+    }))
+    try {
+      await fetch(`/api/articles/${id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      })
+    } catch (err) {
+      console.error('Failed to submit feedback:', err)
+    }
+  },
+
+  searchArticles: async (query: string) => {
+    if (!query.trim()) {
+      set({ searchResults: [], isSearching: false })
+      return
+    }
+    set({ isSearching: true })
+    try {
+      const params = new URLSearchParams({ search: query, limit: '50', sort: 'score' })
+      const resp = await fetch(`/api/articles?${params}`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data: ArticleListItem[] = await resp.json()
+      set({ searchResults: data, isSearching: false })
+    } catch (err) {
+      console.error('Search failed:', err)
+      set({ isSearching: false })
+    }
+  },
+
+  clearSearch: () => set({ searchResults: [], isSearching: false }),
 
   setFilter: (partial: Partial<ArticleFilter>) => {
     set(state => ({

@@ -10,9 +10,12 @@ import {
   Loader2,
   AArrowDown,
   AArrowUp,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
 import { ScoreBar } from './ScoreBar'
+import { PaperView } from './PaperView'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -45,8 +48,12 @@ interface ReaderViewProps {
   hasNext?: boolean
 }
 
+function isArxivUrl(url: string): boolean {
+  return /arxiv\.org\/abs\//i.test(url)
+}
+
 export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext }: ReaderViewProps) {
-  const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark } = useArticlesStore()
+  const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark, submitFeedback } = useArticlesStore()
   const [fontSize, setFontSize] = useState(getSavedFontSize)
   const [scrollProgress, setScrollProgress] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -124,6 +131,8 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   }
 
   const article = selectedArticle
+  const isPaper = isArxivUrl(article.url)
+
   const publishedDate = article.published_at
     ? format(new Date(article.published_at), 'MMM d, yyyy')
     : null
@@ -215,6 +224,27 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             {article.bookmarked ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
           </button>
 
+          {/* Feedback */}
+          <div className="w-px h-4 bg-border-default mx-0.5" />
+          <button
+            onClick={() => submitFeedback(article.id, article.user_feedback === 1 ? 0 : 1)}
+            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
+              article.user_feedback === 1 ? 'text-accent-green' : 'text-text-secondary hover:text-accent-green'
+            }`}
+            title={article.user_feedback === 1 ? 'Remove like' : 'Like — improve future scoring'}
+          >
+            <ThumbsUp className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => submitFeedback(article.id, article.user_feedback === -1 ? 0 : -1)}
+            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
+              article.user_feedback === -1 ? 'text-red-400' : 'text-text-secondary hover:text-red-400'
+            }`}
+            title={article.user_feedback === -1 ? 'Remove dislike' : 'Dislike — improve future scoring'}
+          >
+            <ThumbsDown className="w-4 h-4" />
+          </button>
+
           {/* Copy link */}
           <button
             onClick={copyLink}
@@ -239,151 +269,154 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
         </div>
       </div>
 
-      {/* Scrollable content */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto"
-        onScroll={handleScroll}
-      >
-        <article className="max-w-2xl mx-auto px-5 py-8 pb-20">
+      {/* Paper view — dedicated layout for ArXiv papers */}
+      {isPaper ? (
+        <PaperView article={article} fontSize={fontSize} />
+      ) : (
+        /* Scrollable content — regular articles */
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto"
+          onScroll={handleScroll}
+        >
+          <article className="max-w-2xl mx-auto px-5 py-8 pb-20">
 
-          {/* Tags */}
-          {article.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {article.tags.map(tag => (
-                <span key={tag} className="px-2 py-0.5 bg-bg-elevated rounded-full text-xs text-text-muted font-medium">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Title */}
-          <h1 className="text-2xl font-bold leading-tight text-text-primary mb-3">
-            {article.title}
-          </h1>
-
-          {/* Meta */}
-          <div className="flex flex-wrap items-center gap-1.5 text-sm text-text-muted mb-5 pb-5 border-b border-border-subtle">
-            {article.author && (
-              <span className="font-medium text-text-secondary">{article.author}</span>
-            )}
-            {article.author && (publishedDate || relativeDate) && <span>·</span>}
-            {publishedDate && (
-              <span title={relativeDate || ''}>{publishedDate}</span>
-            )}
-            {relativeDate && publishedDate && (
-              <span className="text-text-muted">({relativeDate})</span>
-            )}
-          </div>
-
-          {/* AI Summary */}
-          {article.summary_bullets.length > 0 && (
-            <div className="mb-6 p-4 bg-bg-surface rounded-xl border border-border-subtle">
-              <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-                AI Summary
-              </p>
-              <ul className="space-y-1.5">
-                {article.summary_bullets.map((bullet, i) => (
-                  <li key={i} className="text-sm text-text-secondary leading-relaxed flex gap-2">
-                    <span className="text-accent-blue flex-shrink-0 mt-0.5">›</span>
-                    <span>{bullet}</span>
-                  </li>
+            {/* Tags */}
+            {article.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {article.tags.map(tag => (
+                  <span key={tag} className="px-2 py-0.5 bg-bg-elevated rounded-full text-xs text-text-muted font-medium">
+                    {tag}
+                  </span>
                 ))}
-              </ul>
-              {article.reason && (
-                <p className="mt-3 pt-3 border-t border-border-subtle text-xs text-text-muted italic">
-                  {article.reason}
-                </p>
+              </div>
+            )}
+
+            {/* Title */}
+            <h1 className="text-2xl font-bold leading-tight text-text-primary mb-3">
+              {article.title}
+            </h1>
+
+            {/* Meta */}
+            <div className="flex flex-wrap items-center gap-1.5 text-sm text-text-muted mb-5 pb-5 border-b border-border-subtle">
+              {article.author && (
+                <span className="font-medium text-text-secondary">{article.author}</span>
+              )}
+              {article.author && (publishedDate || relativeDate) && <span>·</span>}
+              {publishedDate && (
+                <span title={relativeDate || ''}>{publishedDate}</span>
+              )}
+              {relativeDate && publishedDate && (
+                <span className="text-text-muted">({relativeDate})</span>
               )}
             </div>
-          )}
 
-          {/* Hero image */}
-          {heroImage && (
-            <div className="mb-6 rounded-xl overflow-hidden">
-              <img
-                src={heroImage}
-                alt=""
-                className="w-full h-auto"
-                loading="lazy"
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-              />
-            </div>
-          )}
+            {/* AI Summary */}
+            {article.summary_bullets.length > 0 && (
+              <div className="mb-6 p-4 bg-bg-surface rounded-xl border border-border-subtle">
+                <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2.5">
+                  AI Summary
+                </p>
+                <ul className="space-y-1.5">
+                  {article.summary_bullets.map((bullet, i) => (
+                    <li key={i} className="text-sm text-text-secondary leading-relaxed flex gap-2">
+                      <span className="text-accent-blue flex-shrink-0 mt-0.5">›</span>
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+                {article.reason && (
+                  <p className="mt-3 pt-3 border-t border-border-subtle text-xs text-text-muted italic">
+                    {article.reason}
+                  </p>
+                )}
+              </div>
+            )}
 
-          {/* Body */}
-          {article.content_html ? (
-            <div
-              className="reader-content"
-              style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-              dangerouslySetInnerHTML={{ __html: article.content_html }}
-            />
-          ) : article.content_text ? (
-            // content_text may contain raw HTML (e.g. old articles stored before the
-            // extractor fix, or RSS summaries). Detect and render accordingly.
-            looksLikeHtml(article.content_text) ? (
+            {/* Hero image */}
+            {heroImage && (
+              <div className="mb-6 rounded-xl overflow-hidden">
+                <img
+                  src={heroImage}
+                  alt=""
+                  className="w-full h-auto"
+                  loading="lazy"
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+              </div>
+            )}
+
+            {/* Body */}
+            {article.content_html ? (
               <div
                 className="reader-content"
                 style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-                dangerouslySetInnerHTML={{ __html: article.content_text }}
+                dangerouslySetInnerHTML={{ __html: article.content_html }}
               />
+            ) : article.content_text ? (
+              looksLikeHtml(article.content_text) ? (
+                <div
+                  className="reader-content"
+                  style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
+                  dangerouslySetInnerHTML={{ __html: article.content_text }}
+                />
+              ) : (
+                <div
+                  className="font-serif text-text-primary space-y-4"
+                  style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
+                >
+                  {article.content_text.split('\n\n').filter(Boolean).map((para, i) => (
+                    <p key={i}>{para}</p>
+                  ))}
+                </div>
+              )
             ) : (
-              <div
-                className="font-serif text-text-primary space-y-4"
-                style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-              >
-                {article.content_text.split('\n\n').filter(Boolean).map((para, i) => (
-                  <p key={i}>{para}</p>
-                ))}
+              <div className="text-text-muted text-sm text-center py-8">
+                <p>Contenu non disponible.</p>
+                <a
+                  href={article.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-accent-blue hover:underline"
+                >
+                  Lire sur le site original <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
-            )
-          ) : (
-            <div className="text-text-muted text-sm text-center py-8">
-              <p>Contenu non disponible.</p>
+            )}
+
+            {/* Footer */}
+            <div className="mt-10 pt-6 border-t border-border-subtle text-center">
               <a
                 href={article.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-accent-blue hover:underline"
+                className="inline-flex items-center gap-2 text-sm text-accent-blue hover:underline"
               >
-                Lire sur le site original <ExternalLink className="w-3 h-3" />
+                Lire l'article original
+                <ExternalLink className="w-4 h-4" />
               </a>
             </div>
-          )}
 
-          {/* Footer */}
-          <div className="mt-10 pt-6 border-t border-border-subtle text-center">
-            <a
-              href={article.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-accent-blue hover:underline"
-            >
-              Lire l'article original
-              <ExternalLink className="w-4 h-4" />
-            </a>
-          </div>
-
-          {/* Auto-advance — next article */}
-          {hasNext && onNext && scrollProgress >= 80 && (
-            <button
-              onClick={onNext}
-              className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent-blue/40 hover:bg-bg-elevated transition-all duration-200 group"
-            >
-              <span className="text-xs text-text-muted group-hover:text-text-secondary transition-colors">
-                Article suivant
-              </span>
-              <svg
-                className="w-4 h-4 text-text-muted group-hover:text-accent-blue transition-colors translate-x-0 group-hover:translate-x-0.5 duration-200"
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            {/* Auto-advance — next article */}
+            {hasNext && onNext && scrollProgress >= 80 && (
+              <button
+                onClick={onNext}
+                className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent-blue/40 hover:bg-bg-elevated transition-all duration-200 group"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          )}
-        </article>
-      </div>
+                <span className="text-xs text-text-muted group-hover:text-text-secondary transition-colors">
+                  Article suivant
+                </span>
+                <svg
+                  className="w-4 h-4 text-text-muted group-hover:text-accent-blue transition-colors translate-x-0 group-hover:translate-x-0.5 duration-200"
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+          </article>
+        </div>
+      )}
     </div>
   )
 }

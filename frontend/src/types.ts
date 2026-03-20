@@ -26,6 +26,7 @@ export interface Article {
   bookmarked: boolean
   extraction_failed: boolean
   created_at: string
+  user_feedback: number | null
   tags: string[]
   summary_bullets: string[]
   images: string[]
@@ -46,6 +47,7 @@ export interface ArticleListItem {
   extraction_failed: boolean
   created_at: string
   feed_name: string
+  user_feedback: number | null
   tags: string[]
   summary_bullets: string[]
 }

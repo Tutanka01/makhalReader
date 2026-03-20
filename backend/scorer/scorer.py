@@ -168,15 +168,43 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
     return None
 
 
+async def fetch_feedback_context(client: httpx.AsyncClient) -> str:
+    """Fetch recently liked/disliked articles to personalise scoring context."""
+    try:
+        resp = await client.get(
+            f"{API_BASE}/api/internal/feedback-examples",
+            headers=INTERNAL_HEADERS,
+            timeout=5,
+        )
+        if not resp.is_success:
+            return ""
+        data = resp.json()
+        liked = data.get("liked", [])
+        disliked = data.get("disliked", [])
+        if not liked and not disliked:
+            return ""
+        lines = []
+        if liked:
+            titles = ", ".join(f'"{e["title"]}"' for e in liked[:5])
+            lines.append(f"Reader recently liked (high relevance): {titles}")
+        if disliked:
+            titles = ", ".join(f'"{e["title"]}"' for e in disliked[:5])
+            lines.append(f"Reader recently disliked (low relevance): {titles}")
+        return "\n\n---\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
 @app.post("/score")
 async def score_article(req: ScoreRequest):
-    # Build user message
-    content_preview = (req.content_text or req.rss_summary or "")[:3000]
-    user_message = f"Titre: {req.title}\n\nContenu:\n{content_preview}"
-
     result: Optional[ScoreResult] = None
 
     async with httpx.AsyncClient() as client:
+        # Build user message with optional feedback context for personalisation
+        content_preview = (req.content_text or req.rss_summary or "")[:3000]
+        feedback_ctx = await fetch_feedback_context(client)
+        user_message = f"Titre: {req.title}\n\nContenu:\n{content_preview}{feedback_ctx}"
+
         # Try OpenRouter first
         if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
             result = await score_with_openrouter(client, user_message)

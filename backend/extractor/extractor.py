@@ -31,6 +31,81 @@ HEADERS = {
 
 MIN_CONTENT_LENGTH = 300
 
+ARXIV_ABS_RE = re.compile(r"arxiv\.org/abs/(?P<id>[0-9]{4}\.[0-9]+(v\d+)?|[a-z\-]+/\d{7})", re.I)
+
+
+def arxiv_paper_id(url: str) -> Optional[str]:
+    m = ARXIV_ABS_RE.search(url)
+    return m.group("id") if m else None
+
+
+def extract_arxiv(html: str, url: str) -> dict:
+    """
+    Structured extraction for arxiv.org abstract pages.
+    Returns title, abstract (as text+html), authors, categories.
+    """
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Title — strip the "Title:" descriptor span
+        title_tag = soup.find("h1", class_="title")
+        title = ""
+        if title_tag:
+            for span in title_tag.find_all("span", class_="descriptor"):
+                span.decompose()
+            title = title_tag.get_text(separator=" ", strip=True)
+
+        # Authors — strip the "Authors:" descriptor
+        authors_tag = soup.find("div", class_="authors")
+        authors = ""
+        if authors_tag:
+            for span in authors_tag.find_all("span", class_="descriptor"):
+                span.decompose()
+            authors = authors_tag.get_text(separator=", ", strip=True).strip(", ")
+
+        # Abstract — strip the "Abstract:" descriptor
+        abstract_tag = soup.find("blockquote", class_="abstract")
+        abstract = ""
+        if abstract_tag:
+            for span in abstract_tag.find_all("span", class_="descriptor"):
+                span.decompose()
+            abstract = abstract_tag.get_text(separator=" ", strip=True)
+
+        # Subjects/categories
+        subjects_tag = soup.find("td", class_="tablecell subjects") or soup.find("div", class_="subjects")
+        subjects = ""
+        if subjects_tag:
+            for span in subjects_tag.find_all("span", class_="descriptor"):
+                span.decompose()
+            subjects = subjects_tag.get_text(separator=" ", strip=True)
+
+        if not abstract:
+            return {}
+
+        # Build clean content HTML
+        paper_id = arxiv_paper_id(url) or ""
+        pdf_url = f"https://arxiv.org/pdf/{paper_id}" if paper_id else ""
+        html5_url = f"https://ar5iv.org/abs/{paper_id}" if paper_id else ""
+
+        content_html = f"""<div class="arxiv-paper">
+<p class="arxiv-abstract">{abstract}</p>
+{f'<p class="arxiv-subjects"><em>{subjects}</em></p>' if subjects else ""}
+<div class="arxiv-links">
+{f'<a href="{pdf_url}" target="_blank" rel="noopener noreferrer" class="arxiv-pdf-link">📄 Open PDF</a>' if pdf_url else ""}
+{f'<a href="{html5_url}" target="_blank" rel="noopener noreferrer" class="arxiv-html-link">🌐 HTML version (ar5iv)</a>' if html5_url else ""}
+</div>
+</div>"""
+
+        return {
+            "title": title or None,
+            "text": abstract,
+            "author": authors or None,
+            "raw_html": content_html,
+            "is_paper": True,
+        }
+    except Exception:
+        return {}
+
 
 class ExtractRequest(BaseModel):
     url: str
@@ -391,6 +466,50 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
         author: Optional[str] = None
         images: List[str] = []
         canonical_url: Optional[str] = None
+
+        # ── Strategy 0: ArXiv special extraction ─────────────────────────
+        # arxiv.org/abs/ pages have structured HTML — extract abstract,
+        # title, authors, categories directly instead of using readability.
+        if arxiv_paper_id(req.url):
+            html = await fetch_url(client, req.url)
+            if html:
+                arxiv_data = extract_arxiv(html, req.url)
+                if arxiv_data.get("text"):
+                    content_text = arxiv_data["text"]
+                    content_html = arxiv_data["raw_html"]
+                    extracted_title = arxiv_data.get("title")
+                    author = arxiv_data.get("author")
+                    # Canonical: strip version suffix  (abs/2501.12345v2 → abs/2501.12345)
+                    pid = arxiv_paper_id(req.url)
+                    if pid:
+                        base_pid = re.sub(r"v\d+$", "", pid)
+                        canonical_url = f"https://arxiv.org/abs/{base_pid}"
+                    # Return early — no need for other strategies
+                    final_title = resolve_title(extracted_title, req.rss_title, content_text)
+                    return ExtractResponse(
+                        title=final_title,
+                        content_html=content_html,
+                        content_text=content_text,
+                        images=[],
+                        author=author,
+                        read_time_minutes=estimate_read_time(content_text),
+                        extraction_failed=False,
+                        canonical_url=canonical_url,
+                    )
+            # Fallback: use RSS summary (ArXiv RSS includes the abstract)
+            if req.rss_summary:
+                abstract = strip_html(req.rss_summary)
+                final_title = resolve_title(None, req.rss_title, abstract)
+                return ExtractResponse(
+                    title=final_title,
+                    content_html=f"<p>{abstract}</p>",
+                    content_text=abstract,
+                    images=[],
+                    author=None,
+                    read_time_minutes=estimate_read_time(abstract),
+                    extraction_failed=False,
+                    canonical_url=canonical_url,
+                )
 
         # ── Strategy 1: direct fetch ──────────────────────────────────────
         html = await fetch_url(client, req.url)

@@ -74,6 +74,7 @@ class Article(Base):
     extraction_failed = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     title_fingerprint = Column(String(16), nullable=True, index=True)
+    user_feedback = Column(Integer, nullable=True)  # 1=like, -1=dislike, NULL=no feedback
 
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
@@ -105,6 +106,7 @@ def init_db():
     # Additive migrations — safe to run multiple times.
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
+        "ALTER TABLE articles ADD COLUMN user_feedback INTEGER",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

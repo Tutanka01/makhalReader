@@ -136,6 +136,12 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
             <span className="flex-shrink-0">{relativeDate}</span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+            {article.user_feedback === 1 && (
+              <span className="text-xs text-accent-green" title="Liked">👍</span>
+            )}
+            {article.user_feedback === -1 && (
+              <span className="text-xs text-red-400" title="Disliked">👎</span>
+            )}
             {article.bookmarked && (
               <BookmarkCheck className="w-3.5 h-3.5 text-accent-blue" />
             )}

@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -122,6 +122,13 @@ DEFAULT_FEEDS = [
     {"url": "https://research.nccgroup.com/feed/",                       "name": "NCC Group Research",         "category": "Sec"},
     {"url": "https://blog.xpnsec.com/rss.xml",                          "name": "Adam Chester (XPN)",         "category": "Sec"},
     {"url": "https://objective-see.org/rss.xml",                         "name": "Objective-See",              "category": "Sec"},
+    # ── ArXiv — Research Papers ───────────────────────────────────────────
+    {"url": "https://export.arxiv.org/rss/cs.AI",                       "name": "arXiv cs.AI",                "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.LG",                       "name": "arXiv cs.LG",                "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.DC",                       "name": "arXiv cs.DC",                "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.NI",                       "name": "arXiv cs.NI",                "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.CR",                       "name": "arXiv cs.CR",                "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.OS",                       "name": "arXiv cs.OS",                "category": "Papers"},
     # ── High-signal généraliste ───────────────────────────────────────────
     {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",             "category": "High-signal"},
     {"url": "https://jvns.ca/atom.xml",                                  "name": "Julia Evans",                "category": "High-signal"},
@@ -290,6 +297,7 @@ async def list_articles(
     bookmarked: Optional[bool] = Query(None),
     url: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
+    search: Optional[str] = Query(None, max_length=200),
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
@@ -306,10 +314,21 @@ async def list_articles(
             return [item]
         return []
 
-    if status == "unread":
-        query = query.filter(Article.read_at.is_(None))
-    elif status == "read":
-        query = query.filter(Article.read_at.isnot(None))
+    # Full-text search: searches across all articles regardless of read status
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                Article.title.ilike(like),
+                Article.content_text.ilike(like),
+                Article.tags_json.ilike(like),
+            )
+        )
+    else:
+        if status == "unread":
+            query = query.filter(Article.read_at.is_(None))
+        elif status == "read":
+            query = query.filter(Article.read_at.isnot(None))
 
     if category and category not in ("All", "all"):
         query = query.filter(Feed.category == category)
@@ -347,6 +366,7 @@ def _row_to_list_item(row) -> ArticleListItem:
         extraction_failed=article.extraction_failed,
         created_at=article.created_at,
         feed_name=feed_name or "",
+        user_feedback=article.user_feedback,
     )
 
 
@@ -403,6 +423,27 @@ async def toggle_bookmark(article_id: int, db: Session = Depends(get_db), _: Non
     article.bookmarked = not article.bookmarked
     db.commit()
     return {"bookmarked": article.bookmarked}
+
+
+class FeedbackRequest(BaseModel):
+    value: int  # 1=like, -1=dislike, 0=remove feedback
+
+
+@app.post("/api/articles/{article_id}/feedback")
+async def submit_feedback(
+    article_id: int,
+    body: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if body.value not in (-1, 0, 1):
+        raise HTTPException(status_code=422, detail="value must be -1, 0, or 1")
+    article.user_feedback = None if body.value == 0 else body.value
+    db.commit()
+    return {"user_feedback": article.user_feedback}
 
 
 @app.get("/api/feeds", response_model=List[FeedWithCount])
@@ -598,6 +639,34 @@ async def internal_list_feeds(
         {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
         for feed, _ in results
     ]
+
+
+@app.get("/api/internal/feedback-examples")
+async def internal_feedback_examples(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Return recently liked/disliked article titles for scorer context."""
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    liked = (
+        db.query(Article.title, Article.tags_json)
+        .filter(Article.user_feedback == 1)
+        .order_by(Article.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    disliked = (
+        db.query(Article.title, Article.tags_json)
+        .filter(Article.user_feedback == -1)
+        .order_by(Article.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    return {
+        "liked": [{"title": r.title, "tags": json.loads(r.tags_json or "[]")} for r in liked],
+        "disliked": [{"title": r.title, "tags": json.loads(r.tags_json or "[]")} for r in disliked],
+    }
 
 
 @app.get("/api/internal/articles/exists")
@@ -820,6 +889,7 @@ async def internal_score_article(
         "extraction_failed": article.extraction_failed,
         "created_at": article.created_at.isoformat(),
         "feed_name": feed.name if feed else "",
+        "user_feedback": article.user_feedback,
     }
     await _broadcast_new_article(article_dict)
 

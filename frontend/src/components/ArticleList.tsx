@@ -18,7 +18,7 @@ interface ArticleListProps {
 }
 
 export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange, onLogout }: ArticleListProps) {
-  const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead } = useArticlesStore()
+  const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchArticles, clearSearch, searchResults, isSearching } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
   const [confirmingReadAll, setConfirmingReadAll] = useState(false)
@@ -50,7 +50,20 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
   const closeSearch = useCallback(() => {
     setSearchOpen(false)
     setSearchQuery('')
-  }, [])
+    clearSearch()
+  }, [clearSearch])
+
+  // Debounced backend search
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    if (!searchQuery.trim()) {
+      clearSearch()
+      return
+    }
+    searchTimer.current = setTimeout(() => searchArticles(searchQuery.trim()), 300)
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
+  }, [searchQuery])
 
   // `/` key opens search (when not in an input)
   useEffect(() => {
@@ -108,14 +121,8 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
 
   const unreadCount = filter.status === 'unread' ? articles.length : null
 
-  const q = searchQuery.toLowerCase().trim()
-  const displayedArticles = q
-    ? articles.filter(a =>
-        a.title.toLowerCase().includes(q) ||
-        a.feed_name.toLowerCase().includes(q) ||
-        a.tags.some(t => t.toLowerCase().includes(q))
-      )
-    : articles
+  const isSearchActive = Boolean(searchQuery.trim())
+  const displayedArticles = isSearchActive ? searchResults : articles
 
   return (
     <div
@@ -226,9 +233,9 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             placeholder="Search title, feed, tag…"
             className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
           />
-          {searchQuery && (
+          {isSearchActive && (
             <span className="text-xs text-text-muted tabular-nums flex-shrink-0">
-              {displayedArticles.length}
+              {isSearching ? '…' : `${searchResults.length}`}
             </span>
           )}
           <button onClick={closeSearch} className="p-0.5 rounded text-text-muted hover:text-text-primary">
@@ -312,14 +319,14 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
       {currentView === 'feed' && (
         <>
           {/* Empty state */}
-          {!loading && displayedArticles.length === 0 && (
+          {!loading && !isSearching && displayedArticles.length === 0 && (
             <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
               <div className="text-4xl mb-3 opacity-20">◎</div>
               <p className="text-sm font-medium text-text-secondary mb-1">
-                {q ? 'Aucun résultat' : 'Aucun article'}
+                {isSearchActive ? 'Aucun résultat' : 'Aucun article'}
               </p>
               <p className="text-xs text-text-muted leading-relaxed max-w-[200px]">
-                {q
+                {isSearchActive
                   ? `Aucun article ne correspond à "${searchQuery}"`
                   : filter.minScore > 0
                   ? `Aucun article avec score ≥ ${filter.minScore}`
@@ -327,13 +334,18 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               </p>
             </div>
           )}
+          {isSearching && (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
+            </div>
+          )}
 
           {/* Article list */}
-          {displayedArticles.length > 0 && (
+          {!isSearching && displayedArticles.length > 0 && (
             <Virtuoso
               className="flex-1"
               data={displayedArticles}
-              endReached={q ? undefined : loadMore}
+              endReached={isSearchActive ? undefined : loadMore}
               overscan={200}
               itemContent={(_, article) => (
                 <ArticleCard
@@ -343,7 +355,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
                   onClick={() => onSelect(article.id)}
                 />
               )}
-              components={{ Footer: q ? () => null : Footer }}
+              components={{ Footer: isSearchActive ? () => null : Footer }}
             />
           )}
 

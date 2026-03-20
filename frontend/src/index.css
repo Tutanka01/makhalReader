@@ -235,6 +235,7 @@ body,
 /* Readability sometimes wraps in a div — neutralize it */
 .reader-content > div { display: contents; }
 
+
 /* Line clamp utilities */
 .line-clamp-1 {
   display: -webkit-box;
