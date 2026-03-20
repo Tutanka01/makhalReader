@@ -646,26 +646,54 @@ async def internal_feedback_examples(
     x_internal_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
-    """Return recently liked/disliked article titles for scorer context."""
+    """Return an aggregated preference profile (tag frequencies + examples) for scorer personalisation.
+
+    Aggregates tags across the *entire* feedback history rather than just recent titles —
+    this yields a stable, token-efficient signal that generalises to unseen articles.
+    """
     if x_internal_secret != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
-    liked = (
+
+    liked_rows = (
         db.query(Article.title, Article.tags_json)
         .filter(Article.user_feedback == 1)
         .order_by(Article.created_at.desc())
-        .limit(10)
         .all()
     )
-    disliked = (
+    disliked_rows = (
         db.query(Article.title, Article.tags_json)
         .filter(Article.user_feedback == -1)
         .order_by(Article.created_at.desc())
-        .limit(10)
         .all()
     )
+
+    def aggregate_tags(rows: list, top_n: int) -> list[dict]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            for tag in json.loads(row.tags_json or "[]"):
+                counts[tag] = counts.get(tag, 0) + 1
+        return [
+            {"tag": t, "count": c}
+            for t, c in sorted(counts.items(), key=lambda x: -x[1])[:top_n]
+        ]
+
+    def format_examples(rows: list, max_n: int) -> list[dict]:
+        out = []
+        for row in rows[:max_n]:
+            tags = json.loads(row.tags_json or "[]")
+            out.append({"title": row.title, "tags": tags[:5]})
+        return out
+
     return {
-        "liked": [{"title": r.title, "tags": json.loads(r.tags_json or "[]")} for r in liked],
-        "disliked": [{"title": r.title, "tags": json.loads(r.tags_json or "[]")} for r in disliked],
+        # Tag frequencies over full history — primary personalisation signal
+        "liked_tags": aggregate_tags(liked_rows, top_n=10),
+        "disliked_tags": aggregate_tags(disliked_rows, top_n=8),
+        # Recent examples for contrastive illustration
+        "liked_examples": format_examples(liked_rows, max_n=4),
+        "disliked_examples": format_examples(disliked_rows, max_n=3),
+        # Totals so the scorer can skip if cold-start
+        "total_liked": len(liked_rows),
+        "total_disliked": len(disliked_rows),
     }
 
 

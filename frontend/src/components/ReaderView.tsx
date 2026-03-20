@@ -181,26 +181,26 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
         </div>
 
         <div className="flex items-center gap-0.5">
-          {/* Font size */}
+          {/* Font size — hidden on small screens to avoid clipping feedback buttons */}
           <button
             onClick={() => adjustFontSize(-1)}
             disabled={fontSize <= FONT_SIZE_MIN}
-            className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
+            className="hidden sm:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
             title="Decrease font size"
           >
             <AArrowDown className="w-4 h-4" />
           </button>
-          <span className="text-xs text-text-muted tabular-nums w-6 text-center">{fontSize}</span>
+          <span className="hidden sm:inline text-xs text-text-muted tabular-nums w-6 text-center">{fontSize}</span>
           <button
             onClick={() => adjustFontSize(1)}
             disabled={fontSize >= FONT_SIZE_MAX}
-            className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
+            className="hidden sm:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
             title="Increase font size"
           >
             <AArrowUp className="w-4 h-4" />
           </button>
 
-          <div className="w-px h-4 bg-border-default mx-1" />
+          <div className="hidden sm:block w-px h-4 bg-border-default mx-1" />
 
           {/* Read/unread toggle */}
           <button
