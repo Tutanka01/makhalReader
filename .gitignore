@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 node_modules/
 frontend/dist/
+
+.claude/
+
+.ruff_cache/

@@ -115,12 +115,11 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       let articles: ArticleListItem[]
       if (!updated) {
         articles = state.articles
-      } else if (updated.bookmarked) {
-        // Bookmarked articles: gray out in place, never move
-        articles = state.articles.map(a => a.id === id ? updated : a)
       } else {
-        // Regular articles: gray out and sink to the bottom
-        articles = [...state.articles.filter(a => a.id !== id), updated]
+        // All articles: gray out in place during current session.
+        // On next reload the backend re-sorts: read articles are excluded
+        // from the unread filter (or sunk to the bottom in "all" view).
+        articles = state.articles.map(a => a.id === id ? updated : a)
       }
 
       return {

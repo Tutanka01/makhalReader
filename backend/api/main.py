@@ -339,10 +339,12 @@ async def list_articles(
     if min_score is not None:
         query = query.filter(Article.score >= min_score)
 
+    # Unread articles always float above read ones (read_at IS NULL = True → 1 > 0)
+    unread_first = Article.read_at.is_(None).desc()
     if sort == "score":
-        query = query.order_by(Article.score.desc().nullslast(), Article.created_at.desc())
+        query = query.order_by(unread_first, Article.score.desc().nullslast(), Article.created_at.desc())
     else:
-        query = query.order_by(Article.published_at.desc().nullslast(), Article.created_at.desc())
+        query = query.order_by(unread_first, Article.published_at.desc().nullslast(), Article.created_at.desc())
 
     query = query.offset(offset).limit(limit)
     results = query.all()
