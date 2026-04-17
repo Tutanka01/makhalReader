@@ -156,12 +156,15 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   const [showHighlightList, setShowHighlightList] = useState(false)
   const [showAskPanel, setShowAskPanel] = useState(false)
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
+  const [noteTooltip, setNoteTooltip] = useState<{ note: string; x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const articleHighlightsRef = useRef<typeof articleHighlights>([])
   const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoReadScheduledForRef = useRef<number | null>(null)
 
   const articleHighlights = highlights[articleId] ?? []
+  articleHighlightsRef.current = articleHighlights
 
   useEffect(() => {
     fetchArticle(articleId)
@@ -206,6 +209,31 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
     return () => {
       document.removeEventListener('mouseup', handleMouseUp)
       document.removeEventListener('touchend', handleMouseUp)
+    }
+  }, [])
+
+  // Note tooltip on highlight hover
+  useEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+
+    const handleMouseOver = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-hid]') as HTMLElement | null
+      if (!mark) { setNoteTooltip(null); return }
+      const hid = parseInt(mark.getAttribute('data-hid') || '0', 10)
+      const h = articleHighlightsRef.current.find(h => h.id === hid)
+      if (!h?.note) { setNoteTooltip(null); return }
+      const rect = mark.getBoundingClientRect()
+      setNoteTooltip({ note: h.note, x: rect.left + rect.width / 2, y: rect.top })
+    }
+
+    const handleMouseLeave = () => setNoteTooltip(null)
+
+    container.addEventListener('mouseover', handleMouseOver)
+    container.addEventListener('mouseleave', handleMouseLeave)
+    return () => {
+      container.removeEventListener('mouseover', handleMouseOver)
+      container.removeEventListener('mouseleave', handleMouseLeave)
     }
   }, [])
 
@@ -611,6 +639,43 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           onSave={handleSaveHighlight}
           onClose={() => setPendingSelection(null)}
         />
+      )}
+
+      {/* Note tooltip — appears on hovering a highlight that has a note */}
+      {noteTooltip && (
+        <div
+          className="fixed z-[70] pointer-events-none"
+          style={{
+            left: noteTooltip.x,
+            top: noteTooltip.y - 10,
+            transform: 'translateX(-50%) translateY(-100%)',
+          }}
+        >
+          <div
+            className="relative rounded-xl px-3 py-2 text-xs leading-relaxed shadow-2xl"
+            style={{
+              background: '#1E2430',
+              border: '1px solid #2A3341',
+              color: '#A0ADB8',
+              maxWidth: 220,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            }}
+          >
+            {noteTooltip.note}
+            {/* Arrow pointing down */}
+            <div
+              className="absolute left-1/2 -translate-x-1/2"
+              style={{
+                bottom: -6,
+                width: 0,
+                height: 0,
+                borderLeft: '6px solid transparent',
+                borderRight: '6px solid transparent',
+                borderTop: '6px solid #2A3341',
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   )
