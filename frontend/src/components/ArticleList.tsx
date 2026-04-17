@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { DigestView } from './DigestView'
+import { StatsView } from './StatsView'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 
@@ -12,8 +13,8 @@ interface ArticleListProps {
   onSelect: (id: number) => void
   selectedId: number | null
   onOpenFeedManager: () => void
-  currentView: 'feed' | 'digest'
-  onViewChange: (v: 'feed' | 'digest') => void
+  currentView: 'feed' | 'digest' | 'stats'
+  onViewChange: (v: 'feed' | 'digest' | 'stats') => void
   onLogout: () => void
 }
 
@@ -160,6 +161,19 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             <Sparkles className="w-3 h-3" />
             Digest
           </button>
+          {/* Stats toggle */}
+          <button
+            onClick={() => onViewChange(currentView === 'stats' ? 'feed' : 'stats')}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+              currentView === 'stats'
+                ? 'bg-accent-blue/15 text-accent-blue'
+                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+            }`}
+            title="Statistiques de lecture"
+          >
+            <BarChart2 className="w-3 h-3" />
+            Stats
+          </button>
         </div>
         <div className="flex items-center gap-0.5">
           {/* Search — hidden in digest */}
@@ -222,6 +236,11 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
       {/* Digest view — replaces list when active */}
       {currentView === 'digest' && (
         <DigestView onSelect={onSelect} />
+      )}
+
+      {/* Stats view — replaces list when active */}
+      {currentView === 'stats' && (
+        <StatsView onClose={() => onViewChange('feed')} />
       )}
 
       {/* Search bar */}

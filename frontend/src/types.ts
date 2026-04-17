@@ -52,6 +52,39 @@ export interface ArticleListItem {
   summary_bullets: string[]
 }
 
+export interface Highlight {
+  id: number
+  article_id: number
+  selected_text: string
+  prefix_context: string
+  suffix_context: string
+  color: 'yellow' | 'green' | 'blue' | 'purple'
+  note: string | null
+  created_at: string
+}
+
+export interface DailyReadCount {
+  date: string
+  count: number
+}
+
+export interface TagFrequency {
+  tag: string
+  count: number
+}
+
+export interface Stats {
+  total_read: number
+  total_unread: number
+  total_bookmarked: number
+  streak_days: number
+  daily_counts: DailyReadCount[]
+  avg_score_read: number | null
+  top_tags: TagFrequency[]
+  total_highlights: number
+  articles_per_category: Record<string, number>
+}
+
 export type SortOption = 'score' | 'date'
 export type StatusOption = 'unread' | 'read' | 'all'
 

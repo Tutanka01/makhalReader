@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import httpx
+
 import feedparser
 import xml.etree.ElementTree as ET
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
@@ -30,20 +32,36 @@ from auth import (
     set_session_cookie,
     verify_password,
 )
-from database import Article, Feed, SessionLocal, get_db, init_db
+from database import Article, Feed, Highlight, SessionLocal, get_db, init_db
 from models import (
     ArticleListItem,
     ArticleOut,
+    AskRequest,
+    DailyReadCount,
     FeedCreate,
     FeedOut,
     FeedWithCount,
+    HighlightCreate,
+    HighlightOut,
+    HighlightUpdate,
     InternalArticleCreate,
     InternalScoreUpdate,
+    StatsOut,
+    TagFrequency,
 )
 
 API_SECRET = os.getenv("API_SECRET", "changeme")
 MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
 ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
+
+# LLM config (shared with scorer service)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+QA_MODEL = os.getenv("QA_MODEL", os.getenv("SCORER_MODEL", "google/gemini-flash-1.5"))
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+
+# Semaphore to prevent concurrent LLM ask calls (cost protection)
+_ask_semaphore = asyncio.Semaphore(2)
 
 # CORS: in production, lock to your actual domain.
 # Set CORS_ORIGIN=https://reader.yourdomain.com in .env
@@ -56,7 +74,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "X-Internal-Secret"],
 )
 
@@ -879,6 +897,331 @@ async def normalize_article_urls(db: Session = Depends(get_db), _: None = _auth)
         raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
 
     return {"updated": updated, "merged": merged, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# Highlights
+# ---------------------------------------------------------------------------
+
+@app.get("/api/articles/{article_id}/highlights", response_model=List[HighlightOut])
+async def list_highlights(article_id: int, db: Session = Depends(get_db), _: None = _auth):
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    highlights = (
+        db.query(Highlight)
+        .filter(Highlight.article_id == article_id)
+        .order_by(Highlight.created_at)
+        .all()
+    )
+    return [HighlightOut.model_validate(h) for h in highlights]
+
+
+@app.post("/api/articles/{article_id}/highlights", response_model=HighlightOut, status_code=201)
+async def create_highlight(
+    article_id: int,
+    body: HighlightCreate,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    highlight = Highlight(
+        article_id=article_id,
+        selected_text=body.selected_text,
+        prefix_context=body.prefix_context,
+        suffix_context=body.suffix_context,
+        color=body.color,
+        note=body.note,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(highlight)
+    db.commit()
+    db.refresh(highlight)
+    return HighlightOut.model_validate(highlight)
+
+
+@app.put("/api/articles/{article_id}/highlights/{highlight_id}", response_model=HighlightOut)
+async def update_highlight(
+    article_id: int,
+    highlight_id: int,
+    body: HighlightUpdate,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    highlight = (
+        db.query(Highlight)
+        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
+        .first()
+    )
+    if not highlight:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    if body.color is not None:
+        highlight.color = body.color
+    if body.note is not None:
+        highlight.note = body.note
+    db.commit()
+    db.refresh(highlight)
+    return HighlightOut.model_validate(highlight)
+
+
+@app.delete("/api/articles/{article_id}/highlights/{highlight_id}")
+async def delete_highlight(
+    article_id: int,
+    highlight_id: int,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    highlight = (
+        db.query(Highlight)
+        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
+        .first()
+    )
+    if not highlight:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    db.delete(highlight)
+    db.commit()
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Ask AI — streaming Q&A on a specific article
+# ---------------------------------------------------------------------------
+
+@app.post("/api/articles/{article_id}/ask")
+async def ask_article(
+    article_id: int,
+    body: AskRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    context = (article.content_text or "").strip()
+    if not context and article.content_html:
+        # Rough HTML → text fallback (strip tags)
+        context = re.sub(r"<[^>]+>", " ", article.content_html)
+        context = re.sub(r"\s+", " ", context).strip()
+    context = context[:6000]
+
+    system_prompt = (
+        "You are an expert reading assistant helping a user engage deeply with an article they are reading.\n\n"
+        "## Your rules\n"
+        "1. Answer **exclusively** using the article content provided — never invent or assume facts not present.\n"
+        "2. Detect the language of the user's question and reply **in that same language**.\n"
+        "3. Adapt your format to the question type:\n"
+        "   - **Summary / overview** → 3–5 bullet points, then 1 short sentence conclusion.\n"
+        "   - **Specific fact or quote** → cite the relevant passage, then explain it briefly.\n"
+        "   - **Analysis / opinion question** → structured paragraphs, highlight evidence from the text.\n"
+        "   - **List or enumeration** → numbered list.\n"
+        "4. Be concise. Avoid padding, greetings, or meta-commentary like \"Great question!\".\n"
+        "5. If the answer is truly absent from the article, say so in one sentence and do not speculate.\n"
+        "6. When quoting the article, use > blockquote Markdown syntax.\n\n"
+        "## Article\n"
+        f"**Title:** {article.title}\n\n"
+        f"{context}"
+    )
+
+    async def generate():
+        async with _ask_semaphore:
+            use_openrouter = bool(OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"))
+            try:
+                if use_openrouter:
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        async with client.stream(
+                            "POST",
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "model": QA_MODEL,
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": body.question},
+                                ],
+                                "stream": True,
+                                "max_tokens": 1024,
+                                "temperature": 0.3,
+                            },
+                        ) as resp:
+                            async for line in resp.aiter_lines():
+                                if not line.startswith("data: "):
+                                    continue
+                                data = line[6:].strip()
+                                if data == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data)
+                                    delta = chunk["choices"][0]["delta"].get("content", "")
+                                    if delta:
+                                        yield f"data: {json.dumps({'text': delta})}\n\n"
+                                except Exception:
+                                    pass
+                else:
+                    # Ollama fallback — streaming via /api/chat
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        async with client.stream(
+                            "POST",
+                            f"{OLLAMA_URL}/api/chat",
+                            json={
+                                "model": OLLAMA_MODEL,
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": body.question},
+                                ],
+                                "stream": True,
+                                "options": {"temperature": 0.3, "num_predict": 1024},
+                            },
+                        ) as resp:
+                            async for line in resp.aiter_lines():
+                                if not line.strip():
+                                    continue
+                                try:
+                                    chunk = json.loads(line)
+                                    delta = chunk.get("message", {}).get("content", "")
+                                    if delta:
+                                        yield f"data: {json.dumps({'text': delta})}\n\n"
+                                    if chunk.get("done"):
+                                        break
+                                except Exception:
+                                    pass
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: {\"done\": true}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reading statistics
+# ---------------------------------------------------------------------------
+
+def _compute_streak(dates: List[str]) -> int:
+    """Return current consecutive reading streak in days."""
+    if not dates:
+        return 0
+    today = datetime.now(timezone.utc).date()
+    unique = sorted(
+        {datetime.strptime(d, "%Y-%m-%d").date() for d in dates if d},
+        reverse=True,
+    )
+    if not unique:
+        return 0
+    # Streak must start from today or yesterday
+    start = unique[0]
+    yesterday = today - timedelta(days=1)
+    if start != today and start != yesterday:
+        return 0
+    streak = 0
+    expected = start
+    for d in unique:
+        if d == expected:
+            streak += 1
+            expected -= timedelta(days=1)
+        elif d < expected:
+            break
+    return streak
+
+
+@app.get("/api/stats", response_model=StatsOut)
+async def get_stats(db: Session = Depends(get_db), _: None = _auth):
+    # Basic counts
+    total_read = db.query(Article).filter(Article.read_at.isnot(None)).count()
+    total_unread = db.query(Article).filter(Article.read_at.is_(None)).count()
+    total_bookmarked = db.query(Article).filter(Article.bookmarked == True).count()
+
+    # Streak: get all distinct read dates
+    date_rows = (
+        db.query(func.strftime("%Y-%m-%d", Article.read_at).label("d"))
+        .filter(Article.read_at.isnot(None))
+        .distinct()
+        .all()
+    )
+    all_dates = [row.d for row in date_rows if row.d]
+    streak_days = _compute_streak(all_dates)
+
+    # Daily read counts — last 30 days
+    cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
+    daily_rows = (
+        db.query(
+            func.strftime("%Y-%m-%d", Article.read_at).label("d"),
+            func.count(Article.id).label("cnt"),
+        )
+        .filter(Article.read_at >= cutoff_30)
+        .group_by(func.strftime("%Y-%m-%d", Article.read_at))
+        .order_by(func.strftime("%Y-%m-%d", Article.read_at))
+        .all()
+    )
+    daily_counts = [DailyReadCount(date=row.d, count=row.cnt) for row in daily_rows if row.d]
+
+    # Average score of read articles
+    avg_row = (
+        db.query(func.avg(Article.score))
+        .filter(Article.read_at.isnot(None), Article.score.isnot(None))
+        .scalar()
+    )
+    avg_score_read = round(float(avg_row), 2) if avg_row is not None else None
+
+    # Top tags from read articles (last 2000 to cap memory usage)
+    tag_rows = (
+        db.query(Article.tags_json)
+        .filter(Article.read_at.isnot(None), Article.tags_json.isnot(None))
+        .order_by(Article.read_at.desc())
+        .limit(2000)
+        .all()
+    )
+    tag_counts: Dict[str, int] = {}
+    for (tags_json,) in tag_rows:
+        try:
+            for tag in json.loads(tags_json or "[]"):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        except Exception:
+            pass
+    top_tags = [
+        TagFrequency(tag=t, count=c)
+        for t, c in sorted(tag_counts.items(), key=lambda x: -x[1])[:20]
+    ]
+
+    # Highlights count (graceful if table missing)
+    try:
+        total_highlights = db.query(Highlight).count()
+    except Exception:
+        total_highlights = 0
+
+    # Articles per category (read articles only)
+    cat_rows = (
+        db.query(Feed.category, func.count(Article.id).label("cnt"))
+        .join(Article, Article.feed_id == Feed.id)
+        .filter(Article.read_at.isnot(None))
+        .group_by(Feed.category)
+        .all()
+    )
+    articles_per_category = {row.category: row.cnt for row in cat_rows}
+
+    return StatsOut(
+        total_read=total_read,
+        total_unread=total_unread,
+        total_bookmarked=total_bookmarked,
+        streak_days=streak_days,
+        daily_counts=daily_counts,
+        avg_score_read=avg_score_read,
+        top_tags=top_tags,
+        total_highlights=total_highlights,
+        articles_per_category=articles_per_category,
+    )
 
 
 @app.post("/api/internal/articles/{article_id}/score")

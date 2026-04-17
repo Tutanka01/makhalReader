@@ -81,6 +81,23 @@ class Article(Base):
     )
 
 
+class Highlight(Base):
+    __tablename__ = "highlights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    selected_text = Column(Text, nullable=False)
+    prefix_context = Column(Text, nullable=False, default="")
+    suffix_context = Column(Text, nullable=False, default="")
+    color = Column(String(16), nullable=False, default="yellow")
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_highlights_article_id", "article_id"),
+    )
+
+
 class AuthSession(Base):
     """Persistent login sessions. One row per active login."""
     __tablename__ = "auth_sessions"
@@ -107,6 +124,8 @@ def init_db():
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
         "ALTER TABLE articles ADD COLUMN user_feedback INTEGER",
+        "CREATE TABLE IF NOT EXISTS highlights (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, selected_text TEXT NOT NULL, prefix_context TEXT NOT NULL DEFAULT '', suffix_context TEXT NOT NULL DEFAULT '', color VARCHAR(16) NOT NULL DEFAULT 'yellow', note TEXT, created_at DATETIME NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS ix_highlights_article_id ON highlights(article_id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

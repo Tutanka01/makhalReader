@@ -4,7 +4,9 @@ import {
   ArrowLeft,
   Bookmark,
   BookmarkCheck,
+  Bot,
   ExternalLink,
+  Highlighter,
   Link,
   RotateCcw,
   Loader2,
@@ -14,13 +16,106 @@ import {
   ThumbsDown,
 } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
+import { useHighlightsStore } from '../store/highlights'
+import type { Highlight } from '../types'
 import { ScoreBar } from './ScoreBar'
 import { PaperView } from './PaperView'
+import { HighlightPopover } from './HighlightPopover'
+import { HighlightList } from './HighlightList'
+import { AskAIPanel } from './AskAIPanel'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
 function looksLikeHtml(text: string): boolean {
   return /<(p|div|h[1-6]|ul|ol|li|blockquote|pre|code|a|strong|em|br|img|table|thead|tbody|tr|td|th)\b/i.test(text)
+}
+
+// ── Highlight utilities ──────────────────────────────────────────────────
+
+interface PendingSelection {
+  selectedText: string
+  prefixContext: string
+  suffixContext: string
+  /** Viewport coords of the selection rectangle */
+  position: { x: number; top: number; bottom: number }
+}
+
+/** Get selected text + surrounding context from within a container element. */
+function getSelectionContext(container: HTMLElement): PendingSelection | null {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+
+  const range = sel.getRangeAt(0)
+  const selectedText = sel.toString().trim()
+  if (!selectedText || selectedText.length < 3) return null
+
+  if (!container.contains(range.commonAncestorContainer)) return null
+
+  const fullText = container.textContent || ''
+  const idx = fullText.indexOf(selectedText)
+  const prefixContext = idx >= 0 ? fullText.slice(Math.max(0, idx - 20), idx) : ''
+  const suffixContext = idx >= 0 ? fullText.slice(idx + selectedText.length, idx + selectedText.length + 20) : ''
+
+  const rect = range.getBoundingClientRect()
+  return {
+    selectedText,
+    prefixContext,
+    suffixContext,
+    position: { x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom },
+  }
+}
+
+/**
+ * Find the first index of `search` in `html` that is in text content (not inside a tag).
+ * Prevents matching inside href="..." or other attributes.
+ */
+function findInTextContent(html: string, search: string, startFrom = 0): number {
+  let idx = startFrom
+  while (true) {
+    const found = html.indexOf(search, idx)
+    if (found === -1) return -1
+    // Is this inside a tag? Check if the last '<' before `found` has no closing '>' before `found`.
+    const before = html.slice(0, found)
+    const lastOpen = before.lastIndexOf('<')
+    const lastClose = before.lastIndexOf('>')
+    if (lastOpen <= lastClose) return found   // in text content ✓
+    idx = found + 1                           // inside a tag — skip
+  }
+}
+
+/** Safely inject <mark> tags into HTML, only matching text content (never inside tag attributes). */
+function applyHighlights(html: string, highlights: Highlight[]): string {
+  if (!highlights.length) return html
+
+  let result = html
+
+  for (const h of highlights) {
+    if (result.includes(`data-hid="${h.id}"`)) continue
+
+    const text = h.selected_text
+    const markOpen = `<mark data-hid="${h.id}" class="highlight-${h.color}">`
+    const markClose = `</mark>`
+
+    let matchIdx = -1
+
+    // Try with prefix context (more specific — avoids wrong occurrence)
+    if (h.prefix_context) {
+      const prefix = h.prefix_context.slice(-8)
+      const prefixIdx = findInTextContent(result, prefix)
+      if (prefixIdx >= 0) {
+        matchIdx = findInTextContent(result, text, prefixIdx + prefix.length - 2)
+      }
+    }
+
+    // Fallback: first occurrence in text content
+    if (matchIdx === -1) matchIdx = findInTextContent(result, text)
+
+    if (matchIdx >= 0) {
+      result = result.slice(0, matchIdx) + markOpen + text + markClose + result.slice(matchIdx + text.length)
+    }
+  }
+
+  return result
 }
 
 const FONT_SIZE_KEY = 'makhal_reader_font_size'
@@ -54,17 +149,26 @@ function isArxivUrl(url: string): boolean {
 
 export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext }: ReaderViewProps) {
   const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark, submitFeedback } = useArticlesStore()
+  const { highlights, fetchHighlights, createHighlight, deleteHighlight } = useHighlightsStore()
   const [fontSize, setFontSize] = useState(getSavedFontSize)
   const [scrollProgress, setScrollProgress] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [showHighlightList, setShowHighlightList] = useState(false)
+  const [showAskPanel, setShowAskPanel] = useState(false)
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoReadScheduledForRef = useRef<number | null>(null)
 
+  const articleHighlights = highlights[articleId] ?? []
+
   useEffect(() => {
     fetchArticle(articleId)
+    fetchHighlights(articleId)
     // Reset scroll progress on article change
     setScrollProgress(0)
+    setPendingSelection(null)
     if (scrollRef.current) scrollRef.current.scrollTop = 0
     // Cancel any pending auto-read timer when switching articles
     if (autoReadTimerRef.current) {
@@ -88,6 +192,40 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
       }
     }
   }, [selectedArticle?.id, selectedArticle?.read_at])
+
+  // Detect text selection for highlighting
+  useEffect(() => {
+    const handleMouseUp = () => {
+      const container = contentRef.current
+      if (!container) return
+      const ctx = getSelectionContext(container)
+      if (ctx) setPendingSelection(ctx)
+    }
+    document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('touchend', handleMouseUp)
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('touchend', handleMouseUp)
+    }
+  }, [])
+
+  const handleSaveHighlight = async (color: string, note: string) => {
+    if (!pendingSelection) return
+    setPendingSelection(null)
+    window.getSelection()?.removeAllRanges()
+    await createHighlight(articleId, {
+      selected_text: pendingSelection.selectedText,
+      prefix_context: pendingSelection.prefixContext,
+      suffix_context: pendingSelection.suffixContext,
+      color,
+      note: note || undefined,
+    })
+  }
+
+  const handleScrollToHighlight = (h: Highlight) => {
+    const el = document.querySelector(`mark[data-hid="${h.id}"]`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 
   const handleScroll = () => {
     const el = scrollRef.current
@@ -245,6 +383,29 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             <ThumbsDown className="w-4 h-4" />
           </button>
 
+          {/* Highlight list */}
+          <div className="w-px h-4 bg-border-default mx-0.5" />
+          <button
+            onClick={() => { setShowHighlightList((v) => !v); setShowAskPanel(false) }}
+            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
+              showHighlightList ? 'text-accent-yellow' : 'text-text-secondary hover:text-text-primary'
+            }`}
+            title={`Surlignages (${articleHighlights.length})`}
+          >
+            <Highlighter className="w-4 h-4" />
+          </button>
+
+          {/* Ask AI */}
+          <button
+            onClick={() => { setShowAskPanel((v) => !v); setShowHighlightList(false) }}
+            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
+              showAskPanel ? 'text-accent-blue' : 'text-text-secondary hover:text-text-primary'
+            }`}
+            title="Poser une question à l'IA"
+          >
+            <Bot className="w-4 h-4" />
+          </button>
+
           {/* Copy link */}
           <button
             onClick={copyLink}
@@ -274,11 +435,23 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
         <PaperView article={article} fontSize={fontSize} />
       ) : (
         /* Scrollable content — regular articles */
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto"
-          onScroll={handleScroll}
-        >
+        <div className="flex-1 overflow-hidden relative flex flex-col min-h-0">
+          {/* Highlight list overlay — absolute, doesn't affect flex flow */}
+          {showHighlightList && (
+            <HighlightList
+              highlights={articleHighlights}
+              onDelete={(id) => deleteHighlight(articleId, id)}
+              onClose={() => setShowHighlightList(false)}
+              onScrollTo={handleScrollToHighlight}
+            />
+          )}
+
+          {/* Scrollable article — flex-1 */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto min-h-0"
+            onScroll={handleScroll}
+          >
           <article className="max-w-2xl mx-auto px-5 py-8 pb-20">
 
             {/* Tags */}
@@ -349,19 +522,22 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             {/* Body */}
             {article.content_html ? (
               <div
+                ref={contentRef}
                 className="reader-content"
                 style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-                dangerouslySetInnerHTML={{ __html: article.content_html }}
+                dangerouslySetInnerHTML={{ __html: applyHighlights(article.content_html, articleHighlights) }}
               />
             ) : article.content_text ? (
               looksLikeHtml(article.content_text) ? (
                 <div
+                  ref={contentRef}
                   className="reader-content"
                   style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-                  dangerouslySetInnerHTML={{ __html: article.content_text }}
+                  dangerouslySetInnerHTML={{ __html: applyHighlights(article.content_text, articleHighlights) }}
                 />
               ) : (
                 <div
+                  ref={contentRef}
                   className="font-serif text-text-primary space-y-4"
                   style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
                 >
@@ -415,7 +591,26 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
               </button>
             )}
           </article>
+          </div>
+
+          {/* Ask AI panel — at bottom of content area */}
+          {showAskPanel && (
+            <AskAIPanel
+              articleId={articleId}
+              onClose={() => setShowAskPanel(false)}
+            />
+          )}
         </div>
+      )}
+
+      {/* Highlight popover — appears on text selection */}
+      {pendingSelection && (
+        <HighlightPopover
+          position={pendingSelection.position}
+          selectedText={pendingSelection.selectedText}
+          onSave={handleSaveHighlight}
+          onClose={() => setPendingSelection(null)}
+        />
       )}
     </div>
   )

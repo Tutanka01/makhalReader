@@ -58,7 +58,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
