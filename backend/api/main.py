@@ -32,7 +32,7 @@ from auth import (
     set_session_cookie,
     verify_password,
 )
-from database import Article, Feed, Highlight, SessionLocal, get_db, init_db
+from database import Article, Feed, Highlight, SessionLocal, backfill_reading_time, get_db, init_db
 from models import (
     ArticleListItem,
     ArticleOut,
@@ -229,6 +229,12 @@ async def startup():
     init_db()
     purge_expired_sessions()
     asyncio.create_task(cleanup_old_articles())
+
+    # Backfill reading_time for legacy articles (non-blocking)
+    backfilled = await asyncio.to_thread(backfill_reading_time)
+    if backfilled:
+        print(f"[startup] Backfilled reading_time for {backfilled} article(s)")
+
     db = SessionLocal()
     try:
         existing_urls = {url for (url,) in db.query(Feed.url).all()}
@@ -387,6 +393,7 @@ def _row_to_list_item(row) -> ArticleListItem:
         created_at=article.created_at,
         feed_name=feed_name or "",
         user_feedback=article.user_feedback,
+        reading_time=article.reading_time,
     )
 
 
@@ -772,6 +779,7 @@ async def internal_create_article(
         extraction_failed=article_data.extraction_failed,
         created_at=datetime.now(timezone.utc),
         title_fingerprint=fp,
+        reading_time=article_data.reading_time,
     )
     db.add(article)
     db.commit()
@@ -1259,6 +1267,7 @@ async def internal_score_article(
         "created_at": article.created_at.isoformat(),
         "feed_name": feed.name if feed else "",
         "user_feedback": article.user_feedback,
+        "reading_time": article.reading_time,
     }
     await _broadcast_new_article(article_dict)
 

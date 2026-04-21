@@ -2,6 +2,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
 import type { ArticleListItem } from '../types'
+import { ReadTimeBadge } from './ReadTimeBadge'
 
 interface DigestCardProps {
   article: ArticleListItem
@@ -66,9 +67,12 @@ export function DigestCard({ article, onClick }: DigestCardProps) {
             {tag}
           </span>
         ))}
-        {timeAgo && (
-          <span className="ml-auto text-[10px] text-text-muted flex-shrink-0">{timeAgo}</span>
-        )}
+        <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          <ReadTimeBadge minutes={article.reading_time} />
+          {timeAgo && (
+            <span className="text-[10px] text-text-muted">{timeAgo}</span>
+          )}
+        </div>
       </div>
     </button>
   )

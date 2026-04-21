@@ -75,6 +75,7 @@ class Article(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     title_fingerprint = Column(String(16), nullable=True, index=True)
     user_feedback = Column(Integer, nullable=True)  # 1=like, -1=dislike, NULL=no feedback
+    reading_time = Column(Integer, nullable=True)   # minutes, computed from word count
 
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
@@ -118,12 +119,49 @@ def get_db():
         db.close()
 
 
+def _estimate_reading_time(text: str | None) -> int:
+    """Estimate reading time in minutes based on word count (200 WPM)."""
+    if not text:
+        return 1
+    return max(1, round(len(text.split()) / 200))
+
+
+def backfill_reading_time() -> int:
+    """Compute reading_time for all existing articles where it is NULL.
+    Returns the number of updated rows."""
+    from sqlalchemy.orm import Session
+
+    db = SessionLocal()
+    try:
+        articles = (
+            db.query(Article.id, Article.content_text)
+            .filter(Article.reading_time.is_(None), Article.content_text.isnot(None))
+            .all()
+        )
+        updated = 0
+        for article_id, content_text in articles:
+            db.query(Article).filter(Article.id == article_id).update(
+                {"reading_time": _estimate_reading_time(content_text)}
+            )
+            updated += 1
+        if updated:
+            db.commit()
+        return updated
+    except Exception as e:
+        db.rollback()
+        print(f"[backfill] Error: {e}")
+        return 0
+    finally:
+        db.close()
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     # Additive migrations — safe to run multiple times.
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
         "ALTER TABLE articles ADD COLUMN user_feedback INTEGER",
+        "ALTER TABLE articles ADD COLUMN reading_time INTEGER",
         "CREATE TABLE IF NOT EXISTS highlights (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, selected_text TEXT NOT NULL, prefix_context TEXT NOT NULL DEFAULT '', suffix_context TEXT NOT NULL DEFAULT '', color VARCHAR(16) NOT NULL DEFAULT 'yellow', note TEXT, created_at DATETIME NOT NULL)",
         "CREATE INDEX IF NOT EXISTS ix_highlights_article_id ON highlights(article_id)",
     ]

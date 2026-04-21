@@ -19,6 +19,7 @@ import { useArticlesStore } from '../store/articles'
 import { useHighlightsStore } from '../store/highlights'
 import type { Highlight } from '../types'
 import { ScoreBar } from './ScoreBar'
+import { ReadTimeBadge } from './ReadTimeBadge'
 import { PaperView } from './PaperView'
 import { HighlightPopover } from './HighlightPopover'
 import { HighlightList } from './HighlightList'
@@ -510,6 +511,10 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
               {relativeDate && publishedDate && (
                 <span className="text-text-muted">({relativeDate})</span>
               )}
+              {(publishedDate || relativeDate || article.author) && article.reading_time ? (
+                <span>·</span>
+              ) : null}
+              <ReadTimeBadge minutes={article.reading_time} />
             </div>
 
             {/* AI Summary */}

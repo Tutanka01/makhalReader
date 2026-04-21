@@ -300,6 +300,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
             "content_text": extracted.get("content_text"),
             "images": extracted.get("images", []),
             "extraction_failed": extracted.get("extraction_failed", False),
+            "reading_time": extracted.get("read_time_minutes"),
         }
 
         try:

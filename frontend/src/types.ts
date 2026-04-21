@@ -27,6 +27,7 @@ export interface Article {
   extraction_failed: boolean
   created_at: string
   user_feedback: number | null
+  reading_time: number | null
   tags: string[]
   summary_bullets: string[]
   images: string[]
@@ -48,6 +49,7 @@ export interface ArticleListItem {
   created_at: string
   feed_name: string
   user_feedback: number | null
+  reading_time: number | null
   tags: string[]
   summary_bullets: string[]
 }

@@ -43,6 +43,7 @@ class ArticleOut(BaseModel):
     extraction_failed: bool = False
     created_at: datetime
     user_feedback: Optional[int] = None
+    reading_time: Optional[int] = None
 
     # Computed fields
     tags: List[str] = []
@@ -84,6 +85,7 @@ class ArticleListItem(BaseModel):
     created_at: datetime
     feed_name: str = ""
     user_feedback: Optional[int] = None
+    reading_time: Optional[int] = None
 
     # Computed fields
     tags: List[str] = []
@@ -118,6 +120,7 @@ class InternalArticleCreate(BaseModel):
     content_text: Optional[str] = None
     images: List[str] = []
     extraction_failed: bool = False
+    reading_time: Optional[int] = None
 
 
 class InternalScoreUpdate(BaseModel):

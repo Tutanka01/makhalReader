@@ -3,6 +3,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
 import type { ArticleListItem } from '../types'
 import { ScoreBar } from './ScoreBar'
+import { ReadTimeBadge } from './ReadTimeBadge'
 import { useArticlesStore } from '../store/articles'
 
 interface ArticleCardProps {
@@ -134,6 +135,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
             <span className="truncate font-medium">{article.feed_name}</span>
             <span className="flex-shrink-0">·</span>
             <span className="flex-shrink-0">{relativeDate}</span>
+            <ReadTimeBadge minutes={article.reading_time} />
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
             {article.user_feedback === 1 && (
