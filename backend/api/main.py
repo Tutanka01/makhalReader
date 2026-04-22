@@ -110,6 +110,18 @@ DEFAULT_FEEDS = [
     {"url": "https://tailscale.com/blog/index.xml",                      "name": "Tailscale Blog",             "category": "Infra"},
     {"url": "https://isovalent.com/blog/index.xml",                      "name": "Isovalent (Cilium/eBPF)",    "category": "Infra"},
     {"url": "https://www.polarsignals.com/blog/feed",                     "name": "Polar Signals (eBPF)",       "category": "Infra"},
+    # ── K8s weekly / SRE / Distributed Systems ───────────────────────────
+    {"url": "https://lwkd.info/feed.xml",                                "name": "LWKD",                       "category": "Infra"},
+    {"url": "https://blog.palark.com/feed",                              "name": "Palark",                     "category": "Infra"},
+    {"url": "https://aphyr.com/feed",                                    "name": "Aphyr (Jepsen)",             "category": "Infra"},
+    {"url": "https://sreweekly.com/feed",                                "name": "SRE Weekly",                 "category": "Infra"},
+    {"url": "https://slack.engineering/feed",                            "name": "Slack Engineering",          "category": "Infra"},
+    # ── eBPF deep dives ───────────────────────────────────────────────────
+    {"url": "https://howtech.substack.com/feed",                         "name": "How Tech (eBPF/XDP)",        "category": "Infra"},
+    # ── Rust / Go ─────────────────────────────────────────────────────────
+    {"url": "https://blog.rust-lang.org/feed.xml",                       "name": "Rust Blog",                  "category": "Infra"},
+    {"url": "https://blog.rust-lang.org/inside-rust/feed.xml",           "name": "Inside Rust",                "category": "Infra"},
+    {"url": "https://go.dev/blog/feed.atom",                             "name": "Go Blog",                    "category": "Infra"},
     # ── Self-hosting / Homelab ────────────────────────────────────────────
     {"url": "https://blog.alexellis.io/rss/",                            "name": "Alex Ellis",                 "category": "Infra"},
     {"url": "https://selfh.st/feed/",                                    "name": "selfh.st",                   "category": "Infra"},
@@ -128,6 +140,9 @@ DEFAULT_FEEDS = [
     {"url": "https://www.deeplearning.ai/the-batch/feed/rss/",           "name": "The Batch (Andrew Ng)",      "category": "AI"},
     {"url": "https://hamel.dev/feed.xml",                                "name": "Hamel Husain",               "category": "AI"},
     {"url": "https://timdettmers.com/feed/",                             "name": "Tim Dettmers",               "category": "AI"},
+    {"url": "https://decodingml.substack.com/feed",                      "name": "Decoding ML",                "category": "AI"},
+    {"url": "https://developer.nvidia.com/blog/feed",                    "name": "NVIDIA Dev Blog",            "category": "AI"},
+    {"url": "https://neptune.ai/blog/feed",                              "name": "neptune.ai",                 "category": "AI"},
     # ── Cybersécurité ─────────────────────────────────────────────────────
     {"url": "https://portswigger.net/research/rss",                      "name": "PortSwigger Research",       "category": "Sec"},
     {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default","name": "Google Project Zero",        "category": "Sec"},
@@ -140,6 +155,9 @@ DEFAULT_FEEDS = [
     {"url": "https://research.nccgroup.com/feed/",                       "name": "NCC Group Research",         "category": "Sec"},
     {"url": "https://blog.xpnsec.com/rss.xml",                          "name": "Adam Chester (XPN)",         "category": "Sec"},
     {"url": "https://objective-see.org/rss.xml",                         "name": "Objective-See",              "category": "Sec"},
+    {"url": "https://www.zerodayinitiative.com/rss/published/",          "name": "Zero Day Initiative",        "category": "Sec"},
+    {"url": "https://research.checkpoint.com/feed/",                     "name": "Check Point Research",       "category": "Sec"},
+    {"url": "https://infosecwriteups.com/feed",                          "name": "InfoSec Write-ups",          "category": "Sec"},
     # ── ArXiv — Research Papers ───────────────────────────────────────────
     {"url": "https://export.arxiv.org/rss/cs.AI",                       "name": "arXiv cs.AI",                "category": "Papers"},
     {"url": "https://export.arxiv.org/rss/cs.LG",                       "name": "arXiv cs.LG",                "category": "Papers"},
