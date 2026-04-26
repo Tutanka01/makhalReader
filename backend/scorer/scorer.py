@@ -111,7 +111,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "max_tokens": 1024,
             },
             timeout=60,
@@ -147,7 +147,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
                 ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.3,
+                    "temperature": 0.1,
                     "num_predict": 512,
                 },
             },
@@ -169,16 +169,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
 
 
 async def build_preference_block(client: httpx.AsyncClient) -> str:
-    """Build a compact, structured preference profile from the full feedback history.
-
-    Strategy (backed by LLM-Rec / NAACL 2024 findings):
-    - Tag frequency aggregation over the entire history outperforms raw title lists
-      by +15-22 % on ranking accuracy while using 3-4x fewer tokens.
-    - Contrastive structure (liked vs. disliked) is essential; positive-only prompts
-      over-generalise and dilute the signal.
-    - Hard budget: the returned block stays under ~220 tokens regardless of history size.
-    - Cold-start guard: block is omitted until at least 3 interactions exist.
-    """
+    """Build a compact preference profile from explicit and implicit history."""
     try:
         resp = await client.get(
             f"{API_BASE}/api/internal/feedback-examples",
@@ -189,46 +180,72 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
             return ""
 
         data = resp.json()
-        total = data.get("total_liked", 0) + data.get("total_disliked", 0)
+        total = (
+            data.get("total_liked", 0)
+            + data.get("total_disliked", 0)
+            + data.get("total_bookmarked", 0)
+            + data.get("total_read", 0)
+        )
         if total < 3:
             # Not enough signal yet — avoid noisy cold-start bias
             return ""
 
         liked_tags: list[dict] = data.get("liked_tags", [])
         disliked_tags: list[dict] = data.get("disliked_tags", [])
+        bookmarked_tags: list[dict] = data.get("bookmarked_tags", [])
+        read_tags: list[dict] = data.get("read_tags", [])
         liked_examples: list[dict] = data.get("liked_examples", [])
         disliked_examples: list[dict] = data.get("disliked_examples", [])
+        bookmarked_examples: list[dict] = data.get("bookmarked_examples", [])
 
-        lines: list[str] = ["\n\n---\n## Reader Preference Profile\n"]
+        lines: list[str] = ["\n\n---\n## Reader Preference Profile"]
 
         # --- Tag frequency block (most signal-dense part) ---
         if liked_tags:
             tag_str = ", ".join(e["tag"] for e in liked_tags[:8])
-            lines.append(f"**Consistently enjoys (ranked by frequency):** {tag_str}")
+            lines.append(f"Explicit likes, ranked by frequency: {tag_str}")
 
         if disliked_tags:
             tag_str = ", ".join(e["tag"] for e in disliked_tags[:5])
-            lines.append(f"**Consistently avoids:** {tag_str}")
+            lines.append(f"Explicit dislikes / avoid unless exceptional: {tag_str}")
+
+        if bookmarked_tags:
+            tag_str = ", ".join(e["tag"] for e in bookmarked_tags[:6])
+            lines.append(f"Bookmarked themes, implicit strong positive: {tag_str}")
+
+        if read_tags:
+            tag_str = ", ".join(e["tag"] for e in read_tags[:6])
+            lines.append(f"Recently read themes, implicit weak positive: {tag_str}")
 
         # --- Contrastive examples (2-3 liked, 1-2 disliked) ---
         if liked_examples:
-            lines.append("\n**Representative liked articles:**")
-            for ex in liked_examples[:4]:
+            lines.append("\nRepresentative liked articles:")
+            for ex in liked_examples[:3]:
                 tag_str = f" [{', '.join(ex['tags'][:4])}]" if ex.get("tags") else ""
+                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
                 title = ex["title"][:80].rstrip()
-                lines.append(f'- "{title}"{tag_str}')
+                lines.append(f'- "{title}"{tag_str}{score_str}')
 
         if disliked_examples:
-            lines.append("\n**Representative disliked articles:**")
+            lines.append("\nRepresentative disliked articles:")
             for ex in disliked_examples[:2]:
                 tag_str = f" [{', '.join(ex['tags'][:3])}]" if ex.get("tags") else ""
+                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
                 title = ex["title"][:80].rstrip()
-                lines.append(f'- "{title}"{tag_str}')
+                lines.append(f'- "{title}"{tag_str}{score_str}')
+
+        if bookmarked_examples and not liked_examples:
+            lines.append("\nRepresentative bookmarked articles:")
+            for ex in bookmarked_examples[:2]:
+                tag_str = f" [{', '.join(ex['tags'][:4])}]" if ex.get("tags") else ""
+                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
+                title = ex["title"][:80].rstrip()
+                lines.append(f'- "{title}"{tag_str}{score_str}')
 
         lines.append(
-            "\nCalibrate the score using these signals: "
-            "depth on enjoyed topics warrants higher scores; "
-            "avoided topics warrant lower scores unless the article brings exceptional new value."
+            "\nUse this profile as a personalization prior. Explicit likes/dislikes are stronger "
+            "than bookmarks, and bookmarks are stronger than read history. Never let a weak "
+            "article score high only because it matches a preferred tag."
         )
 
         return "\n".join(lines)
@@ -243,9 +260,15 @@ async def score_article(req: ScoreRequest):
 
     async with httpx.AsyncClient() as client:
         # Build user message with optional preference profile for personalisation
-        content_preview = (req.content_text or req.rss_summary or "")[:3000]
+        content_preview = (req.content_text or "")[:5000]
+        summary_preview = (req.rss_summary or "")[:1200]
         preference_block = await build_preference_block(client)
-        user_message = f"Titre: {req.title}\n\nContenu:\n{content_preview}{preference_block}"
+        user_message = (
+            f"Title: {req.title}\n\n"
+            f"RSS summary:\n{summary_preview or '(none)'}\n\n"
+            f"Article text:\n{content_preview or '(no extracted article text)'}"
+            f"{preference_block}"
+        )
 
         # Try OpenRouter first
         if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):

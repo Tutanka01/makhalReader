@@ -700,15 +700,29 @@ async def internal_feedback_examples(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     liked_rows = (
-        db.query(Article.title, Article.tags_json)
+        db.query(Article.title, Article.tags_json, Article.score)
         .filter(Article.user_feedback == 1)
         .order_by(Article.created_at.desc())
         .all()
     )
     disliked_rows = (
-        db.query(Article.title, Article.tags_json)
+        db.query(Article.title, Article.tags_json, Article.score)
         .filter(Article.user_feedback == -1)
         .order_by(Article.created_at.desc())
+        .all()
+    )
+    bookmarked_rows = (
+        db.query(Article.title, Article.tags_json, Article.score)
+        .filter(Article.bookmarked == True)
+        .order_by(Article.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    read_rows = (
+        db.query(Article.title, Article.tags_json, Article.score)
+        .filter(Article.read_at.isnot(None), Article.score.isnot(None))
+        .order_by(Article.read_at.desc())
+        .limit(100)
         .all()
     )
 
@@ -726,19 +740,24 @@ async def internal_feedback_examples(
         out = []
         for row in rows[:max_n]:
             tags = json.loads(row.tags_json or "[]")
-            out.append({"title": row.title, "tags": tags[:5]})
+            out.append({"title": row.title, "tags": tags[:5], "score": row.score})
         return out
 
     return {
         # Tag frequencies over full history — primary personalisation signal
         "liked_tags": aggregate_tags(liked_rows, top_n=10),
         "disliked_tags": aggregate_tags(disliked_rows, top_n=8),
+        "bookmarked_tags": aggregate_tags(bookmarked_rows, top_n=8),
+        "read_tags": aggregate_tags(read_rows, top_n=8),
         # Recent examples for contrastive illustration
         "liked_examples": format_examples(liked_rows, max_n=4),
         "disliked_examples": format_examples(disliked_rows, max_n=3),
+        "bookmarked_examples": format_examples(bookmarked_rows, max_n=3),
         # Totals so the scorer can skip if cold-start
         "total_liked": len(liked_rows),
         "total_disliked": len(disliked_rows),
+        "total_bookmarked": len(bookmarked_rows),
+        "total_read": len(read_rows),
     }
 
 
