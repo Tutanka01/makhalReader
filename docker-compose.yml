@@ -1,8 +1,6 @@
 networks:
   app:
     driver: bridge
-  npm_default:
-    external: true
 
 volumes:
   data:
@@ -66,7 +64,6 @@ services:
       - ./nginx/npm.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - app
-      - npm_default
     expose:
       - "80"
     depends_on:

@@ -45,7 +45,7 @@ By the time you open the app, the noise is already gone.
 cp .env.example .env
 # → Set OPENROUTER_API_KEY (or leave blank to run fully local with Ollama)
 
-# 2. Launch
+# 2. Launch locally
 docker compose up -d
 ```
 
@@ -163,7 +163,7 @@ Add custom feeds, import **OPML** (Feedly, NewsBlur…), organize by category.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    Caddy (proxy / TLS)               │
+│                    web (internal Nginx proxy)               │
 └──────────────┬──────────────────────┬───────────────┘
                │                      │
         ┌──────▼──────┐        ┌──────▼──────┐
@@ -181,7 +181,7 @@ Add custom feeds, import **OPML** (Feedly, NewsBlur…), organize by category.
        └─────────────┘        └─────────────┘   └─────────────┘
 ```
 
-6 Docker containers · 1 internal network · 0 mandatory external dependencies
+6 Docker containers · 1 internal proxy · 0 mandatory external dependencies
 
 ---
 
@@ -204,23 +204,40 @@ FETCH_INTERVAL_MINUTES=15
 MAX_NEW_ARTICLES_PER_FEED=5
 MAX_ARTICLE_AGE_DAYS=7
 
-# Production
-CADDY_DOMAIN=reader.yourdomain.com    # Enables automatic HTTPS via Let's Encrypt
+# Production behind Nginx Proxy Manager
+HTTPS_ONLY=true
+CORS_ORIGIN=https://reader.yourdomain.com
 ```
 
 ---
 
 ## Production deployment
 
+MakhalReader has two Compose modes:
+
+- Local: `docker compose up -d --build`
+- Production behind Nginx Proxy Manager: `docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build`
+
+NPM must forward to the internal `web` proxy, not directly to the frontend. The frontend uses relative API paths (`/api/*`, `/auth/*`), and the `web` proxy is what routes those paths to FastAPI.
+
 ```bash
 # On your server
 git clone <repo> && cd makhalReader
-cp .env.example .env && vim .env   # Set CADDY_DOMAIN + OPENROUTER_API_KEY
+cp .env.example .env && vim .env   # Set HTTPS_ONLY, CORS_ORIGIN, AUTH_PASSWORD, API keys
 
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 ```
 
-Caddy handles TLS automatically. Nothing else to configure.
+In Nginx Proxy Manager:
+
+```text
+Forward Hostname / IP: makhal-reader-web
+Forward Port: 80
+Websockets Support: enabled
+SSL: Force SSL enabled
+```
+
+See `DEPLOY.md` for the full local vs NPM explanation.
 
 ---
 
@@ -232,7 +249,7 @@ Caddy handles TLS automatically. Nothing else to configure.
 | Backend | Python 3.12 · FastAPI · SQLAlchemy · SQLite WAL |
 | Extraction | trafilatura · readability · BeautifulSoup |
 | Scoring | OpenRouter API (Gemini) · Ollama (Mistral) |
-| Infrastructure | Docker Compose · Caddy · APScheduler · httpx async |
+| Infrastructure | Docker Compose · Nginx Proxy Manager compatible · APScheduler · httpx async |
 | PWA | Workbox · vite-plugin-pwa · Service Workers |
 
 ---

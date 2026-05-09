@@ -1,151 +1,164 @@
 # Deploying MakhalReader
 
-Everything you need to go from zero to a production-grade, TLS-secured, authenticated instance.
+MakhalReader supports two Compose modes:
+
+- **Local standalone mode**: Docker publishes the app on `http://localhost`.
+- **Production behind Nginx Proxy Manager**: NPM owns ports `80/443`; MakhalReader only joins NPM's Docker network.
+
+The difference matters. The frontend calls the API with relative browser paths such as `/api/articles` and `/auth/login`. If NPM points directly to the `frontend` container, those paths are handled by the frontend Nginx container instead of FastAPI, so the UI loads but login, feeds, and articles do not work.
+
+MakhalReader therefore includes a small internal `web` proxy:
+
+```text
+browser
+  -> local port 80 OR Nginx Proxy Manager
+  -> makhal-reader-web:80
+      /api/*  -> api:8000
+      /auth/* -> api:8000
+      /*      -> frontend:80
+```
 
 ---
 
-## Prerequisites
+## Files
 
-- A Linux VPS (Ubuntu 22.04+, 1 GB RAM minimum)
-- A domain pointing to your server's IP (`A` record)
-- Docker + Docker Compose (`curl -fsSL https://get.docker.com | sh`)
-- Ports 80 and 443 open in your firewall
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Base services and private app network. No public host ports. |
+| `docker-compose.override.yml` | Local-only override, loaded automatically by `docker compose up`; publishes `web` on `80:80`. |
+| `docker-compose.npm.yml` | Production NPM override; attaches `web` to external network `npm_default`. |
+| `nginx/npm.conf` | Internal routing from `web` to `api` and `frontend`. |
 
 ---
 
-## 1. Clone & configure
+## Local Development
+
+Use this when there is no Nginx Proxy Manager network on the machine.
 
 ```bash
-git clone <your-repo-url> makhalreader
-cd makhalreader
-
 cp .env.example .env
-nano .env
-```
+# For local HTTP:
+# HTTPS_ONLY=false
+# CORS_ORIGIN=
 
-### Variables that matter
-
-| Variable | Notes |
-|----------|-------|
-| `AUTH_PASSWORD` | Your login password — generate with `openssl rand -base64 32`. Never reuse. |
-| `CADDY_DOMAIN` | Your domain, e.g. `reader.yourdomain.com`. Must match your DNS A record. |
-| `CORS_ORIGIN` | Same domain, full URL, no trailing slash: `https://reader.yourdomain.com` |
-| `API_SECRET` | Internal service secret — `openssl rand -hex 32`. Never expose publicly. |
-| `OPENROUTER_API_KEY` | LLM scoring via OpenRouter. Leave blank to use Ollama locally. |
-| `HTTPS_ONLY` | Keep `true` in production. Enforces secure cookies. |
-
-### Tuning (optional)
-
-```env
-MAX_NEW_ARTICLES_PER_FEED=5      # Articles ingested per feed per poll
-MAX_ARTICLE_AGE_DAYS=7           # Drop articles older than N days
-SCORE_DELAY_SECONDS=2.0          # Pause between LLM calls (rate limiting)
-MAX_ARTICLES_PER_FEED=200        # Articles retained per feed
-ARTICLE_RETENTION_DAYS=90        # Hard-delete after N days (0 = off)
-```
-
-### What a clean production `.env` looks like
-
-```env
-# LLM
-OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxx
-SCORER_MODEL=google/gemini-flash-1.5
-
-# App
-FETCH_INTERVAL_MINUTES=15
-DB_PATH=/data/makhal.db
-API_SECRET=<64-char hex>
-
-# Auth
-AUTH_PASSWORD=<strong random string>
-HTTPS_ONLY=true
-CORS_ORIGIN=https://reader.yourdomain.com
-
-# Caddy
-CADDY_DOMAIN=reader.yourdomain.com
-
-# Guardrails
-MAX_NEW_ARTICLES_PER_FEED=5
-MAX_ARTICLE_AGE_DAYS=7
-SCORE_DELAY_SECONDS=2.0
-MAX_ARTICLES_PER_FEED=200
-ARTICLE_RETENTION_DAYS=90
-```
-
-> **Never commit `.env` to git.** Double-check: `grep '.env' .gitignore`
-
----
-
-## 2. Drop the local override
-
-`docker-compose.override.yml` is for local development only — it rewrites Caddy's config
-to use plain HTTP and disables security headers.
-In production it must not exist:
-
-```bash
-rm docker-compose.override.yml
-```
-
----
-
-## 3. Launch
-
-```bash
 docker compose up -d --build
 ```
 
-Caddy provisions a Let's Encrypt certificate on first boot.
-Give it ~30 seconds, then open `https://reader.yourdomain.com` — you should see the login page.
+Open:
+
+```text
+http://localhost
+```
+
+Why this works locally:
+
+- `docker-compose.override.yml` is loaded automatically by Docker Compose.
+- It publishes `makhal-reader-web` on host port `80`.
+- It does not require the external `npm_default` network.
+- The API still stays internal; browser calls go through `web` via `/api/*` and `/auth/*`.
 
 ---
 
-## 4. Verify
+## Production With Nginx Proxy Manager
+
+Prerequisites:
+
+- Nginx Proxy Manager is already running.
+- NPM has a Docker network named `npm_default`.
+- Your domain points to the server running NPM.
+- NPM owns host ports `80` and `443`.
+
+Configure `.env`:
+
+```env
+HTTPS_ONLY=true
+CORS_ORIGIN=https://reader.yourdomain.com
+AUTH_PASSWORD=<strong random string>
+API_SECRET=<strong random string>
+```
+
+Launch without the local override and with the NPM override:
 
 ```bash
-# All 6 containers should report "Up"
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+```
 
-# Health check
+Configure the NPM Proxy Host:
+
+```text
+Domain Names: reader.yourdomain.com
+Scheme: http
+Forward Hostname / IP: makhal-reader-web
+Forward Port: 80
+Websockets Support: enabled
+SSL: request/attach certificate, Force SSL enabled
+```
+
+Do not point NPM to `frontend` directly. It must point to `makhal-reader-web`, otherwise `/api/*` and `/auth/*` will not reach FastAPI.
+
+---
+
+## Verify
+
+Local:
+
+```bash
+curl http://localhost/api/health
+curl -i http://localhost/auth/status
+```
+
+Production:
+
+```bash
 curl https://reader.yourdomain.com/api/health
-
-# Should return 401 (auth is working)
-curl https://reader.yourdomain.com/auth/status
-
-# Live logs across all services
-docker compose logs -f --tail=50
+curl -i https://reader.yourdomain.com/auth/status
 ```
 
----
+Expected:
 
-## Firewall (UFW)
+- `/api/health` returns OK.
+- `/auth/status` returns `401` before login.
+- After login in the browser, articles and feeds load normally.
+
+Check services:
 
 ```bash
-ufw allow 22/tcp    # SSH
-ufw allow 80/tcp    # HTTP — Caddy redirects to HTTPS
-ufw allow 443/tcp   # HTTPS
-ufw enable
+docker compose ps
+docker compose logs -f --tail=50 web api frontend
 ```
 
-Internal ports (API :8000, extractor :8001, scorer :8002) are Docker-network-only.
-Do **not** expose them via UFW.
+For production commands, include the NPM file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.npm.yml ps
+docker compose -f docker-compose.yml -f docker-compose.npm.yml logs -f --tail=50 web api frontend
+```
 
 ---
 
 ## Updating
 
+Local:
+
 ```bash
 git pull
-docker compose build
-docker compose up -d
+docker compose up -d --build
 ```
 
-The database volume (`data`) survives rebuilds — no data loss.
+Production:
+
+```bash
+git pull
+docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+```
+
+The `data` volume survives rebuilds.
 
 ---
 
-## Backup & restore
+## Backup & Restore
 
-All state lives in a single SQLite file.
+All state lives in SQLite under the Docker volume mounted at `/data`.
 
 ```bash
 # Backup
@@ -157,18 +170,19 @@ docker compose cp ./makhal.db.bak api:/data/makhal.db
 docker compose restart api
 ```
 
+For production, use the same commands with `-f docker-compose.yml -f docker-compose.npm.yml`.
+
 ---
 
-## Changing the password
+## Changing The Password
 
-Edit `AUTH_PASSWORD` in `.env`, then:
+Edit `AUTH_PASSWORD` in `.env`, then restart the API:
 
 ```bash
 docker compose up -d api
 ```
 
-Sessions are valid for 24h (or 1 year with "remember me").
-To invalidate all active sessions immediately:
+To invalidate all active sessions:
 
 ```bash
 docker compose exec api sqlite3 /data/makhal.db "DELETE FROM auth_sessions;"
@@ -176,35 +190,53 @@ docker compose exec api sqlite3 /data/makhal.db "DELETE FROM auth_sessions;"
 
 ---
 
-## Security checklist
+## Security Checklist
 
-- [ ] `AUTH_PASSWORD` is a random string ≥ 32 characters
-- [ ] `API_SECRET` is a random string ≥ 32 characters
-- [ ] `HTTPS_ONLY=true`
-- [ ] `CORS_ORIGIN` matches your exact domain
-- [ ] `docker-compose.override.yml` is deleted
-- [ ] `.env` is not committed to git
-- [ ] Ports 8000, 8001, 8002 are **not** in UFW rules
-- [ ] `curl -I https://reader.yourdomain.com` returns `200` with a valid cert
+- [ ] `AUTH_PASSWORD` is a strong random string.
+- [ ] `API_SECRET` is a strong random string.
+- [ ] Production uses `HTTPS_ONLY=true`.
+- [ ] Production `CORS_ORIGIN` exactly matches the public origin, with no trailing slash.
+- [ ] NPM forwards to `makhal-reader-web:80`, not to `frontend`.
+- [ ] Host ports `8000`, `8001`, and `8002` are not exposed publicly.
+- [ ] `.env` is not committed to git.
 
 ---
 
 ## Troubleshooting
 
-**Login page missing / 401 on everything**
-- Confirm `docker-compose.override.yml` is deleted
-- Check Caddy is routing `/auth/*` correctly: `docker compose logs caddy`
+**Frontend loads but login/articles/feeds do not work**
 
-**TLS certificate not issued**
-- Verify your DNS A record resolves to this server's IP
-- Port 80 must be reachable (Let's Encrypt HTTP-01 challenge)
-- Check: `docker compose logs caddy`
+- NPM is probably forwarding to `frontend` instead of `makhal-reader-web`.
+- Confirm the NPM target is `makhal-reader-web` port `80`.
+- Check routing through the internal proxy:
 
-**Password rejected**
-- If `AUTH_PASSWORD` contains `$` or `!`, wrap it in single quotes in `.env`:
-  `AUTH_PASSWORD='my$tr0ng!pass'`
-- Always restart after changing `.env`: `docker compose up -d api`
+```bash
+docker compose -f docker-compose.yml -f docker-compose.npm.yml logs web api --tail=100
+```
 
-**Articles not being scored**
-- Verify `OPENROUTER_API_KEY` is valid (or `OLLAMA_URL` is reachable)
-- Check: `docker compose logs scorer --tail=50`
+**Production fails with `network npm_default not found`**
+
+- NPM's Docker network has a different name.
+- Check it:
+
+```bash
+docker network ls
+```
+
+- Either rename the network in `docker-compose.npm.yml`, or attach NPM and MakhalReader to the same external network.
+
+**Login succeeds locally but not in production**
+
+- Ensure the browser uses HTTPS.
+- Set `HTTPS_ONLY=true`.
+- Set `CORS_ORIGIN=https://reader.yourdomain.com`.
+- In NPM, enable Force SSL.
+
+**Articles are not being scored**
+
+- Verify `OPENROUTER_API_KEY` is valid, or that `OLLAMA_URL` is reachable.
+- Check:
+
+```bash
+docker compose logs scorer --tail=50
+```

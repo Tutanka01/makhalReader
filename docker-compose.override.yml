@@ -1,7 +1,14 @@
-# Overrides loaded automatically by docker compose.
-# Keep this file free of public port mappings when running behind Nginx Proxy Manager.
+# Overrides loaded automatically by docker compose for local development.
+# In production behind Nginx Proxy Manager, run:
+# docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d
 
 services:
+  web:
+    networks:
+      - app
+    ports:
+      - "80:80"
+
   # Allow scorer/poller to reach Ollama running on the host.
   scorer:
     extra_hosts:

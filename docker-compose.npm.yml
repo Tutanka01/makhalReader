@@ -1,0 +1,9 @@
+networks:
+  npm_default:
+    external: true
+
+services:
+  web:
+    networks:
+      - app
+      - npm_default
