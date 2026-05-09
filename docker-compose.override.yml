@@ -8,12 +8,3 @@ services:
       - app
     ports:
       - "80:80"
-
-  # Allow scorer/poller to reach Ollama running on the host.
-  scorer:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  poller:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"

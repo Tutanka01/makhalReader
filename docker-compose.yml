@@ -30,6 +30,8 @@ services:
     build: ./backend/scorer
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - app
     expose:
@@ -41,6 +43,8 @@ services:
     build: ./backend/poller
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - app
     depends_on:

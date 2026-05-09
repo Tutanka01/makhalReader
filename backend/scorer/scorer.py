@@ -13,7 +13,7 @@ app = FastAPI(title="MakhalReader Scorer")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 API_BASE = "http://api:8000"
 API_SECRET = os.getenv("API_SECRET", "changeme")
@@ -21,6 +21,19 @@ API_SECRET = os.getenv("API_SECRET", "changeme")
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
 
 CONTENT_TYPES = {"postmortem", "tutorial", "paper", "release", "opinion", "news", "generic"}
+AXIS_FIELDS = {
+    "topic_fit",
+    "technical_depth",
+    "operational_value",
+    "strategic_value",
+    "novelty",
+    "noise_penalty",
+}
+NUMERIC_FIELDS = AXIS_FIELDS | {"confidence"}
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 class ScoreRequest(BaseModel):
@@ -39,9 +52,33 @@ class ScoreAnalysis(BaseModel):
     noise_penalty: float = Field(ge=0.0, le=3.0)
     confidence: float = Field(ge=0.0, le=1.0)
     content_type: str
-    tags: list[str] = []
-    summary_bullets: list[str] = []
+    tags: list[str] = Field(default_factory=list)
+    summary_bullets: list[str] = Field(default_factory=list)
     reason: str = ""
+
+    @field_validator(
+        "topic_fit",
+        "technical_depth",
+        "operational_value",
+        "strategic_value",
+        "novelty",
+        "noise_penalty",
+        mode="before",
+    )
+    @classmethod
+    def normalize_axis(cls, value: Any) -> float:
+        try:
+            return clamp(float(value), 0.0, 3.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> float:
+        try:
+            return clamp(float(value), 0.0, 1.0)
+        except (TypeError, ValueError):
+            return 0.2
 
     @field_validator("content_type")
     @classmethod
@@ -76,43 +113,93 @@ class ScoreAnalysis(BaseModel):
 
 class ScoreResult(BaseModel):
     score: float
-    tags: list[str] = []
-    summary_bullets: list[str] = []
+    tags: list[str] = Field(default_factory=list)
+    summary_bullets: list[str] = Field(default_factory=list)
     reason: str = ""
-    score_details: dict[str, Any] = {}
+    score_details: dict[str, Any] = Field(default_factory=dict)
 
 
-def clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
+def repair_json_text(text: str) -> str:
+    """Repair common LLM JSON glitches without changing valid JSON."""
+    repaired = text.strip()
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    for field in NUMERIC_FIELDS:
+        # Example seen in production: "strategic_value": IE 0.5
+        repaired = re.sub(
+            rf'("{field}"\s*:\s*)[A-Za-z_][A-Za-z0-9_-]*\s+(-?\d+(?:\.\d+)?)',
+            rf"\1\2",
+            repaired,
+        )
+    return repaired
 
 
-def extract_json_from_text(text: str) -> Optional[dict]:
-    """Extract JSON from text, handling markdown code blocks."""
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
+def json_candidates(text: str) -> list[str]:
+    candidates = [text.strip()]
     patterns = [
         r"```json\s*([\s\S]*?)\s*```",
         r"```\s*([\s\S]*?)\s*```",
         r"\{[\s\S]*\}",
     ]
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                return json.loads(match if pattern == r"\{[\s\S]*\}" else match)
-            except json.JSONDecodeError:
-                obj_match = re.search(r"\{[\s\S]*\}", match)
-                if obj_match:
-                    try:
-                        return json.loads(obj_match.group())
-                    except json.JSONDecodeError:
-                        continue
+        candidates.extend(match.strip() for match in re.findall(pattern, text, re.DOTALL))
 
-    return None
+    first_brace = text.find("{")
+    if first_brace >= 0:
+        last_brace = text.rfind("}")
+        if last_brace > first_brace:
+            candidates.append(text[first_brace : last_brace + 1].strip())
+        else:
+            candidates.append(text[first_brace:].strip())
+
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
+def extract_partial_analysis(text: str) -> Optional[dict]:
+    """Recover a conservative analysis from a truncated or slightly invalid JSON object."""
+    data: dict[str, Any] = {}
+    found_numeric = 0
+    for field in NUMERIC_FIELDS:
+        match = re.search(
+            rf'"{field}"\s*:\s*(?:[A-Za-z_][A-Za-z0-9_-]*\s+)?(-?\d+(?:\.\d+)?)',
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            found_numeric += 1
+            data[field] = float(match.group(1))
+
+    if found_numeric < 4:
+        return None
+
+    type_match = re.search(r'"content_type"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+    data["content_type"] = type_match.group(1) if type_match else "generic"
+
+    for field in AXIS_FIELDS - {"noise_penalty"}:
+        data.setdefault(field, 0.0)
+    data.setdefault("noise_penalty", 2.5)
+    data["confidence"] = min(float(data.get("confidence", 0.2)), 0.35)
+    data.setdefault("tags", [])
+    data.setdefault("summary_bullets", [])
+    data.setdefault("reason", "Recovered from malformed LLM JSON.")
+    return data
+
+
+def extract_json_from_text(text: str) -> Optional[dict]:
+    """Extract JSON from text, handling markdown, minor glitches, and truncation."""
+    for candidate in json_candidates(text):
+        for maybe_repaired in (candidate, repair_json_text(candidate)):
+            try:
+                parsed = json.loads(maybe_repaired)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+
+    return extract_partial_analysis(text)
 
 
 def validate_analysis(data: dict) -> ScoreAnalysis:
@@ -247,6 +334,24 @@ def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int
     )
 
 
+def build_result_from_llm_content(
+    provider: str,
+    content: str,
+    article_words: int,
+    summary_words: int,
+) -> Optional[ScoreResult]:
+    parsed = extract_json_from_text(content)
+    if not parsed:
+        print(f"{provider}: could not parse JSON from response: {content[:300]}")
+        return None
+
+    try:
+        return build_result(validate_analysis(parsed), article_words, summary_words)
+    except Exception as e:
+        print(f"{provider}: invalid score payload after JSON parse: {e}; response={content[:300]}")
+        return None
+
+
 async def score_with_openrouter(
     client: httpx.AsyncClient,
     user_message: str,
@@ -272,7 +377,7 @@ async def score_with_openrouter(
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.0,
-                "max_tokens": 700,
+                "max_tokens": 1200,
             },
             timeout=60,
         )
@@ -281,10 +386,7 @@ async def score_with_openrouter(
             return None
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        parsed = extract_json_from_text(content)
-        if parsed:
-            return build_result(validate_analysis(parsed), article_words, summary_words)
-        print(f"OpenRouter: could not parse JSON from response: {content[:200]}")
+        return build_result_from_llm_content("OpenRouter", content, article_words, summary_words)
     except Exception as e:
         print(f"OpenRouter scoring failed: {e}")
 
@@ -310,9 +412,10 @@ async def score_with_ollama(
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
+                "format": "json",
                 "options": {
                     "temperature": 0.0,
-                    "num_predict": 600,
+                    "num_predict": 900,
                 },
             },
             timeout=120,
@@ -322,10 +425,7 @@ async def score_with_ollama(
             return None
         data = resp.json()
         content = data["message"]["content"]
-        parsed = extract_json_from_text(content)
-        if parsed:
-            return build_result(validate_analysis(parsed), article_words, summary_words)
-        print(f"Ollama: could not parse JSON from response: {content[:200]}")
+        return build_result_from_llm_content("Ollama", content, article_words, summary_words)
     except Exception as e:
         print(f"Ollama scoring failed: {e}")
 
