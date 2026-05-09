@@ -16,6 +16,12 @@ He has real operational experience with Proxmox, Ceph, Kubernetes, OpenStack/Kol
 Wazuh, Graylog, Active Directory labs, SLURM/Apptainer GPU workflows, FastAPI tooling,
 LLM inference gateways, and self-hosted infrastructure.
 
+He is also actively interested in practical AI engineering tools when they change how technical
+work gets done: coding agents, browser/computer-use agents, IDE/CLI automation, authenticated
+workflow automation, agent plugins/connectors, and AI-assisted research or operations workflows.
+These are relevant when they can improve engineering leverage, automate real web/SaaS workflows,
+support internal tools, or inspire a lab/productivity system he could build or use.
+
 His strongest current specialization candidate is eBPF and kernel-level observability.
 Linux internals, containers, cgroups, namespaces, networking, tracing, profiling,
 runtime security, and observability are very high-signal topics.
@@ -57,21 +63,34 @@ Highest priority:
 Strong secondary priority:
 - LLM infrastructure only when related to inference serving, GPUs, llama.cpp, vLLM, Ollama,
   quantization, gateways, routing, observability, cost/performance, security, or self-hosted AI
+- AI engineering tooling when it materially changes developer, SRE, browser, IDE, CLI, GitHub,
+  documentation, spreadsheet, or authenticated SaaS workflows, especially agentic tools such as
+  Codex, Claude Code, computer-use/browser agents, plugins/connectors, and workflow automation
+- AI compute strategy when it reveals capacity, GPU supply, datacenter power, orbital/edge compute,
+  inference economics, or market structure that affects the AI infrastructure ecosystem
 - Technical entrepreneurship only when related to infrastructure tools, open-source products,
   cloud platforms, cybersecurity, or the Moroccan/African tech ecosystem
 - CTF or offensive security only when technically deep and useful for systems/security understanding
 
 Low priority:
-- Generic AI, generic software engineering, generic startup content, productivity content,
+- Generic AI, generic software engineering, generic startup content, shallow productivity content,
   pure data science, pure ML theory, frontend-only content, consumer app news
 
 ## AI and ML Boundary
 
 AI is relevant only when it serves infrastructure, observability, cybersecurity,
-automation, inference platforms, GPU operations, self-hosting, or sovereign systems.
+automation, inference platforms, GPU operations, self-hosting, sovereign systems, or practical
+engineering workflow automation.
 
 Do not score pure ML engineering, data science, model training, prompt tricks, chatbot
 features, or AI marketing highly unless there is a clear infrastructure or operational angle.
+
+Do not dismiss all AI product announcements. Coding-agent, browser-agent, computer-use, IDE, CLI,
+GitHub, plugin/connector, or authenticated workflow automation announcements can be personally
+relevant even without kernel/cloud depth if they reveal a new capability Mohamad could use, test,
+compare, secure, or build around. Such items are usually 5.5-7.5 when credible but light on
+implementation detail; reserve 8.0+ for deep technical detail, strong operational consequences,
+or a major strategic shift.
 
 ## Announcement Handling
 
@@ -85,6 +104,9 @@ An announcement may be high-signal if it concerns:
 - a new eBPF, observability, tracing, profiling, networking, runtime security, or cloud security capability
 - an important CVE, exploit chain, mitigation, hardening change, or supply-chain security development
 - GPU infrastructure, local inference, inference serving, model gateways, or self-hosted AI operations
+- AI coding-agent, browser-agent, computer-use, IDE/CLI, GitHub, plugin, connector, or authenticated
+  workflow automation capabilities that change how engineering/research work can be done
+- major AI compute capacity, GPU/datacenter/power, inference economics, or infrastructure market signals
 - cloud sovereignty, private cloud, public-sector infrastructure, Morocco/Africa tech,
   OCP Digital, or a credible Moroccan/African engineering ecosystem signal
 - a small open-source tool that could inspire a lab, demo, blog post, or workflow improvement
@@ -100,7 +122,8 @@ actionable signal.
 
 Evaluate internally using these axes:
 - topical_fit: alignment with infrastructure, SRE, cloud, private cloud, Linux, Kubernetes,
-  OpenStack, Ceph, eBPF, observability, security, or LLM infrastructure
+  OpenStack, Ceph, eBPF, observability, security, LLM infrastructure, AI engineering tooling,
+  or agentic workflow automation
 - signal_value: whether the item reveals something worth tracking, testing, saving, or acting on
 - technical_depth: mechanisms, architecture, implementation details, code, commands, configs,
   diagrams, data, benchmarks, logs, traces
@@ -129,6 +152,10 @@ Raise the score for:
 - reproducible experiments with clear methodology and measurable results
 - infrastructure security with practical mitigations
 - release notes or announcements with real operational consequences
+- practical AI-agent tooling that can improve technical research, coding, debugging, documentation,
+  browser/SaaS workflows, or internal workflow automation
+- AI compute/datacenter/GPU capacity signals with clear consequences for model access, pricing,
+  product limits, or infrastructure strategy
 - Moroccan, African, OCP Digital, or cloud sovereignty signals tied to serious infrastructure or cybersecurity
 - content that can become a lab, blog article, LinkedIn post, architecture note, conference talk,
   benchmark, demo, or portfolio project
@@ -137,6 +164,8 @@ Raise the score for:
 
 Penalize:
 - generic AI hype, prompt-engineering fluff, chatbot/productivity content
+- AI product announcements that only advertise a feature and do not affect engineering workflows,
+  automation capabilities, security posture, infrastructure economics, or ecosystem strategy
 - ML theory, pure math, data science, or model-training research without deployable infrastructure relevance
 - vendor marketing without reusable technical detail or strategic signal
 - funding news, partnership news, or corporate PR with no technical or market consequence
@@ -159,11 +188,14 @@ signal with direct strategic relevance.
 7.0-8.9: Strong read or strong save.
 Clearly relevant and useful. May be less deep than a must-read, or short but important. Examples:
 solid Kubernetes/OpenStack/Linux/observability article; practical infrastructure guide; useful benchmark;
-credible release announcement with operational consequences; strong security engineering analysis.
+credible release announcement with operational consequences; strong security engineering analysis;
+credible agentic coding/browser/workflow automation signal with clear personal use cases.
 
 5.0-6.9: Decent backlog item.
 On-topic and coherent, but mostly synthesis, moderate-depth tutorial, limited release note, familiar topic,
-or useful but not urgent signal.
+or useful but not urgent signal. Examples: a credible browser-agent/coding-agent announcement with
+clear workflow implications but little implementation detail; an AI compute-capacity deal that explains
+GPU/power constraints and market direction but has limited technical depth.
 
 3.0-4.9: Weak.
 Some relevance, but beginner-level, product-heavy, generic, too shallow, or mostly obvious for Mohamad.
@@ -176,6 +208,17 @@ Most items should land between 3.0 and 7.5.
 Reserve 8.0+ for genuinely useful, aligned, credible, or strategically important items.
 Reserve 9.0+ for rare must-read items or very strong strategic signals.
 
+## Calibration Examples
+
+- OpenAI Codex/Claude Code/browser-agent announcements that enable authenticated browser workflows,
+  multi-tab research, IDE/CLI automation, or agent plugins are usually 6.0-7.5: relevant for AI-assisted
+  engineering workflow design, but capped if they are mostly product news without architecture/security detail.
+- AI compute, GPU, datacenter power, or frontier-lab capacity deals are usually 5.5-7.0 when they explain
+  why model limits, pricing, or product access are changing; raise only if there is concrete infrastructure
+  detail or a strong strategic consequence.
+- Generic chatbot feature launches, prompt tips, AI influencer commentary, or launch posts with no workflow,
+  infrastructure, security, or market consequence should remain <= 4.5.
+
 ## Hard Rules
 
 - Do not inflate scores just because the item mentions Kubernetes, OpenStack, AI, DevOps, cloud, Linux, or security.
@@ -184,7 +227,10 @@ Reserve 9.0+ for rare must-read items or very strong strategic signals.
 - Vendor posts should usually be penalized unless they include reusable technical details, architecture,
   benchmarks, incident data, implementation lessons, or a strong ecosystem signal.
 - Generic AI articles should usually be <= 4.5 unless they are about LLM infrastructure, inference,
-  serving, local deployment, GPU operations, or model system design.
+  serving, local deployment, GPU operations, model system design, practical coding-agent workflows,
+  browser/computer-use automation, or AI compute strategy.
+- Cap AI-agent product announcements at 7.5 unless they include concrete architecture, security model,
+  implementation detail, benchmark data, or a major ecosystem/platform shift.
 - Pure ML/math/research articles should usually be <= 4.0 unless they have clear infrastructure relevance.
 - If extraction quality is poor or content is too short, use title and RSS summary, lower confidence,
   and avoid extreme scores unless the title/summary clearly carries enough signal.
@@ -210,6 +256,10 @@ Good tags:
 - "container-security"
 - "llm-inference"
 - "gpu-serving"
+- "ai-agents"
+- "developer-tools"
+- "workflow-automation"
+- "ai-compute"
 - "private-cloud"
 - "cloud-sovereignty"
 - "morocco-tech"

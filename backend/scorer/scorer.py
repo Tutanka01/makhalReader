@@ -4,7 +4,7 @@ import re
 from typing import List, Optional
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from prompt import SYSTEM_PROMPT
@@ -68,12 +68,15 @@ def extract_json_from_text(text: str) -> Optional[dict]:
 
 
 def validate_score_result(data: dict) -> ScoreResult:
-    score = data.get("score", 5)
+    if "score" not in data:
+        raise ValueError("LLM response is missing required 'score' field")
+
+    score = data.get("score")
     try:
         score = float(score)
         score = max(0.0, min(10.0, score))
     except (TypeError, ValueError):
-        score = 5.0
+        raise ValueError(f"LLM response contains invalid score: {score!r}") from None
 
     tags = data.get("tags", [])
     if not isinstance(tags, list):
@@ -278,13 +281,10 @@ async def score_article(req: ScoreRequest):
         if result is None:
             result = await score_with_ollama(client, user_message)
 
-        # Default fallback
         if result is None:
-            result = ScoreResult(
-                score=5.0,
-                tags=[],
-                summary_bullets=[],
-                reason="Scoring failed: unable to reach any LLM service.",
+            raise HTTPException(
+                status_code=503,
+                detail="Scoring failed: unable to reach any LLM service or parse a valid score.",
             )
 
         # Post result back to API
