@@ -1,13 +1,11 @@
-version: "3.9"
-
 networks:
-  makhal-net:
+  app:
     driver: bridge
+  npm_default:
+    external: true
 
 volumes:
   data:
-  caddy_data:
-  caddy_config:
 
 services:
   api:
@@ -17,7 +15,7 @@ services:
     volumes:
       - data:/data
     networks:
-      - makhal-net
+      - app
     expose:
       - "8000"
 
@@ -26,7 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - app
     expose:
       - "8001"
 
@@ -35,7 +33,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - app
     expose:
       - "8002"
     depends_on:
@@ -46,7 +44,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - app
     depends_on:
       - api
       - extractor
@@ -56,23 +54,21 @@ services:
     build: ./frontend
     restart: unless-stopped
     networks:
-      - makhal-net
+      - app
     expose:
       - "80"
 
-  caddy:
-    image: caddy:2-alpine
+  web:
+    image: nginx:alpine
     restart: unless-stopped
-    env_file: .env
+    container_name: makhal-reader-web
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./nginx/npm.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - makhal-net
-    ports:
-      - "80:80"
-      - "443:443"
+      - app
+      - npm_default
+    expose:
+      - "80"
     depends_on:
       - api
       - frontend
