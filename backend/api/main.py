@@ -402,6 +402,7 @@ def _row_to_list_item(row) -> ArticleListItem:
         url=article.url,
         published_at=article.published_at,
         score=article.score,
+        score_details_json=article.score_details_json or "{}",
         tags_json=article.tags_json or "[]",
         summary_bullets_json=article.summary_bullets_json or "[]",
         reason=article.reason,
@@ -1280,6 +1281,7 @@ async def internal_score_article(
         raise HTTPException(status_code=404, detail="Article not found")
 
     article.score = score_data.score
+    article.score_details_json = json.dumps(score_data.score_details)
     article.tags_json = json.dumps(score_data.tags)
     article.summary_bullets_json = json.dumps(score_data.summary_bullets)
     article.reason = score_data.reason
@@ -1295,6 +1297,7 @@ async def internal_score_article(
         "url": article.url,
         "published_at": article.published_at.isoformat() if article.published_at else None,
         "score": article.score,
+        "score_details": json.loads(article.score_details_json or "{}"),
         "tags": json.loads(article.tags_json or "[]"),
         "summary_bullets": json.loads(article.summary_bullets_json or "[]"),
         "reason": article.reason,

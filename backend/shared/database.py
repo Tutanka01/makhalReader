@@ -71,6 +71,7 @@ class Article(Base):
     content_text = Column(Text, nullable=True)
     images_json = Column(Text, default="[]", nullable=False)
     score = Column(Float, nullable=True)
+    score_details_json = Column(Text, default="{}", nullable=False)
     tags_json = Column(Text, default="[]", nullable=False)
     summary_bullets_json = Column(Text, default="[]", nullable=False)
     reason = Column(String, nullable=True)
@@ -100,6 +101,7 @@ def init_db():
     # Add columns introduced after the initial schema creation (SQLite-safe migrations).
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
+        "ALTER TABLE articles ADD COLUMN score_details_json TEXT NOT NULL DEFAULT '{}'",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

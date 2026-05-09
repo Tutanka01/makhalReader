@@ -1,11 +1,11 @@
 import json
 import os
 import re
-from typing import List, Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from prompt import SYSTEM_PROMPT
 
@@ -20,6 +20,8 @@ API_SECRET = os.getenv("API_SECRET", "changeme")
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
 
+CONTENT_TYPES = {"postmortem", "tutorial", "paper", "release", "opinion", "news", "generic"}
+
 
 class ScoreRequest(BaseModel):
     article_id: int
@@ -28,23 +30,70 @@ class ScoreRequest(BaseModel):
     rss_summary: str = ""
 
 
+class ScoreAnalysis(BaseModel):
+    topic_fit: float = Field(ge=0.0, le=3.0)
+    technical_depth: float = Field(ge=0.0, le=3.0)
+    operational_value: float = Field(ge=0.0, le=3.0)
+    strategic_value: float = Field(ge=0.0, le=3.0)
+    novelty: float = Field(ge=0.0, le=3.0)
+    noise_penalty: float = Field(ge=0.0, le=3.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    content_type: str
+    tags: list[str] = []
+    summary_bullets: list[str] = []
+    reason: str = ""
+
+    @field_validator("content_type")
+    @classmethod
+    def normalize_content_type(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in CONTENT_TYPES else "generic"
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        tags: list[str] = []
+        for item in value[:5]:
+            tag = re.sub(r"[^a-z0-9._+-]+", "-", str(item).strip().lower()).strip("-")
+            if tag and tag not in tags:
+                tags.append(tag[:40])
+        return tags
+
+    @field_validator("summary_bullets", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip()[:220] for item in value[:3] if str(item).strip()]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any) -> str:
+        return str(value or "").strip()[:350]
+
+
 class ScoreResult(BaseModel):
     score: float
-    tags: List[str] = []
-    summary_bullets: List[str] = []
+    tags: list[str] = []
+    summary_bullets: list[str] = []
     reason: str = ""
+    score_details: dict[str, Any] = {}
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 def extract_json_from_text(text: str) -> Optional[dict]:
     """Extract JSON from text, handling markdown code blocks."""
-    # Try direct parse first
     text = text.strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Try to extract from markdown code blocks
     patterns = [
         r"```json\s*([\s\S]*?)\s*```",
         r"```\s*([\s\S]*?)\s*```",
@@ -56,7 +105,6 @@ def extract_json_from_text(text: str) -> Optional[dict]:
             try:
                 return json.loads(match if pattern == r"\{[\s\S]*\}" else match)
             except json.JSONDecodeError:
-                # Try finding JSON object inside the match
                 obj_match = re.search(r"\{[\s\S]*\}", match)
                 if obj_match:
                     try:
@@ -67,35 +115,144 @@ def extract_json_from_text(text: str) -> Optional[dict]:
     return None
 
 
-def validate_score_result(data: dict) -> ScoreResult:
-    if "score" not in data:
-        raise ValueError("LLM response is missing required 'score' field")
-
-    score = data.get("score")
-    try:
-        score = float(score)
-        score = max(0.0, min(10.0, score))
-    except (TypeError, ValueError):
-        raise ValueError(f"LLM response contains invalid score: {score!r}") from None
-
-    tags = data.get("tags", [])
-    if not isinstance(tags, list):
-        tags = []
-    tags = [str(t) for t in tags[:5]]
-
-    summary_bullets = data.get("summary_bullets", [])
-    if not isinstance(summary_bullets, list):
-        summary_bullets = []
-    summary_bullets = [str(b) for b in summary_bullets[:4]]
-
-    reason = data.get("reason", "")
-    if not isinstance(reason, str):
-        reason = str(reason)
-
-    return ScoreResult(score=score, tags=tags, summary_bullets=summary_bullets, reason=reason)
+def validate_analysis(data: dict) -> ScoreAnalysis:
+    # Backward compatibility: an old model response with only "score" still works,
+    # but it is converted into a low-confidence generic analysis.
+    if "score" in data and "topic_fit" not in data:
+        raw_score = clamp(float(data.get("score", 0.0)), 0.0, 10.0)
+        axis = clamp(raw_score / 10.0 * 3.0, 0.0, 3.0)
+        data = {
+            "topic_fit": axis,
+            "technical_depth": axis * 0.7,
+            "operational_value": axis * 0.7,
+            "strategic_value": axis * 0.4,
+            "novelty": axis * 0.5,
+            "noise_penalty": max(0.0, 3.0 - axis),
+            "confidence": 0.35,
+            "content_type": "generic",
+            "tags": data.get("tags", []),
+            "summary_bullets": data.get("summary_bullets", []),
+            "reason": data.get("reason", "Legacy score-only response."),
+        }
+    return ScoreAnalysis.model_validate(data)
 
 
-async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+def word_count(text: str) -> int:
+    return len(re.findall(r"\w+", text or ""))
+
+
+def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_words: int) -> tuple[float, list[str]]:
+    """Convert LLM analysis axes into a stable 0-10 score.
+
+    The LLM identifies evidence; this function owns calibration. That makes
+    scoring easier to test and much less sensitive to prompt drift.
+    """
+    weighted_positive = (
+        analysis.topic_fit * 2.4
+        + analysis.technical_depth * 1.7
+        + analysis.operational_value * 1.8
+        + analysis.strategic_value * 1.1
+        + analysis.novelty * 1.2
+    )
+    max_positive = 3.0 * (2.4 + 1.7 + 1.8 + 1.1 + 1.2)
+    score = weighted_positive / max_positive * 10.0
+    score -= analysis.noise_penalty * 1.15
+
+    # Content-type priors. They are intentionally small; axes still dominate.
+    if analysis.content_type == "postmortem" and analysis.operational_value >= 2.0:
+        score += 0.45
+    elif analysis.content_type == "paper" and (analysis.technical_depth >= 2.2 or analysis.operational_value >= 2.0):
+        score += 0.25
+    elif analysis.content_type == "release" and max(analysis.operational_value, analysis.strategic_value, analysis.novelty) >= 2.3:
+        score += 0.25
+    elif analysis.content_type == "generic":
+        score -= 0.35
+
+    # Low confidence should reduce extremes, not flatten all useful signals.
+    confidence_factor = 0.70 + (0.30 * analysis.confidence)
+    score = 4.8 + ((score - 4.8) * confidence_factor)
+
+    caps: list[str] = []
+
+    def cap(limit: float, reason: str) -> None:
+        nonlocal score
+        if score > limit:
+            score = limit
+            caps.append(reason)
+
+    if analysis.topic_fit < 1.0 and analysis.strategic_value < 1.0:
+        cap(4.0, "low-fit")
+    if analysis.noise_penalty >= 2.5 and analysis.strategic_value < 2.5:
+        cap(4.5, "high-noise")
+    if analysis.content_type == "generic":
+        cap(4.8, "generic-content")
+    if analysis.content_type == "opinion" and analysis.novelty < 2.2:
+        cap(6.0, "ordinary-opinion")
+    if analysis.content_type == "tutorial" and analysis.technical_depth < 2.4 and analysis.operational_value < 2.2:
+        cap(7.0, "routine-tutorial")
+    if analysis.content_type in {"release", "news"} and max(
+        analysis.operational_value, analysis.strategic_value, analysis.novelty
+    ) < 2.2:
+        cap(6.5, "limited-announcement")
+
+    has_article_body = article_words >= 120
+    has_any_context = article_words >= 40 or summary_words >= 30
+    if not has_any_context:
+        cap(5.0, "insufficient-context")
+    elif not has_article_body and analysis.content_type not in {"release", "news"}:
+        cap(5.8, "thin-extraction")
+
+    if analysis.confidence < 0.35:
+        cap(5.5, "very-low-confidence")
+    elif analysis.confidence < 0.55:
+        cap(7.0, "low-confidence")
+
+    return round(clamp(score, 0.0, 10.0), 1), caps
+
+
+def build_reason(analysis: ScoreAnalysis, score: float, caps: list[str]) -> str:
+    axis_note = (
+        f"[{analysis.content_type}, conf={analysis.confidence:.2f}, "
+        f"fit={analysis.topic_fit:.1f}, depth={analysis.technical_depth:.1f}, "
+        f"ops={analysis.operational_value:.1f}, strat={analysis.strategic_value:.1f}, "
+        f"novelty={analysis.novelty:.1f}, noise={analysis.noise_penalty:.1f}, score={score:.1f}]"
+    )
+    cap_note = f" Caps: {', '.join(caps)}." if caps else ""
+    reason = analysis.reason or "Scored from structured relevance axes."
+    return f"{reason} {axis_note}{cap_note}"[:500]
+
+
+def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int) -> ScoreResult:
+    score, caps = compute_final_score(analysis, article_words, summary_words)
+    details = {
+        "topic_fit": analysis.topic_fit,
+        "technical_depth": analysis.technical_depth,
+        "operational_value": analysis.operational_value,
+        "strategic_value": analysis.strategic_value,
+        "novelty": analysis.novelty,
+        "noise_penalty": analysis.noise_penalty,
+        "confidence": analysis.confidence,
+        "content_type": analysis.content_type,
+        "article_words": article_words,
+        "summary_words": summary_words,
+        "caps": caps,
+        "scoring_version": 2,
+    }
+    return ScoreResult(
+        score=score,
+        tags=analysis.tags,
+        summary_bullets=analysis.summary_bullets,
+        reason=build_reason(analysis, score, caps),
+        score_details=details,
+    )
+
+
+async def score_with_openrouter(
+    client: httpx.AsyncClient,
+    user_message: str,
+    article_words: int,
+    summary_words: int,
+) -> Optional[ScoreResult]:
     if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.startswith("sk-"):
         return None
 
@@ -114,20 +271,19 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
-                "temperature": 0.1,
-                "max_tokens": 1024,
+                "temperature": 0.0,
+                "max_tokens": 700,
             },
             timeout=60,
         )
         if not resp.is_success:
-            # Log full body so the user can see the actual OpenRouter error
             print(f"OpenRouter error {resp.status_code}: {resp.text[:500]}")
             return None
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
-            return validate_score_result(parsed)
+            return build_result(validate_analysis(parsed), article_words, summary_words)
         print(f"OpenRouter: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"OpenRouter scoring failed: {e}")
@@ -135,7 +291,12 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
     return None
 
 
-async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+async def score_with_ollama(
+    client: httpx.AsyncClient,
+    user_message: str,
+    article_words: int,
+    summary_words: int,
+) -> Optional[ScoreResult]:
     if not OLLAMA_URL:
         return None
 
@@ -150,8 +311,8 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
                 ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.1,
-                    "num_predict": 512,
+                    "temperature": 0.0,
+                    "num_predict": 600,
                 },
             },
             timeout=120,
@@ -163,7 +324,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
         content = data["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
-            return validate_score_result(parsed)
+            return build_result(validate_analysis(parsed), article_words, summary_words)
         print(f"Ollama: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"Ollama scoring failed: {e}")
@@ -190,7 +351,6 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
             + data.get("total_read", 0)
         )
         if total < 3:
-            # Not enough signal yet — avoid noisy cold-start bias
             return ""
 
         liked_tags: list[dict] = data.get("liked_tags", [])
@@ -199,62 +359,45 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
         read_tags: list[dict] = data.get("read_tags", [])
         liked_examples: list[dict] = data.get("liked_examples", [])
         disliked_examples: list[dict] = data.get("disliked_examples", [])
-        bookmarked_examples: list[dict] = data.get("bookmarked_examples", [])
 
-        lines: list[str] = ["\n\n---\n## Reader Preference Profile"]
-
-        # --- Tag frequency block (most signal-dense part) ---
+        lines: list[str] = ["\n\n## Preference profile"]
         if liked_tags:
-            tag_str = ", ".join(e["tag"] for e in liked_tags[:8])
-            lines.append(f"Explicit likes, ranked by frequency: {tag_str}")
-
+            lines.append("likes: " + ", ".join(e["tag"] for e in liked_tags[:7]))
         if disliked_tags:
-            tag_str = ", ".join(e["tag"] for e in disliked_tags[:5])
-            lines.append(f"Explicit dislikes / avoid unless exceptional: {tag_str}")
-
+            lines.append("avoid unless exceptional: " + ", ".join(e["tag"] for e in disliked_tags[:5]))
         if bookmarked_tags:
-            tag_str = ", ".join(e["tag"] for e in bookmarked_tags[:6])
-            lines.append(f"Bookmarked themes, implicit strong positive: {tag_str}")
-
+            lines.append("bookmarks: " + ", ".join(e["tag"] for e in bookmarked_tags[:5]))
         if read_tags:
-            tag_str = ", ".join(e["tag"] for e in read_tags[:6])
-            lines.append(f"Recently read themes, implicit weak positive: {tag_str}")
+            lines.append("read history: " + ", ".join(e["tag"] for e in read_tags[:5]))
 
-        # --- Contrastive examples (2-3 liked, 1-2 disliked) ---
         if liked_examples:
-            lines.append("\nRepresentative liked articles:")
-            for ex in liked_examples[:3]:
-                tag_str = f" [{', '.join(ex['tags'][:4])}]" if ex.get("tags") else ""
-                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
-                title = ex["title"][:80].rstrip()
-                lines.append(f'- "{title}"{tag_str}{score_str}')
-
+            examples = "; ".join(f'"{ex["title"][:70].rstrip()}"' for ex in liked_examples[:2])
+            lines.append(f"liked examples: {examples}")
         if disliked_examples:
-            lines.append("\nRepresentative disliked articles:")
-            for ex in disliked_examples[:2]:
-                tag_str = f" [{', '.join(ex['tags'][:3])}]" if ex.get("tags") else ""
-                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
-                title = ex["title"][:80].rstrip()
-                lines.append(f'- "{title}"{tag_str}{score_str}')
+            examples = "; ".join(f'"{ex["title"][:70].rstrip()}"' for ex in disliked_examples[:2])
+            lines.append(f"disliked examples: {examples}")
 
-        if bookmarked_examples and not liked_examples:
-            lines.append("\nRepresentative bookmarked articles:")
-            for ex in bookmarked_examples[:2]:
-                tag_str = f" [{', '.join(ex['tags'][:4])}]" if ex.get("tags") else ""
-                score_str = f" score={ex['score']:.1f}" if ex.get("score") is not None else ""
-                title = ex["title"][:80].rstrip()
-                lines.append(f'- "{title}"{tag_str}{score_str}')
-
-        lines.append(
-            "\nUse this profile as a personalization prior. Explicit likes/dislikes are stronger "
-            "than bookmarks, and bookmarks are stronger than read history. Never let a weak "
-            "article score high only because it matches a preferred tag."
-        )
-
+        lines.append("Use as a prior only; weak content must stay weak.")
         return "\n".join(lines)
 
     except Exception:
         return ""
+
+
+def build_user_message(req: ScoreRequest, preference_block: str) -> tuple[str, int, int]:
+    content_preview = (req.content_text or "").strip()[:4500]
+    summary_preview = (req.rss_summary or "").strip()[:900]
+    article_words = word_count(content_preview)
+    summary_words = word_count(summary_preview)
+    user_message = (
+        f"Title: {req.title.strip()[:300]}\n"
+        f"Article word count in provided text: {article_words}\n"
+        f"RSS summary word count: {summary_words}\n\n"
+        f"RSS summary:\n{summary_preview or '(none)'}\n\n"
+        f"Article text:\n{content_preview or '(no extracted article text)'}"
+        f"{preference_block}"
+    )
+    return user_message, article_words, summary_words
 
 
 @app.post("/score")
@@ -262,24 +405,14 @@ async def score_article(req: ScoreRequest):
     result: Optional[ScoreResult] = None
 
     async with httpx.AsyncClient() as client:
-        # Build user message with optional preference profile for personalisation
-        content_preview = (req.content_text or "")[:5000]
-        summary_preview = (req.rss_summary or "")[:1200]
         preference_block = await build_preference_block(client)
-        user_message = (
-            f"Title: {req.title}\n\n"
-            f"RSS summary:\n{summary_preview or '(none)'}\n\n"
-            f"Article text:\n{content_preview or '(no extracted article text)'}"
-            f"{preference_block}"
-        )
+        user_message, article_words, summary_words = build_user_message(req, preference_block)
 
-        # Try OpenRouter first
         if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
-            result = await score_with_openrouter(client, user_message)
+            result = await score_with_openrouter(client, user_message, article_words, summary_words)
 
-        # Fallback to Ollama
         if result is None:
-            result = await score_with_ollama(client, user_message)
+            result = await score_with_ollama(client, user_message, article_words, summary_words)
 
         if result is None:
             raise HTTPException(
@@ -287,7 +420,6 @@ async def score_article(req: ScoreRequest):
                 detail="Scoring failed: unable to reach any LLM service or parse a valid score.",
             )
 
-        # Post result back to API
         try:
             resp = await client.post(
                 f"{API_BASE}/api/internal/articles/{req.article_id}/score",
@@ -296,6 +428,7 @@ async def score_article(req: ScoreRequest):
                     "tags": result.tags,
                     "summary_bullets": result.summary_bullets,
                     "reason": result.reason,
+                    "score_details": result.score_details,
                 },
                 headers=INTERNAL_HEADERS,
                 timeout=30,
@@ -305,7 +438,7 @@ async def score_article(req: ScoreRequest):
             print(f"Failed to post score to API: {e}")
             raise
 
-    return {"status": "ok", "score": result.score}
+    return {"status": "ok", "score": result.score, "score_details": result.score_details}
 
 
 @app.get("/health")
@@ -315,4 +448,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8002)

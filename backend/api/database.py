@@ -66,6 +66,7 @@ class Article(Base):
     content_text = Column(Text, nullable=True)
     images_json = Column(Text, default="[]", nullable=False)
     score = Column(Float, nullable=True)
+    score_details_json = Column(Text, default="{}", nullable=False)
     tags_json = Column(Text, default="[]", nullable=False)
     summary_bullets_json = Column(Text, default="[]", nullable=False)
     reason = Column(String, nullable=True)
@@ -162,6 +163,7 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
         "ALTER TABLE articles ADD COLUMN user_feedback INTEGER",
         "ALTER TABLE articles ADD COLUMN reading_time INTEGER",
+        "ALTER TABLE articles ADD COLUMN score_details_json TEXT NOT NULL DEFAULT '{}'",
         "CREATE TABLE IF NOT EXISTS highlights (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, selected_text TEXT NOT NULL, prefix_context TEXT NOT NULL DEFAULT '', suffix_context TEXT NOT NULL DEFAULT '', color VARCHAR(16) NOT NULL DEFAULT 'yellow', note TEXT, created_at DATETIME NOT NULL)",
         "CREATE INDEX IF NOT EXISTS ix_highlights_article_id ON highlights(article_id)",
     ]

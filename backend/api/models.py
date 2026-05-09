@@ -35,6 +35,7 @@ class ArticleOut(BaseModel):
     content_text: Optional[str] = None
     images_json: str = "[]"
     score: Optional[float] = None
+    score_details_json: str = "{}"
     tags_json: str = "[]"
     summary_bullets_json: str = "[]"
     reason: Optional[str] = None
@@ -49,6 +50,7 @@ class ArticleOut(BaseModel):
     tags: List[str] = []
     summary_bullets: List[str] = []
     images: List[str] = []
+    score_details: Dict[str, Any] = {}
 
     model_config = {"from_attributes": True}
 
@@ -66,6 +68,10 @@ class ArticleOut(BaseModel):
             self.images = json.loads(self.images_json or "[]")
         except Exception:
             self.images = []
+        try:
+            self.score_details = json.loads(self.score_details_json or "{}")
+        except Exception:
+            self.score_details = {}
         return self
 
 
@@ -76,6 +82,7 @@ class ArticleListItem(BaseModel):
     url: str
     published_at: Optional[datetime] = None
     score: Optional[float] = None
+    score_details_json: str = "{}"
     tags_json: str = "[]"
     summary_bullets_json: str = "[]"
     reason: Optional[str] = None
@@ -90,6 +97,7 @@ class ArticleListItem(BaseModel):
     # Computed fields
     tags: List[str] = []
     summary_bullets: List[str] = []
+    score_details: Dict[str, Any] = {}
 
     model_config = {"from_attributes": True}
 
@@ -103,6 +111,10 @@ class ArticleListItem(BaseModel):
             self.summary_bullets = json.loads(self.summary_bullets_json or "[]")
         except Exception:
             self.summary_bullets = []
+        try:
+            self.score_details = json.loads(self.score_details_json or "{}")
+        except Exception:
+            self.score_details = {}
         return self
 
 
@@ -128,6 +140,7 @@ class InternalScoreUpdate(BaseModel):
     tags: List[str] = []
     summary_bullets: List[str] = []
     reason: Optional[str] = None
+    score_details: Dict[str, Any] = {}
 
 
 # ---------------------------------------------------------------------------
