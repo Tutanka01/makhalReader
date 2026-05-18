@@ -14,6 +14,7 @@ import {
   AArrowUp,
   ThumbsUp,
   ThumbsDown,
+  Sparkles,
 } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
 import { useHighlightsStore } from '../store/highlights'
@@ -23,6 +24,7 @@ import { PaperView } from './PaperView'
 import { HighlightPopover } from './HighlightPopover'
 import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
+import RelatedPanel from './RelatedPanel'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -118,7 +120,7 @@ function applyHighlights(html: string, highlights: Highlight[]): string {
   return result
 }
 
-const FONT_SIZE_KEY = 'makhal_reader_font_size'
+const FONT_SIZE_KEY = 'basira_font_size'
 const FONT_SIZE_MIN = 14
 const FONT_SIZE_MAX = 22
 const FONT_SIZE_DEFAULT = 17
@@ -141,13 +143,14 @@ interface ReaderViewProps {
   onToggleSidebar: () => void
   onNext?: () => void
   hasNext?: boolean
+  onNavigate?: (id: number) => void
 }
 
 function isArxivUrl(url: string): boolean {
   return /arxiv\.org\/abs\//i.test(url)
 }
 
-export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext }: ReaderViewProps) {
+export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext, onNavigate }: ReaderViewProps) {
   const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark, submitFeedback } = useArticlesStore()
   const { highlights, fetchHighlights, createHighlight, deleteHighlight } = useHighlightsStore()
   const [fontSize, setFontSize] = useState(getSavedFontSize)
@@ -155,6 +158,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   const [copied, setCopied] = useState(false)
   const [showHighlightList, setShowHighlightList] = useState(false)
   const [showAskPanel, setShowAskPanel] = useState(false)
+  const [showRelatedPanel, setShowRelatedPanel] = useState(false)
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
   const [noteTooltip, setNoteTooltip] = useState<{ note: string; x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -313,7 +317,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
       {/* Reading progress bar — 2px at very top */}
       <div className="h-0.5 w-full bg-bg-elevated flex-shrink-0">
         <div
-          className="h-full bg-accent-blue transition-all duration-150"
+          className="h-full bg-accent transition-all duration-150"
           style={{ width: `${scrollProgress}%` }}
         />
       </div>
@@ -372,7 +376,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => article.read_at ? markUnread(article.id) : markRead(article.id)}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.read_at ? 'text-accent-green' : 'text-text-secondary hover:text-text-primary'
+              article.read_at ? 'text-success' : 'text-text-secondary hover:text-text-primary'
             }`}
             title={article.read_at ? 'Mark unread' : 'Mark read'}
           >
@@ -383,7 +387,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => toggleBookmark(article.id)}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.bookmarked ? 'text-accent-blue' : 'text-text-secondary hover:text-text-primary'
+              article.bookmarked ? 'text-accent' : 'text-text-secondary hover:text-text-primary'
             }`}
             title="Bookmark"
           >
@@ -395,7 +399,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => submitFeedback(article.id, article.user_feedback === 1 ? 0 : 1)}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.user_feedback === 1 ? 'text-accent-green' : 'text-text-secondary hover:text-accent-green'
+              article.user_feedback === 1 ? 'text-success' : 'text-text-secondary hover:text-success'
             }`}
             title={article.user_feedback === 1 ? 'Remove like' : 'Like — improve future scoring'}
           >
@@ -404,7 +408,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => submitFeedback(article.id, article.user_feedback === -1 ? 0 : -1)}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.user_feedback === -1 ? 'text-red-400' : 'text-text-secondary hover:text-red-400'
+              article.user_feedback === -1 ? 'text-danger' : 'text-text-secondary hover:text-danger'
             }`}
             title={article.user_feedback === -1 ? 'Remove dislike' : 'Dislike — improve future scoring'}
           >
@@ -416,7 +420,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => { setShowHighlightList((v) => !v); setShowAskPanel(false) }}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              showHighlightList ? 'text-accent-yellow' : 'text-text-secondary hover:text-text-primary'
+              showHighlightList ? 'text-warning' : 'text-text-secondary hover:text-text-primary'
             }`}
             title={`Surlignages (${articleHighlights.length})`}
           >
@@ -427,18 +431,29 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <button
             onClick={() => { setShowAskPanel((v) => !v); setShowHighlightList(false) }}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              showAskPanel ? 'text-accent-blue' : 'text-text-secondary hover:text-text-primary'
+              showAskPanel ? 'text-accent' : 'text-text-secondary hover:text-text-primary'
             }`}
             title="Poser une question à l'IA"
           >
             <Bot className="w-4 h-4" />
           </button>
 
+          {/* Related articles */}
+          <button
+            onClick={() => setShowRelatedPanel((v) => !v)}
+            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
+              showRelatedPanel ? 'text-purple' : 'text-text-secondary hover:text-text-primary'
+            }`}
+            title="Related articles (semantic)"
+          >
+            <Sparkles className="w-4 h-4" />
+          </button>
+
           {/* Copy link */}
           <button
             onClick={copyLink}
             className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              copied ? 'text-accent-green' : 'text-text-secondary hover:text-text-primary'
+              copied ? 'text-success' : 'text-text-secondary hover:text-text-primary'
             }`}
             title={copied ? 'Copied!' : 'Copy link'}
           >
@@ -457,6 +472,9 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           </a>
         </div>
       </div>
+
+      {/* Main content area — horizontal split with optional Related panel */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
       {/* Paper view — dedicated layout for ArXiv papers */}
       {isPaper ? (
@@ -521,7 +539,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
                 <ul className="space-y-1.5">
                   {article.summary_bullets.map((bullet, i) => (
                     <li key={i} className="text-sm text-text-secondary leading-relaxed flex gap-2">
-                      <span className="text-accent-blue flex-shrink-0 mt-0.5">›</span>
+                      <span className="text-accent flex-shrink-0 mt-0.5">›</span>
                       <span>{bullet}</span>
                     </li>
                   ))}
@@ -581,7 +599,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
                   href={article.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-accent-blue hover:underline"
+                  className="mt-2 inline-flex items-center gap-1 text-accent hover:underline"
                 >
                   Lire sur le site original <ExternalLink className="w-3 h-3" />
                 </a>
@@ -594,7 +612,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
                 href={article.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm text-accent-blue hover:underline"
+                className="inline-flex items-center gap-2 text-sm text-accent hover:underline"
               >
                 Lire l'article original
                 <ExternalLink className="w-4 h-4" />
@@ -605,13 +623,13 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             {hasNext && onNext && scrollProgress >= 80 && (
               <button
                 onClick={onNext}
-                className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent-blue/40 hover:bg-bg-elevated transition-all duration-200 group"
+                className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent/40 hover:bg-bg-elevated transition-all duration-200 group"
               >
                 <span className="text-xs text-text-muted group-hover:text-text-secondary transition-colors">
                   Article suivant
                 </span>
                 <svg
-                  className="w-4 h-4 text-text-muted group-hover:text-accent-blue transition-colors translate-x-0 group-hover:translate-x-0.5 duration-200"
+                  className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors translate-x-0 group-hover:translate-x-0.5 duration-200"
                   fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -630,6 +648,21 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           )}
         </div>
       )}
+
+      {/* Related articles panel — right sidebar */}
+      {showRelatedPanel && (
+        <div className="hidden lg:flex flex-col w-72 shrink-0 overflow-hidden">
+          <RelatedPanel
+            articleId={articleId}
+            onNavigate={(id) => {
+              if (onNavigate) onNavigate(id)
+              setShowRelatedPanel(false)
+            }}
+          />
+        </div>
+      )}
+
+      </div>{/* end horizontal split */}
 
       {/* Highlight popover — appears on text selection */}
       {pendingSelection && (
@@ -654,9 +687,9 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           <div
             className="relative rounded-xl px-3 py-2 text-xs leading-relaxed shadow-2xl"
             style={{
-              background: '#1E2430',
-              border: '1px solid #2A3341',
-              color: '#A0ADB8',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--text-muted)',
               maxWidth: 220,
               boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
             }}
@@ -671,7 +704,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
                 height: 0,
                 borderLeft: '6px solid transparent',
                 borderRight: '6px solid transparent',
-                borderTop: '6px solid #2A3341',
+                borderTop: '6px solid var(--border-strong)',
               }}
             />
           </div>

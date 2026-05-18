@@ -2,17 +2,17 @@ import { X, Trash2 } from 'lucide-react'
 import type { Highlight } from '../types'
 
 const COLOR_CLASSES: Record<string, string> = {
-  yellow: 'bg-yellow-400/25 border-yellow-400/50',
-  green:  'bg-green-400/20  border-green-400/45',
-  blue:   'bg-blue-400/20   border-blue-400/50',
-  purple: 'bg-purple-400/20 border-purple-400/45',
+  yellow: 'bg-warning-bg border-warning/50',
+  green:  'bg-success-bg  border-success/50',
+  blue:   'bg-accent-light   border-accent/50',
+  purple: 'bg-purple-bg border-purple/50',
 }
 
 const SWATCH_CLASSES: Record<string, string> = {
-  yellow: 'bg-yellow-400',
-  green:  'bg-green-400',
-  blue:   'bg-blue-400',
-  purple: 'bg-purple-400',
+  yellow: 'bg-warning',
+  green:  'bg-success',
+  blue:   'bg-accent',
+  purple: 'bg-purple',
 }
 
 interface HighlightListProps {

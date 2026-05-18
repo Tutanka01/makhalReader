@@ -8,13 +8,23 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from prompt import SYSTEM_PROMPT
+from scorer_logic import (
+    _VALID_CONTRIBUTION_TYPES,
+    _VALID_RE_DOC_TYPES,
+    clamp_float as _clamp_float,
+    compute_content_cap,
+)
 
-app = FastAPI(title="MakhalReader Scorer")
+app = FastAPI(title="Baṣīra Scorer")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+UNI_OLLAMA_URL = os.getenv("UNI_OLLAMA_URL", "")
+UNI_OLLAMA_MODEL = os.getenv("UNI_OLLAMA_MODEL", "")
+UNI_OLLAMA_API_KEY = os.getenv("UNI_OLLAMA_API_KEY", "")
+SCORER_MAX_CHARS = int(os.getenv("SCORER_MAX_CHARS", "6000"))
 API_BASE = "http://api:8000"
 API_SECRET = os.getenv("API_SECRET", "changeme")
 
@@ -26,6 +36,7 @@ class ScoreRequest(BaseModel):
     title: str
     content_text: str
     rss_summary: str = ""
+    paper_meta_json: Optional[str] = None
 
 
 class ScoreResult(BaseModel):
@@ -33,6 +44,11 @@ class ScoreResult(BaseModel):
     tags: List[str] = []
     summary_bullets: List[str] = []
     reason: str = ""
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
+    novelty: Optional[float] = None
+    rigor: Optional[float] = None
+    relevance_to_topics: Optional[float] = None
 
 
 def extract_json_from_text(text: str) -> Optional[dict]:
@@ -89,7 +105,63 @@ def validate_score_result(data: dict) -> ScoreResult:
     if not isinstance(reason, str):
         reason = str(reason)
 
-    return ScoreResult(score=score, tags=tags, summary_bullets=summary_bullets, reason=reason)
+    contribution_type = data.get("contribution_type")
+    if contribution_type not in _VALID_CONTRIBUTION_TYPES:
+        contribution_type = None
+
+    re_document_type = data.get("re_document_type")
+    if re_document_type not in _VALID_RE_DOC_TYPES:
+        re_document_type = None
+
+    return ScoreResult(
+        score=score,
+        tags=tags,
+        summary_bullets=summary_bullets,
+        reason=reason,
+        contribution_type=contribution_type,
+        re_document_type=re_document_type,
+        novelty=_clamp_float(data.get("novelty")),
+        rigor=_clamp_float(data.get("rigor")),
+        relevance_to_topics=_clamp_float(data.get("relevance_to_topics")),
+    )
+
+
+async def score_with_uni_server(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+    """Tier 1: University GPU server (OpenAI-compatible API)."""
+    if not UNI_OLLAMA_URL or not UNI_OLLAMA_MODEL or not UNI_OLLAMA_API_KEY:
+        return None
+
+    try:
+        resp = await client.post(
+            f"{UNI_OLLAMA_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {UNI_OLLAMA_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": UNI_OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1024,
+            },
+            timeout=90,
+        )
+        if not resp.is_success:
+            print(f"Uni server error {resp.status_code}: {resp.text[:300]}")
+            return None
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = extract_json_from_text(content)
+        if parsed:
+            return validate_score_result(parsed)
+        print(f"Uni server: could not parse JSON from response: {content[:200]}")
+    except Exception as e:
+        print(f"Uni server scoring failed: {e}")
+
+    return None
 
 
 async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
@@ -102,8 +174,8 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/makhalreader",
-                "X-Title": "MakhalReader",
+                "HTTP-Referer": "https://github.com/basira",
+                "X-Title": "Baṣīra",
             },
             json={
                 "model": SCORER_MODEL,
@@ -242,16 +314,23 @@ async def score_article(req: ScoreRequest):
     result: Optional[ScoreResult] = None
 
     async with httpx.AsyncClient() as client:
+        # Determine content cap — paper-aware if paper_meta_json provided
+        cap = compute_content_cap(SCORER_MAX_CHARS, req.paper_meta_json)
+
         # Build user message with optional preference profile for personalisation
-        content_preview = (req.content_text or req.rss_summary or "")[:3000]
+        content_preview = (req.content_text or req.rss_summary or "")[:cap]
         preference_block = await build_preference_block(client)
         user_message = f"Titre: {req.title}\n\nContenu:\n{content_preview}{preference_block}"
 
-        # Try OpenRouter first
-        if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
+        # Tier 1: University GPU server (highest quality, free)
+        if UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:
+            result = await score_with_uni_server(client, user_message)
+
+        # Tier 2: OpenRouter (cloud fallback)
+        if result is None and OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
             result = await score_with_openrouter(client, user_message)
 
-        # Fallback to Ollama
+        # Tier 3: Local Ollama
         if result is None:
             result = await score_with_ollama(client, user_message)
 
@@ -273,6 +352,11 @@ async def score_article(req: ScoreRequest):
                     "tags": result.tags,
                     "summary_bullets": result.summary_bullets,
                     "reason": result.reason,
+                    "contribution_type": result.contribution_type,
+                    "re_document_type": result.re_document_type,
+                    "novelty": result.novelty,
+                    "rigor": result.rigor,
+                    "relevance_to_topics": result.relevance_to_topics,
                 },
                 headers=INTERNAL_HEADERS,
                 timeout=30,

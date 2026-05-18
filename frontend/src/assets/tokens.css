@@ -1,0 +1,37 @@
+:root {
+  /* Backgrounds */
+  --bg:           #FFFFFF;
+  --bg-secondary: #F7F6F3;   /* warm off-white — card surfaces, table headers */
+  --bg-hover:     #EFEFED;   /* interactive hover */
+  --bg-active:    #E8E7E3;   /* active / selected state */
+  --sidebar-bg:   #FBFAF8;   /* sidebar background */
+
+  /* Borders */
+  --border:       #E8E6E1;
+  --border-strong:#D4D0C8;
+
+  /* Text */
+  --text:         #191919;   /* near-black — primary */
+  --text-secondary:#6B6B6B;
+  --text-muted:   #9B9B9B;
+
+  /* Accent */
+  --accent:       #2F6FED;
+  --accent-light: #EBF1FD;
+
+  /* Semantic */
+  --success:      #0F7B6C;  --success-bg: #E3F5F2;
+  --warning:      #B45309;  --warning-bg: #FEF3C7;
+  --danger:       #C0392B;  --danger-bg:  #FDECEA;
+  --purple:       #6B4FBB;  --purple-bg:  #EDE9FF;
+
+  /* Layout */
+  --sidebar-w:    240px;
+  --header-h:     48px;
+  --radius:       6px;
+  --radius-lg:    10px;
+
+  /* Shadows */
+  --shadow:    0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
+}

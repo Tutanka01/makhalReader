@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut, Network, UserCircle2, BookOpen } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { DigestView } from './DigestView'
 import { StatsView } from './StatsView'
+import ResearchDigestView from './ResearchDigestView'
+import LitReviewView from './LitReviewView'
 import { useArticlesStore } from '../store/articles'
-import type { Feed } from '../types'
+import type { ContribType, Feed } from '../types'
 
 interface ArticleListProps {
   feeds: Feed[]
   onSelect: (id: number) => void
   selectedId: number | null
   onOpenFeedManager: () => void
-  currentView: 'feed' | 'digest' | 'stats'
-  onViewChange: (v: 'feed' | 'digest' | 'stats') => void
+  onOpenProfile: () => void
+  currentView: 'feed' | 'digest' | 'stats' | 'research' | 'litreview'
+  onViewChange: (v: 'feed' | 'digest' | 'stats' | 'research' | 'litreview') => void
   onLogout: () => void
 }
 
-export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange, onLogout }: ArticleListProps) {
+export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, onOpenProfile, currentView, onViewChange, onLogout }: ArticleListProps) {
   const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchArticles, clearSearch, searchResults, isSearching } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
@@ -142,62 +145,18 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle flex-shrink-0">
+      {/* Toolbar — feed filters */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle flex-shrink-0 bg-bg-surface/50 flex-wrap gap-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-text-secondary tracking-wide">
-            MakhalReader
-          </span>
-          {/* Digest toggle */}
           <button
-            onClick={() => onViewChange(currentView === 'digest' ? 'feed' : 'digest')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'digest'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Digest du jour"
+            onClick={() => fetchArticles(true)}
+            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
+            title="Refresh"
           >
-            <Sparkles className="w-3 h-3" />
-            Digest
+            <RefreshCw className="w-3.5 h-3.5" />
           </button>
-          {/* Stats toggle */}
-          <button
-            onClick={() => onViewChange(currentView === 'stats' ? 'feed' : 'stats')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'stats'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Statistiques de lecture"
-          >
-            <BarChart2 className="w-3 h-3" />
-            Stats
-          </button>
-        </div>
-        <div className="flex items-center gap-0.5">
-          {/* Search — hidden in digest */}
-          {currentView === 'feed' && (
-            <button
-              onClick={openSearch}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Search  /"
-            >
-              <Search className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {/* Refresh — hidden in digest */}
-          {currentView === 'feed' && (
-            <button
-              onClick={() => fetchArticles(true)}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Refresh"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {/* Mark all read */}
-          {currentView === 'feed' && filter.status !== 'read' && (
+          
+          {filter.status !== 'read' && (
             <button
               onClick={handleMarkAllRead}
               className={`flex items-center gap-1 rounded-md transition-all duration-150 text-xs font-medium ${
@@ -211,130 +170,123 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               {confirmingReadAll && <span>Confirm?</span>}
             </button>
           )}
-          {/* Feed manager */}
+
+          <div className="w-[1px] h-4 bg-border-default mx-1" />
+
+          {/* Status toggle */}
+          <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
+            <button
+              onClick={() => setFilter({ status: 'unread', bookmarked: false })}
+              className={`px-2 py-1 transition-colors ${
+                filter.status === 'unread' && !filter.bookmarked
+                  ? 'bg-accent-blue text-white'
+                  : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+              }`}
+            >
+              Unread
+            </button>
+            <button
+              onClick={() => setFilter({ status: 'all', bookmarked: false })}
+              className={`px-2 py-1 border-l border-border-default transition-colors ${
+                filter.status === 'all' && !filter.bookmarked
+                  ? 'bg-accent-blue text-white'
+                  : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+              }`}
+            >
+              All
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Sort toggle */}
           <button
-            onClick={onOpenFeedManager}
-            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-            title="Gérer les feeds"
+            onClick={() => setFilter({ sort: filter.sort === 'score' ? 'date' : 'score' })}
+            className="flex items-center gap-1 px-2 py-1 rounded-md border border-border-default text-xs text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            title={filter.sort === 'score' ? 'Sorted by score — click for date' : 'Sorted by date — click for score'}
           >
-            <Settings className="w-3.5 h-3.5" />
+            {filter.sort === 'score'
+              ? <Star className="w-3 h-3" />
+              : <Clock className="w-3 h-3" />
+            }
+            {filter.sort === 'score' ? 'Score' : 'Date'}
+            <ArrowUpDown className="w-3 h-3 opacity-50" />
           </button>
-          {/* Logout */}
-          <button
-            onClick={async () => {
-              await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
-              onLogout()
-            }}
-            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-red-400"
-            title="Se déconnecter"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-          </button>
+
+          {/* Min score filter */}
+          <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
+            {([0, 6, 8] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setFilter({ minScore: s })}
+                className={`px-2 py-1 transition-colors ${s > 0 ? 'border-l border-border-default' : ''} ${
+                  filter.minScore === s
+                    ? s === 0 ? 'bg-bg-elevated text-text-primary'
+                      : s === 6 ? 'bg-accent-yellow/20 text-accent-yellow'
+                      : 'bg-accent-green/20 text-accent-green'
+                    : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+                }`}
+                title={s === 0 ? 'All scores' : `Score ≥ ${s}`}
+              >
+                {s === 0 ? 'All' : `${s}+`}
+              </button>
+            ))}
+          </div>
+
+          {/* Unread count */}
+          {unreadCount !== null && unreadCount > 0 && (
+            <span className="ml-2 text-xs text-text-muted tabular-nums">
+              {unreadCount}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Digest view — replaces list when active */}
-      {currentView === 'digest' && (
-        <DigestView onSelect={onSelect} />
-      )}
-
-      {/* Stats view — replaces list when active */}
-      {currentView === 'stats' && (
-        <StatsView onClose={() => onViewChange('feed')} />
-      )}
-
-      {/* Search bar */}
-      {currentView === 'feed' && searchOpen && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
-          <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Escape') closeSearch() }}
-            placeholder="Search title, feed, tag…"
-            className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
-          />
-          {isSearchActive && (
-            <span className="text-xs text-text-muted tabular-nums flex-shrink-0">
-              {isSearching ? '…' : `${searchResults.length}`}
-            </span>
-          )}
-          <button onClick={closeSearch} className="p-0.5 rounded text-text-muted hover:text-text-primary">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Category tabs — only in feed view */}
-      {currentView === 'feed' && <CategoryTabs feeds={feeds} />}
-
-      {/* Toolbar — only in feed view */}
-      {currentView === 'feed' && <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle flex-shrink-0 flex-wrap">
-        {/* Status toggle */}
-        <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
-          <button
-            onClick={() => setFilter({ status: 'unread', bookmarked: false })}
-            className={`px-2 py-1 transition-colors ${
-              filter.status === 'unread' && !filter.bookmarked
-                ? 'bg-accent-blue text-white'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-          >
-            Unread
-          </button>
-          <button
-            onClick={() => setFilter({ status: 'all', bookmarked: false })}
-            className={`px-2 py-1 border-l border-border-default transition-colors ${
-              filter.status === 'all' && !filter.bookmarked
-                ? 'bg-accent-blue text-white'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-          >
-            All
-          </button>
-        </div>
-
-        {/* Sort toggle */}
-        <button
-          onClick={() => setFilter({ sort: filter.sort === 'score' ? 'date' : 'score' })}
-          className="flex items-center gap-1 px-2 py-1 rounded-md border border-border-default text-xs text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
-          title={filter.sort === 'score' ? 'Sorted by score — click for date' : 'Sorted by date — click for score'}
+      {/* Research filters — only in feed view */}
+      {currentView === 'feed' && <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle flex-shrink-0 flex-wrap bg-bg-surface/40">
+        {/* Contribution type select */}
+        <select
+          value={filter.contributionType ?? ''}
+          onChange={e => setFilter({ contributionType: (e.target.value || null) as ContribType | null })}
+          className="text-xs px-2 py-1 rounded-md border border-border-default bg-bg-surface text-text-muted hover:text-text-primary focus:outline-none cursor-pointer"
+          title="Filter by contribution type"
         >
-          {filter.sort === 'score'
-            ? <Star className="w-3 h-3" />
-            : <Clock className="w-3 h-3" />
-          }
-          {filter.sort === 'score' ? 'Score' : 'Date'}
-          <ArrowUpDown className="w-3 h-3 opacity-50" />
+          <option value="">All types</option>
+          <option value="method">Method</option>
+          <option value="survey">Survey</option>
+          <option value="benchmark">Benchmark</option>
+          <option value="empirical">Empirical</option>
+          <option value="theory">Theory</option>
+          <option value="position">Position</option>
+          <option value="tool">Tool</option>
+          <option value="tutorial">Tutorial</option>
+          <option value="news">News</option>
+          <option value="other">Other</option>
+        </select>
+
+        {/* ARISE toggle */}
+        <button
+          onClick={() => setFilter({ ariseOnly: !filter.ariseOnly })}
+          className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors ${
+            filter.ariseOnly
+              ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+              : 'border-border-default text-text-muted hover:text-text-primary hover:bg-bg-hover'
+          }`}
+          title="Show only ARISE-relevant RE documents (elicitation, extraction, method)"
+        >
+          ARISE
         </button>
 
-        {/* Min score filter */}
-        <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
-          {([0, 6, 8] as const).map(s => (
-            <button
-              key={s}
-              onClick={() => setFilter({ minScore: s })}
-              className={`px-2 py-1 transition-colors ${s > 0 ? 'border-l border-border-default' : ''} ${
-                filter.minScore === s
-                  ? s === 0 ? 'bg-bg-elevated text-text-primary'
-                    : s === 6 ? 'bg-accent-yellow/20 text-accent-yellow'
-                    : 'bg-accent-green/20 text-accent-green'
-                  : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-              }`}
-              title={s === 0 ? 'All scores' : `Score ≥ ${s}`}
-            >
-              {s === 0 ? 'All' : `${s}+`}
-            </button>
-          ))}
-        </div>
-
-        {/* Unread count */}
-        {unreadCount !== null && unreadCount > 0 && (
-          <span className="ml-auto text-xs text-text-muted tabular-nums">
-            {unreadCount}
-          </span>
+        {/* Clear research filters shortcut */}
+        {(filter.contributionType || filter.ariseOnly) && (
+          <button
+            onClick={() => setFilter({ contributionType: null, ariseOnly: false })}
+            className="ml-auto flex items-center gap-0.5 px-1.5 py-1 rounded-md text-xs text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            title="Clear research filters"
+          >
+            <X className="w-3 h-3" />
+            Clear
+          </button>
         )}
       </div>}
 
@@ -351,6 +303,10 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               <p className="text-xs text-text-muted leading-relaxed max-w-[200px]">
                 {isSearchActive
                   ? `Aucun article ne correspond à "${searchQuery}"`
+                  : filter.ariseOnly
+                  ? 'No ARISE-relevant RE articles found. Papers are classified automatically after ingestion.'
+                  : filter.contributionType
+                  ? `No articles with contribution type "${filter.contributionType}" found.`
                   : filter.minScore > 0
                   ? `Aucun article avec score ≥ ${filter.minScore}`
                   : 'Les articles apparaîtront après le prochain poll.'}

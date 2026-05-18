@@ -7,12 +7,12 @@ interface StatsViewProps {
 }
 
 const ACCENT_COLORS = [
-  'text-accent-blue',
-  'text-accent-green',
-  'text-accent-yellow',
-  'text-purple-400',
-  'text-pink-400',
-  'text-cyan-400',
+  'text-accent',
+  'text-success',
+  'text-warning',
+  'text-purple',
+  'text-danger',
+  'text-accent',
 ]
 
 export function StatsView({ onClose }: StatsViewProps) {
@@ -90,7 +90,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         <div className="flex items-center justify-center py-4 bg-bg-surface rounded-xl border border-border-subtle">
           <div className="text-center">
             <div className="flex items-center justify-center gap-2 mb-1">
-              <Flame className={`w-6 h-6 ${(s?.streak_days ?? 0) > 0 ? 'text-accent-yellow' : 'text-text-muted'}`} />
+              <Flame className={`w-6 h-6 ${(s?.streak_days ?? 0) > 0 ? 'text-warning' : 'text-text-muted'}`} />
               <span className={`text-4xl font-bold tabular-nums ${(s?.streak_days ?? 0) > 0 ? 'text-text-primary' : 'text-text-muted'}`}>
                 {s?.streak_days ?? 0}
               </span>
@@ -104,17 +104,17 @@ export function StatsView({ onClose }: StatsViewProps) {
         {/* Summary pills */}
         <div className="grid grid-cols-3 gap-2">
           <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
-            <BookOpen className="w-4 h-4 text-accent-blue mx-auto mb-1" />
+            <BookOpen className="w-4 h-4 text-accent mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">{s?.total_read ?? 0}</div>
             <div className="text-xs text-text-muted">lus</div>
           </div>
           <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
-            <Bookmark className="w-4 h-4 text-accent-blue mx-auto mb-1" />
+            <Bookmark className="w-4 h-4 text-accent mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">{s?.total_bookmarked ?? 0}</div>
             <div className="text-xs text-text-muted">bookmarks</div>
           </div>
           <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
-            <Star className="w-4 h-4 text-accent-yellow mx-auto mb-1" />
+            <Star className="w-4 h-4 text-warning mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">
               {s?.avg_score_read != null ? s.avg_score_read.toFixed(1) : '—'}
             </div>
@@ -126,7 +126,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         {(s?.total_highlights ?? 0) > 0 && (
           <div className="flex items-center justify-between bg-bg-surface rounded-xl border border-border-subtle px-4 py-3">
             <span className="text-xs text-text-secondary">Surlignages enregistrés</span>
-            <span className="text-sm font-semibold text-accent-yellow">{s?.total_highlights}</span>
+            <span className="text-sm font-semibold text-warning">{s?.total_highlights}</span>
           </div>
         )}
 
@@ -139,14 +139,14 @@ export function StatsView({ onClose }: StatsViewProps) {
                 <div key={day.date} className="flex flex-col items-center flex-1 gap-1">
                   <div className="relative flex-1 w-full flex items-end">
                     <div
-                      className="w-full rounded-sm bg-accent-blue/60 transition-all duration-300 min-h-[2px]"
+                      className="w-full rounded-sm bg-accent/60 transition-all duration-300 min-h-[2px]"
                       style={{ height: `${(day.count / maxCount) * 100}%` }}
                       title={`${day.count} article${day.count > 1 ? 's' : ''}`}
                     />
                   </div>
                   <span className="text-[10px] text-text-muted">{day.label}</span>
                   {day.count > 0 && (
-                    <span className="text-[10px] text-accent-blue font-medium">{day.count}</span>
+                    <span className="text-[10px] text-accent font-medium">{day.count}</span>
                   )}
                 </div>
               ))}
@@ -184,7 +184,7 @@ export function StatsView({ onClose }: StatsViewProps) {
                   <span className="text-xs text-text-secondary w-24 flex-shrink-0 truncate">{cat}</span>
                   <div className="flex-1 bg-bg-elevated rounded-full h-2 overflow-hidden">
                     <div
-                      className="h-full bg-accent-blue/60 rounded-full transition-all duration-300"
+                      className="h-full bg-accent/60 rounded-full transition-all duration-300"
                       style={{ width: `${(count / maxCat) * 100}%` }}
                     />
                   </div>

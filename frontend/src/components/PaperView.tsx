@@ -65,13 +65,13 @@ function arxivIdFromUrl(url: string): string | null {
 function ScorePill({ score }: { score: number | null }) {
   if (score === null) return null
   const color =
-    score >= 8 ? '#3FB950' : score >= 6 ? '#D29922' : '#6B7685'
+    score >= 8 ? 'var(--success)' : score >= 6 ? 'var(--warning)' : 'var(--text-muted)'
   const bg =
-    score >= 8 ? 'rgba(63,185,80,0.12)' : score >= 6 ? 'rgba(210,153,34,0.12)' : 'rgba(107,118,133,0.12)'
+    score >= 8 ? 'var(--success-bg)' : score >= 6 ? 'var(--warning-bg)' : 'var(--bg-elevated)'
   return (
     <span
-      className="inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-0.5 rounded-full border"
-      style={{ color, background: bg, borderColor: color + '40' }}
+      className="inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-[1px] rounded-full"
+      style={{ color, background: bg }}
     >
       {score.toFixed(1)}
       <span className="font-normal opacity-60">/ 10</span>
@@ -135,7 +135,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 href={pdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-accent-blue hover:underline"
+                className="text-xs text-accent hover:underline"
               >
                 {isIOS ? 'Open PDF ↗' : 'Open in new tab'}
               </a>
@@ -153,7 +153,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 href={pdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs font-medium text-accent-blue hover:underline flex-shrink-0 ml-3"
+                className="text-xs font-medium text-accent hover:underline flex-shrink-0 ml-3"
               >
                 📄 Ouvrir le PDF
               </a>
@@ -193,12 +193,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               {subjects.slice(0, 6).map(s => (
                 <span
                   key={s}
-                  className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold tracking-wide"
-                  style={{
-                    background: 'rgba(68,147,248,0.1)',
-                    color: '#4493F8',
-                    border: '1px solid rgba(68,147,248,0.25)',
-                  }}
+                  className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium tracking-wide bg-accent-light text-accent"
                 >
                   {s}
                 </span>
@@ -209,7 +204,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
           {/* Title */}
           <h1
             className="font-bold leading-tight text-text-primary mb-5"
-            style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: '1.45em', lineHeight: 1.35 }}
+            style={{ fontSize: '1.45em', lineHeight: 1.35 }}
           >
             {article.title}
           </h1>
@@ -247,20 +242,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 href={article.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg border transition-colors group"
-                style={{
-                  background: 'rgba(30,36,48,1)',
-                  borderColor: '#2A3341',
-                  color: '#A0ADB8',
-                }}
-                onMouseEnter={e => {
-                  ;(e.currentTarget as HTMLElement).style.borderColor = '#4493F8'
-                  ;(e.currentTarget as HTMLElement).style.color = '#4493F8'
-                }}
-                onMouseLeave={e => {
-                  ;(e.currentTarget as HTMLElement).style.borderColor = '#2A3341'
-                  ;(e.currentTarget as HTMLElement).style.color = '#A0ADB8'
-                }}
+                className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg border bg-bg-elevated border-border-default text-text-muted hover:border-accent hover:text-accent transition-colors group"
               >
                 <span className="opacity-50">arXiv:</span>
                 {paperId}
@@ -272,18 +254,16 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
           {/* Abstract */}
           <section className="mb-7">
             <div
-              className="relative pl-5 py-1"
-              style={{ borderLeft: '3px solid rgba(68,147,248,0.5)' }}
+              className="relative pl-5 py-1 border-l-2 border-accent/50"
             >
               <p
-                className="text-[11px] font-bold uppercase tracking-[0.12em] mb-3"
-                style={{ color: 'rgba(68,147,248,0.8)' }}
+                className="text-[11px] font-bold uppercase tracking-[0.12em] mb-3 text-accent/80"
               >
                 Abstract
               </p>
               <p
                 className="text-text-primary leading-relaxed"
-                style={{ fontFamily: 'Georgia, serif', lineHeight: 1.85, fontSize: '0.93em' }}
+                style={{ lineHeight: 1.85, fontSize: '0.93em' }}
               >
                 {article.content_text || 'Abstract not available.'}
               </p>
@@ -294,21 +274,20 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
           {article.summary_bullets.length > 0 && (
             <section className="mb-7 rounded-xl overflow-hidden border border-border-default">
               <div
-                className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-subtle"
-                style={{ background: '#1E2430' }}
+                className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-subtle bg-bg-elevated"
               >
                 <div className="flex items-center gap-2">
-                  <Bot className="w-3.5 h-3.5 text-accent-blue flex-shrink-0" />
+                  <Bot className="w-3.5 h-3.5 text-accent flex-shrink-0" />
                   <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-secondary">
                     AI Analysis
                   </span>
                 </div>
                 <ScorePill score={article.score} />
               </div>
-              <div className="px-4 py-4 space-y-3" style={{ background: '#161B22' }}>
+              <div className="px-4 py-4 space-y-3 bg-bg-secondary">
                 {article.summary_bullets.map((bullet, i) => (
                   <div key={i} className="flex gap-2.5 leading-relaxed" style={{ fontSize: '0.88em' }}>
-                    <span className="text-accent-blue flex-shrink-0 mt-0.5 font-bold">›</span>
+                    <span className="text-accent flex-shrink-0 mt-0.5 font-bold">›</span>
                     <span className="text-text-secondary">{bullet}</span>
                   </div>
                 ))}
@@ -329,13 +308,8 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
             {(pdfUrl || htmlUrl) && (
               <button
                 onClick={togglePdf}
-                className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95"
-                style={{
-                  background: pdfMode !== 'none' ? 'rgba(68,147,248,0.25)' : '#4493F8',
-                  color: pdfMode !== 'none' ? '#4493F8' : '#fff',
-                  fontSize: '0.875em',
-                  border: pdfMode !== 'none' ? '1px solid rgba(68,147,248,0.4)' : 'none',
-                }}
+                className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95 ${pdfMode !== 'none' ? 'bg-accent/25 text-accent border border-accent/40' : 'bg-accent text-white border-transparent'}`}
+                style={{ fontSize: '0.875em' }}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
                 {pdfMode !== 'none' ? 'Hide viewer' : htmlUrl ? 'Read paper (HTML)' : 'View PDF'}
@@ -346,8 +320,8 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 href={htmlUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold border border-border-default text-text-secondary hover:text-text-primary hover:border-border-subtle transition-all active:scale-95"
-                style={{ background: '#1E2430', fontSize: '0.875em' }}
+                className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold border border-border-default text-text-secondary hover:text-text-primary hover:border-border-subtle transition-all active:scale-95 bg-bg-elevated"
+                style={{ fontSize: '0.875em' }}
               >
                 <Globe className="w-4 h-4 flex-shrink-0" />
                 HTML version
@@ -357,8 +331,8 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               href={article.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-1.5 px-4 py-3 rounded-xl border border-border-default text-text-muted hover:text-text-secondary transition-all active:scale-95"
-              style={{ background: '#161B22', fontSize: '0.875em' }}
+              className="flex items-center justify-center gap-1.5 px-4 py-3 rounded-xl border border-border-default text-text-muted hover:text-text-secondary transition-all active:scale-95 bg-bg-secondary"
+              style={{ fontSize: '0.875em' }}
               title="Open on arXiv"
             >
               <ExternalLink className="w-4 h-4" />
@@ -387,7 +361,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                   href={pdfUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-accent-blue hover:underline"
+                  className="text-xs text-accent hover:underline"
                 >
                   {isIOS ? 'PDF ↗' : 'Open in tab'}
                 </a>

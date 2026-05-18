@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 
 const COLORS = [
-  { id: 'yellow', label: 'Jaune',  dot: '#EAB308', bg: 'rgba(234,179,8,0.25)', border: 'rgba(234,179,8,0.6)' },
-  { id: 'green',  label: 'Vert',   dot: '#22C55E', bg: 'rgba(34,197,94,0.2)',  border: 'rgba(34,197,94,0.5)' },
-  { id: 'blue',   label: 'Bleu',   dot: '#60A5FA', bg: 'rgba(96,165,250,0.2)', border: 'rgba(96,165,250,0.5)' },
-  { id: 'purple', label: 'Violet', dot: '#A855F7', bg: 'rgba(168,85,247,0.2)', border: 'rgba(168,85,247,0.5)' },
+  { id: 'yellow', label: 'Jaune',  dot: '#B45309', bg: 'var(--warning-bg)', border: 'var(--warning)' },
+  { id: 'green',  label: 'Vert',   dot: '#0F7B6C', bg: 'var(--success-bg)',  border: 'var(--success)' },
+  { id: 'blue',   label: 'Bleu',   dot: '#2F6FED', bg: 'var(--accent-light)', border: 'var(--accent)' },
+  { id: 'purple', label: 'Violet', dot: '#6B4FBB', bg: 'var(--purple-bg)', border: 'var(--purple)' },
 ] as const
 
 interface HighlightPopoverProps {
@@ -78,13 +78,13 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
         className="absolute left-1/2 -translate-x-1/2 w-0 h-0"
         style={
           below
-            ? { top: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: '6px solid #2A3341' }
-            : { bottom: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #2A3341' }
+            ? { top: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: '6px solid var(--border)' }
+            : { bottom: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid var(--border)' }
         }
       />
 
       {/* Card */}
-      <div className="rounded-xl shadow-2xl overflow-hidden" style={{ background: '#1E2430', border: '1px solid #2A3341' }}>
+      <div className="rounded-xl shadow-2xl overflow-hidden bg-bg-surface border border-border-default">
         {/* Selected text preview */}
         <div className="px-3 pt-3 pb-2">
           <p className="text-[11px] text-text-muted line-clamp-1 italic">
@@ -142,7 +142,7 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
               onChange={e => setNote(e.target.value)}
               placeholder="Ajouter une note…"
               rows={3}
-              className="w-full text-xs bg-[#161B22] border border-[#2A3341] rounded-lg px-2.5 py-2 text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-accent-blue/50"
+              className="w-full text-xs bg-bg-base border border-border-default rounded-lg px-2.5 py-2 text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-accent/50"
             />
           </div>
         )}

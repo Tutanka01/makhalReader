@@ -1,5 +1,5 @@
 """
-Shared database initialization module for MakhalReader.
+Shared database initialization module for Baṣīra.
 This module provides the SQLAlchemy engine, session factory, and ORM models
 shared across backend services. Each service can import from here.
 """
@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DB_PATH = os.getenv("DB_PATH", "/data/makhal.db")
+DB_PATH = os.getenv("DB_PATH", "/data/basira.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
@@ -82,6 +82,14 @@ class Article(Base):
     # articles ingested before this column was introduced.
     title_fingerprint = Column(String(16), nullable=True, index=True)
 
+    # Research-dimension columns — nullable; populated by scorer after Story 2.1.
+    score_meta_json = Column(Text, nullable=True)
+    contribution_type = Column(String(24), nullable=True)
+    re_document_type = Column(String(24), nullable=True)
+
+    # Paper enrichment — populated by poller before scoring (Story 2.2).
+    paper_meta_json = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
     )
@@ -100,6 +108,10 @@ def init_db():
     # Add columns introduced after the initial schema creation (SQLite-safe migrations).
     _migrations = [
         "ALTER TABLE articles ADD COLUMN title_fingerprint VARCHAR(16)",
+        "ALTER TABLE articles ADD COLUMN score_meta_json TEXT",
+        "ALTER TABLE articles ADD COLUMN re_document_type VARCHAR(24)",
+        "ALTER TABLE articles ADD COLUMN contribution_type VARCHAR(24)",
+        "ALTER TABLE articles ADD COLUMN paper_meta_json TEXT",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

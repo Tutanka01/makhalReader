@@ -1,5 +1,5 @@
 """
-Authentication module — session-based auth for MakhalReader.
+Authentication module — session-based auth for Baṣīra.
 
 Flow:
   POST /auth/login  → validates password, sets HttpOnly cookie, returns 200
@@ -41,7 +41,7 @@ _PASSWORD_HASH: bytes = bcrypt.hashpw(
     bcrypt.gensalt(rounds=12),
 )
 
-COOKIE_NAME = "makhal_sid"
+COOKIE_NAME = "basira_sid"
 SESSION_TTL_SHORT = timedelta(hours=24)
 SESSION_TTL_LONG = timedelta(days=365)
 
@@ -164,9 +164,9 @@ def purge_expired_sessions():
 # FastAPI dependency — use on every protected route
 # ---------------------------------------------------------------------------
 
-def require_session(makhal_sid: Optional[str] = Cookie(None)):
+def require_session(basira_sid: Optional[str] = Cookie(None)):
     """FastAPI dependency. Raises 401 if the session cookie is missing/invalid."""
-    if not makhal_sid or not validate_session(makhal_sid):
+    if not basira_sid or not validate_session(basira_sid):
         raise HTTPException(status_code=401, detail="Authentication required")
 
 

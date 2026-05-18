@@ -1,8 +1,8 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _HIGHLIGHT_COLORS = {"yellow", "green", "blue", "purple"}
 
@@ -43,11 +43,17 @@ class ArticleOut(BaseModel):
     extraction_failed: bool = False
     created_at: datetime
     user_feedback: Optional[int] = None
+    score_meta_json: Optional[str] = None
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
+    paper_meta_json: Optional[str] = None
 
     # Computed fields
     tags: List[str] = []
     summary_bullets: List[str] = []
     images: List[str] = []
+    score_meta: Dict[str, Any] = {}
+    paper_meta: Dict[str, Any] = {}
 
     model_config = {"from_attributes": True}
 
@@ -65,6 +71,14 @@ class ArticleOut(BaseModel):
             self.images = json.loads(self.images_json or "[]")
         except Exception:
             self.images = []
+        try:
+            self.score_meta = json.loads(self.score_meta_json or "{}")
+        except Exception:
+            self.score_meta = {}
+        try:
+            self.paper_meta = json.loads(self.paper_meta_json or "{}")
+        except Exception:
+            self.paper_meta = {}
         return self
 
 
@@ -84,6 +98,8 @@ class ArticleListItem(BaseModel):
     created_at: datetime
     feed_name: str = ""
     user_feedback: Optional[int] = None
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
 
     # Computed fields
     tags: List[str] = []
@@ -104,6 +120,161 @@ class ArticleListItem(BaseModel):
         return self
 
 
+class RelatedArticleOut(BaseModel):
+    id: int
+    title: str
+    url: str
+    score: Optional[float] = None
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
+    similarity: float  # 0.0–1.0 (1 - cosine_distance)
+
+
+class ClusterOut(BaseModel):
+    cluster_id: int
+    size: int
+    centroid_title: str
+    top_tags: List[str]
+    article_ids: List[int]
+
+
+# ── Researcher Profile (Story 3.3) ────────────────────────────────────────────
+
+class ResearchProfileEntry(BaseModel):
+    id: Optional[int] = None
+    kind: str          # 'topic'|'method'|'domain'|'avoid'
+    label: str
+    weight: float = 1.0
+    source: str = "manual"   # 'manual'|'feedback'
+
+
+class ResearchProfileUpsert(BaseModel):
+    entries: List[ResearchProfileEntry]
+
+
+# ── Literature review (Story 3.4) ───────────────────────────────────────────
+
+class ComparisonRow(BaseModel):
+    work: str = ""
+    method: str = ""
+    dataset: str = ""
+    key_result: str = ""
+
+
+class ReviewClusterOut(BaseModel):
+    cluster_label: str
+    synthesis: str
+    comparison_table: List[ComparisonRow] = []
+    gaps: List[str] = []
+    top_cite: str = ""
+    article_ids: List[int] = []
+
+
+class LiteratureReviewCreate(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=500)
+    window_days: int = Field(default=30, ge=1, le=120)
+    min_rigor: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class LiteratureReviewOut(BaseModel):
+    id: int
+    topic: str
+    window_days: int
+    min_rigor: float
+    clusters: List[ReviewClusterOut]
+    created_at: datetime
+
+
+class LiteratureReviewSummaryOut(BaseModel):
+    id: int
+    topic: str
+    window_days: int
+    min_rigor: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── ARISE export (Story 4.1) ──────────────────────────────────────────────────
+
+
+class AriseExportRequest(BaseModel):
+    """Lower bound on `published_at` (inclusive). Naive datetimes are treated as UTC."""
+
+    since: datetime
+
+    @field_validator("since", mode="after")
+    @classmethod
+    def normalize_since_utc(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+
+
+class AriseArticleOut(BaseModel):
+    """NFR15 export row — exactly these keys in JSON responses."""
+
+    id: int
+    title: str
+    url: str
+    published_at: datetime
+    re_document_type: str
+    contribution_type: Optional[str] = None
+    paper_meta: Dict[str, Any] = Field(default_factory=dict)
+    content_text: str = ""
+    score_meta: Dict[str, Any] = Field(default_factory=dict)
+    feed_name: str
+    tags: List[str] = Field(default_factory=list)
+
+
+def build_arise_row(article: Any, feed_name: str) -> AriseArticleOut:
+    """Build one ARISE export object from an Article ORM row + joined feed name."""
+    paper_meta: Dict[str, Any] = {}
+    if article.paper_meta_json:
+        try:
+            parsed = json.loads(article.paper_meta_json)
+            if isinstance(parsed, dict):
+                paper_meta = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    score_meta: Dict[str, Any] = {}
+    if article.score_meta_json:
+        try:
+            parsed = json.loads(article.score_meta_json)
+            if isinstance(parsed, dict):
+                score_meta = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    tags: List[str] = []
+    if article.tags_json:
+        try:
+            parsed = json.loads(article.tags_json)
+            if isinstance(parsed, list):
+                tags = [str(t) for t in parsed]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    pub = article.published_at
+    if pub is None:
+        raise ValueError("build_arise_row requires published_at — caller must filter")
+
+    return AriseArticleOut(
+        id=int(article.id),
+        title=str(article.title or ""),
+        url=str(article.url or ""),
+        published_at=pub if pub.tzinfo else pub.replace(tzinfo=timezone.utc),
+        re_document_type=str(article.re_document_type or ""),
+        contribution_type=article.contribution_type,
+        paper_meta=paper_meta,
+        content_text=str(article.content_text or ""),
+        score_meta=score_meta,
+        feed_name=str(feed_name or ""),
+        tags=tags,
+    )
+
+
 class FeedWithCount(FeedOut):
     article_count: int = 0
 
@@ -118,6 +289,9 @@ class InternalArticleCreate(BaseModel):
     content_text: Optional[str] = None
     images: List[str] = []
     extraction_failed: bool = False
+    paper_meta_json: Optional[str] = None
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
 
 
 class InternalScoreUpdate(BaseModel):
@@ -125,6 +299,11 @@ class InternalScoreUpdate(BaseModel):
     tags: List[str] = []
     summary_bullets: List[str] = []
     reason: Optional[str] = None
+    contribution_type: Optional[str] = None
+    re_document_type: Optional[str] = None
+    novelty: Optional[float] = None
+    rigor: Optional[float] = None
+    relevance_to_topics: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

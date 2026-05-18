@@ -6,3 +6,7 @@ pydantic==2.7.1
 python-multipart==0.0.9
 httpx==0.27.0
 bcrypt==4.2.1
+structlog==24.4.0
+chromadb>=0.4.22
+numpy>=1.26
+hdbscan>=0.8.33

@@ -1,7 +1,9 @@
 import asyncio
 import json
+import os
 import re
-from typing import List, Optional, Tuple
+import time
+from typing import Any, Callable, List, Optional
 from urllib.parse import quote_plus, urlparse
 
 import httpx
@@ -11,7 +13,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from readability import Document
 
-app = FastAPI(title="MakhalReader Extractor")
+app = FastAPI(title="Baṣīra Extractor")
+
+# ---------------------------------------------------------------------------
+# Semantic Scholar rate limiting (module-level, shared across all requests)
+# ---------------------------------------------------------------------------
+
+_SS_LOCK = asyncio.Lock()
+_ss_last_call: float = 0.0
+SS_RATE_LIMIT_SECONDS = float(os.getenv("SS_RATE_LIMIT_SECONDS", "1.0"))
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -101,15 +111,426 @@ def extract_arxiv(html: str, url: str) -> dict:
 </div>
 </div>"""
 
+        paper_id_str = arxiv_paper_id(url) or ""
+        base_pid = re.sub(r"v\d+$", "", paper_id_str) if paper_id_str else ""
+
         return {
             "title": title or None,
             "text": abstract,
             "author": authors or None,
             "raw_html": content_html,
             "is_paper": True,
+            "source": "arxiv",
+            "paper_id": base_pid or None,
+            "doi": f"10.48550/arXiv.{base_pid}" if base_pid else None,
+            "abstract": abstract,
+            "authors": [a.strip() for a in (authors or "").split(",") if a.strip()],
+            "year": None,
+            "methods": [],
+            "datasets": [],
+            "metrics": [],
+            "fields_of_study": subjects.split() if subjects else [],
         }
     except Exception:
         return {}
+
+
+# ---------------------------------------------------------------------------
+# SS rate-limited GET
+# ---------------------------------------------------------------------------
+
+
+async def _ss_rate_limited_get(
+    client: httpx.AsyncClient, url: str, params=None
+) -> Optional[httpx.Response]:
+    """Serialise Semantic Scholar API calls and enforce SS_RATE_LIMIT_SECONDS."""
+    global _ss_last_call
+    async with _SS_LOCK:
+        elapsed = time.monotonic() - _ss_last_call
+        if elapsed < SS_RATE_LIMIT_SECONDS:
+            await asyncio.sleep(SS_RATE_LIMIT_SECONDS - elapsed)
+        try:
+            resp = await client.get(url, params=params, timeout=10)
+            return resp
+        except Exception:
+            return None
+        finally:
+            _ss_last_call = time.monotonic()
+
+
+# ---------------------------------------------------------------------------
+# Paper handlers — each returns a dict with keys: text, raw_html, title,
+# author, is_paper, source, paper_id, doi, abstract, authors, year,
+# methods, datasets, metrics, fields_of_study
+# On failure they return {} or a minimal fallback dict.
+# ---------------------------------------------------------------------------
+
+_SS_FIELDS = "title,abstract,authors,year,externalIds,tldr,fieldsOfStudy"
+_SS_BASE = "https://api.semanticscholar.org/graph/v1/paper"
+
+
+def _build_paper_content_html(abstract: str, source: str, paper_id: str) -> str:
+    """Build a minimal reader-facing HTML snippet for a paper."""
+    return (
+        f'<div class="paper-abstract"><p>{abstract}</p>'
+        f'<p class="paper-source"><em>Source: {source} — {paper_id}</em></p></div>'
+    )
+
+
+async def _enrich_from_ss(
+    client: httpx.AsyncClient, ss_query_id: str
+) -> dict:
+    """
+    Query SS Graph API for a paper identified by `ss_query_id`
+    (e.g. "arXiv:2401.12345", "ACL:2024.acl-long.1", or a 40-char S2 ID).
+    Returns a partial paper_meta dict on success, {} on failure.
+    """
+    resp = await _ss_rate_limited_get(
+        client, f"{_SS_BASE}/{ss_query_id}", params={"fields": _SS_FIELDS}
+    )
+    if not resp or resp.status_code != 200:
+        return {}
+    try:
+        data = resp.json()
+        abstract = data.get("abstract") or ""
+        authors = [a.get("name", "") for a in (data.get("authors") or [])]
+        year = data.get("year")
+        ext_ids = data.get("externalIds") or {}
+        doi = ext_ids.get("DOI")
+        fields = [
+            f.get("category", {}).get("name", "")
+            for f in (data.get("fieldsOfStudy") or [])
+        ]
+        return {
+            "abstract": abstract,
+            "authors": authors,
+            "year": year,
+            "doi": doi,
+            "fields_of_study": [f for f in fields if f],
+        }
+    except Exception:
+        return {}
+
+
+async def _extract_arxiv_handler(
+    html: Optional[str], url: str, client: httpx.AsyncClient
+) -> dict:
+    """
+    arXiv handler: HTML parse (existing logic) + optional SS enrichment.
+    Refactored from the original extract_arxiv() — all HTML logic preserved.
+    """
+    base_result: dict = {}
+    if html:
+        base_result = extract_arxiv(html, url)
+
+    paper_id_str = arxiv_paper_id(url) or ""
+    base_pid = re.sub(r"v\d+$", "", paper_id_str) if paper_id_str else ""
+
+    # Merge SS enrichment if available
+    ss_data = {}
+    if base_pid:
+        ss_data = await _enrich_from_ss(client, f"arXiv:{base_pid}")
+
+    abstract = ss_data.get("abstract") or base_result.get("abstract") or base_result.get("text", "")
+    authors_list = ss_data.get("authors") or base_result.get("authors") or []
+    year = ss_data.get("year")
+    doi = ss_data.get("doi") or (f"10.48550/arXiv.{base_pid}" if base_pid else None)
+    fields = ss_data.get("fields_of_study") or base_result.get("fields_of_study") or []
+
+    if not base_result.get("text"):
+        return {
+            "is_paper": True,
+            "source": "arxiv",
+            "paper_id": base_pid or None,
+        }
+
+    return {
+        "text": base_result["text"],
+        "raw_html": base_result.get("raw_html"),
+        "title": base_result.get("title"),
+        "author": base_result.get("author"),
+        "is_paper": True,
+        "source": "arxiv",
+        "paper_id": base_pid or None,
+        "doi": doi,
+        "abstract": abstract,
+        "authors": authors_list,
+        "year": year,
+        "methods": [],
+        "datasets": [],
+        "metrics": [],
+        "fields_of_study": fields,
+    }
+
+
+_SS_PAPER_ID_RE = re.compile(r"semanticscholar\.org/paper/[^/]+/([a-f0-9]{40})", re.I)
+
+
+async def _extract_semantic_scholar_handler(
+    html: Optional[str], url: str, client: httpx.AsyncClient
+) -> dict:
+    """Semantic Scholar page handler — queries the SS Graph API by S2 paper ID."""
+    m = _SS_PAPER_ID_RE.search(url)
+    if not m:
+        return {"is_paper": True, "source": "semanticscholar"}
+
+    s2_id = m.group(1)
+    ss_data = await _enrich_from_ss(client, s2_id)
+    if not ss_data or not ss_data.get("abstract"):
+        fallback = {}
+        if html:
+            fallback = extract_with_readability(html, url) or extract_with_trafilatura(html, url)
+        return {
+            "is_paper": True,
+            "source": "semanticscholar",
+            "paper_id": s2_id,
+            **({"text": fallback.get("text"), "raw_html": fallback.get("raw_html")} if fallback.get("text") else {}),
+        }
+
+    abstract = ss_data["abstract"]
+    content_html = _build_paper_content_html(abstract, "Semantic Scholar", s2_id)
+    return {
+        "text": abstract,
+        "raw_html": content_html,
+        "title": None,
+        "author": ", ".join(ss_data.get("authors") or []) or None,
+        "is_paper": True,
+        "source": "semanticscholar",
+        "paper_id": s2_id,
+        "doi": ss_data.get("doi"),
+        "abstract": abstract,
+        "authors": ss_data.get("authors") or [],
+        "year": ss_data.get("year"),
+        "methods": [],
+        "datasets": [],
+        "metrics": [],
+        "fields_of_study": ss_data.get("fields_of_study") or [],
+    }
+
+
+_ACL_ID_RE = re.compile(r"aclanthology\.org/([A-Za-z0-9.\-]+?)(?:\.pdf)?/?$", re.I)
+
+
+async def _extract_acl_anthology_handler(
+    html: Optional[str], url: str, client: httpx.AsyncClient
+) -> dict:
+    """ACL Anthology handler — uses SS Graph API with ACL:{id} query."""
+    m = _ACL_ID_RE.search(url)
+    acl_id = m.group(1) if m else None
+
+    ss_data = {}
+    if acl_id:
+        ss_data = await _enrich_from_ss(client, f"ACL:{acl_id}")
+
+    abstract = ss_data.get("abstract", "")
+    if not abstract and html:
+        fallback = extract_with_readability(html, url) or extract_with_trafilatura(html, url)
+        return {
+            "is_paper": True,
+            "source": "acl",
+            "paper_id": acl_id,
+            **({"text": fallback.get("text"), "raw_html": fallback.get("raw_html")} if fallback.get("text") else {}),
+        }
+
+    content_html = _build_paper_content_html(abstract, "ACL Anthology", acl_id or "")
+    return {
+        "text": abstract,
+        "raw_html": content_html,
+        "title": None,
+        "author": ", ".join(ss_data.get("authors") or []) or None,
+        "is_paper": True,
+        "source": "acl",
+        "paper_id": acl_id,
+        "doi": ss_data.get("doi"),
+        "abstract": abstract,
+        "authors": ss_data.get("authors") or [],
+        "year": ss_data.get("year"),
+        "methods": [],
+        "datasets": [],
+        "metrics": [],
+        "fields_of_study": ss_data.get("fields_of_study") or [],
+    }
+
+
+_OPENREVIEW_FORUM_RE = re.compile(r"openreview\.net/forum\?id=([A-Za-z0-9_\-]+)", re.I)
+
+
+async def _extract_openreview_handler(
+    html: Optional[str], url: str, client: httpx.AsyncClient
+) -> dict:
+    """OpenReview handler — queries the OpenReview API v2."""
+    m = _OPENREVIEW_FORUM_RE.search(url)
+    if not m:
+        return {"is_paper": True, "source": "openreview"}
+
+    forum_id = m.group(1)
+    try:
+        resp = await client.get(
+            "https://api2.openreview.net/notes",
+            params={"forum": forum_id, "select": "id,content"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"OpenReview API returned {resp.status_code}")
+
+        notes = resp.json().get("notes") or []
+        if not notes:
+            raise ValueError("No notes found")
+
+        content = notes[0].get("content") or {}
+        title_val = content.get("title", {})
+        abstract_val = content.get("abstract", {})
+        authors_val = content.get("authors", {})
+
+        title = title_val.get("value") if isinstance(title_val, dict) else str(title_val)
+        abstract = abstract_val.get("value") if isinstance(abstract_val, dict) else str(abstract_val)
+        authors = authors_val.get("value") if isinstance(authors_val, dict) else []
+        if isinstance(authors, str):
+            authors = [authors]
+
+    except Exception:
+        if html:
+            fallback = extract_with_readability(html, url) or extract_with_trafilatura(html, url)
+            if fallback.get("text"):
+                return {
+                    "is_paper": True,
+                    "source": "openreview",
+                    "paper_id": forum_id,
+                    "text": fallback["text"],
+                    "raw_html": fallback.get("raw_html"),
+                }
+        return {"is_paper": True, "source": "openreview", "paper_id": forum_id}
+
+    if not abstract:
+        return {"is_paper": True, "source": "openreview", "paper_id": forum_id}
+
+    content_html = _build_paper_content_html(abstract, "OpenReview", forum_id)
+    return {
+        "text": abstract,
+        "raw_html": content_html,
+        "title": title or None,
+        "author": ", ".join(authors) if authors else None,
+        "is_paper": True,
+        "source": "openreview",
+        "paper_id": forum_id,
+        "doi": None,
+        "abstract": abstract,
+        "authors": authors,
+        "year": None,
+        "methods": [],
+        "datasets": [],
+        "metrics": [],
+        "fields_of_study": [],
+    }
+
+
+def _extract_doi_from_url(url: str) -> Optional[str]:
+    """Extract the raw DOI string from a doi.org URL."""
+    parsed = urlparse(url)
+    if "doi.org" in parsed.netloc.lower():
+        doi = parsed.path.lstrip("/")
+        return doi if doi else None
+    return None
+
+
+_JATS_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_jats(text: str) -> str:
+    """Strip JATS XML tags that Crossref sometimes includes in abstracts."""
+    return _JATS_TAG_RE.sub("", text).strip()
+
+
+async def _extract_doi_handler(
+    html: Optional[str], url: str, client: httpx.AsyncClient
+) -> dict:
+    """DOI handler — queries the Crossref API."""
+    doi = _extract_doi_from_url(url)
+    if not doi:
+        return {"is_paper": True, "source": "doi"}
+
+    try:
+        resp = await client.get(
+            f"https://api.crossref.org/works/{doi}",
+            timeout=10,
+            headers={"User-Agent": "Basira/1.0 (mailto:contact@example.com)"},
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"Crossref returned {resp.status_code}")
+
+        msg = resp.json().get("message") or {}
+        titles = msg.get("title") or []
+        title = titles[0] if titles else None
+        abstract_raw = msg.get("abstract") or ""
+        abstract = _strip_jats(abstract_raw)
+        raw_authors = msg.get("author") or []
+        authors = [
+            f"{a.get('given', '')} {a.get('family', '')}".strip()
+            for a in raw_authors
+        ]
+        date_parts = (msg.get("published") or {}).get("date-parts") or [[]]
+        year = date_parts[0][0] if date_parts[0] else None
+
+    except Exception:
+        if html:
+            fallback = extract_with_readability(html, url) or extract_with_trafilatura(html, url)
+            if fallback.get("text"):
+                return {
+                    "is_paper": True,
+                    "source": "doi",
+                    "paper_id": doi,
+                    "doi": doi,
+                    "text": fallback["text"],
+                    "raw_html": fallback.get("raw_html"),
+                }
+        return {"is_paper": True, "source": "doi", "paper_id": doi, "doi": doi}
+
+    if not abstract and not title:
+        return {"is_paper": True, "source": "doi", "paper_id": doi, "doi": doi}
+
+    text_content = abstract or title or ""
+    content_html = _build_paper_content_html(text_content, "DOI/Crossref", doi)
+    return {
+        "text": text_content,
+        "raw_html": content_html,
+        "title": title or None,
+        "author": ", ".join(authors) if authors else None,
+        "is_paper": True,
+        "source": "doi",
+        "paper_id": doi,
+        "doi": doi,
+        "abstract": abstract,
+        "authors": authors,
+        "year": year,
+        "methods": [],
+        "datasets": [],
+        "metrics": [],
+        "fields_of_study": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Paper handler dispatcher
+# ---------------------------------------------------------------------------
+
+paper_handlers: List = [
+    (lambda url: bool(ARXIV_ABS_RE.search(url)), _extract_arxiv_handler),
+    (lambda url: "semanticscholar.org/paper/" in url.lower(), _extract_semantic_scholar_handler),
+    (lambda url: "openreview.net/forum" in url.lower(), _extract_openreview_handler),
+    (lambda url: "aclanthology.org/" in url.lower(), _extract_acl_anthology_handler),
+    (
+        lambda url: url.lower().startswith(("https://doi.org/", "http://doi.org/")),
+        _extract_doi_handler,
+    ),
+]
+
+
+def _detect_paper_handler(url: str) -> Optional[Callable]:
+    """Return the first matching paper handler for this URL, or None."""
+    for detect_fn, handler_fn in paper_handlers:
+        if detect_fn(url):
+            return handler_fn
+    return None
 
 
 class ExtractRequest(BaseModel):
@@ -130,6 +551,7 @@ class ExtractResponse(BaseModel):
     read_time_minutes: int = 1
     extraction_failed: bool = False
     canonical_url: Optional[str] = None  # from <link rel="canonical"> in the page HTML
+    paper_meta: Optional[Any] = None     # structured paper metadata dict (Story 2.2)
 
 
 # ---------------------------------------------------------------------------
@@ -562,41 +984,59 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
         author: Optional[str] = None
         images: List[str] = []
         canonical_url: Optional[str] = None
+        paper_meta_result: Optional[dict] = None
 
-        # ── Strategy 0: ArXiv special extraction ─────────────────────────
-        # arxiv.org/abs/ pages have structured HTML — extract abstract,
-        # title, authors, categories directly instead of using readability.
-        if arxiv_paper_id(req.url):
+        # ── Strategy 0: Paper-source detection ────────────────────────────
+        # Check paper_handlers dispatcher FIRST; structured API handlers
+        # return richer metadata than generic readability extraction.
+        detected_handler = _detect_paper_handler(req.url)
+        if detected_handler is not None:
+            # Fetch HTML (handler may or may not use it for fallback)
             html = await fetch_url(client, req.url)
-            if html:
-                arxiv_data = extract_arxiv(html, req.url)
-                if arxiv_data.get("text"):
-                    content_text = arxiv_data["text"]
-                    content_html = arxiv_data["raw_html"]
-                    extracted_title = arxiv_data.get("title")
-                    author = arxiv_data.get("author")
-                    # Canonical: strip version suffix  (abs/2501.12345v2 → abs/2501.12345)
-                    pid = arxiv_paper_id(req.url)
-                    if pid:
-                        base_pid = re.sub(r"v\d+$", "", pid)
-                        canonical_url = f"https://arxiv.org/abs/{base_pid}"
-                    # Return early — no need for other strategies
-                    final_title = resolve_title(
-                        extracted_title, req.rss_title, content_text
-                    )
-                    return ExtractResponse(
-                        title=final_title,
-                        content_html=content_html,
-                        content_text=content_text,
-                        images=[],
-                        author=author,
-                        read_time_minutes=estimate_read_time(content_text or ""),
-                        extraction_failed=False,
-                        canonical_url=canonical_url,
-                    )
-            # Fallback: use RSS summary (ArXiv RSS includes the abstract)
-            if req.rss_summary:
+            handler_result = await detected_handler(html, req.url, client)
+
+            if handler_result.get("text"):
+                content_text = handler_result["text"]
+                content_html = handler_result.get("raw_html")
+                extracted_title = handler_result.get("title")
+                author = handler_result.get("author")
+                # Build paper_meta from handler keys (exclude presentation keys)
+                _skip = {"text", "raw_html", "title", "author"}
+                paper_meta_result = {
+                    k: v for k, v in handler_result.items() if k not in _skip
+                }
+                # Set canonical URL for arXiv
+                if handler_result.get("source") == "arxiv" and handler_result.get("paper_id"):
+                    canonical_url = f"https://arxiv.org/abs/{handler_result['paper_id']}"
+
+                final_title = resolve_title(extracted_title, req.rss_title, content_text)
+                return ExtractResponse(
+                    title=final_title,
+                    content_html=content_html,
+                    content_text=content_text,
+                    images=[],
+                    author=author,
+                    read_time_minutes=estimate_read_time(content_text or ""),
+                    extraction_failed=False,
+                    canonical_url=canonical_url,
+                    paper_meta=paper_meta_result,
+                )
+
+            # Handler found but returned no text content — keep is_paper signal
+            if handler_result.get("is_paper"):
+                paper_meta_result = {
+                    "is_paper": True,
+                    "source": handler_result.get("source", "fallback"),
+                    "paper_id": handler_result.get("paper_id"),
+                }
+
+            # Fallback: use RSS summary for arXiv (RSS includes the abstract)
+            if arxiv_paper_id(req.url) and req.rss_summary:
                 abstract = strip_html(req.rss_summary)
+                pid = arxiv_paper_id(req.url)
+                if pid:
+                    base_pid = re.sub(r"v\d+$", "", pid)
+                    canonical_url = f"https://arxiv.org/abs/{base_pid}"
                 final_title = resolve_title(None, req.rss_title, abstract)
                 return ExtractResponse(
                     title=final_title,
@@ -607,6 +1047,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                     read_time_minutes=estimate_read_time(abstract),
                     extraction_failed=False,
                     canonical_url=canonical_url,
+                    paper_meta=paper_meta_result,
                 )
 
         # ── Strategy 1: direct fetch ──────────────────────────────────────
@@ -727,6 +1168,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
             read_time_minutes=estimate_read_time(content_text or ""),
             extraction_failed=extraction_failed,
             canonical_url=canonical_url,
+            paper_meta=paper_meta_result,
         )
 
 

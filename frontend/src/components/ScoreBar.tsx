@@ -19,14 +19,14 @@ export function ScoreBar({ score }: ScoreBarProps) {
   let barColor: string
   let textColor: string
   if (score >= 8) {
-    barColor = 'var(--color-score-high)'
-    textColor = 'var(--color-score-high)'
+    barColor = 'var(--success)'
+    textColor = 'var(--success)'
   } else if (score >= 5) {
-    barColor = 'var(--color-score-mid)'
-    textColor = 'var(--color-score-mid)'
+    barColor = 'var(--warning)'
+    textColor = 'var(--warning)'
   } else {
-    barColor = 'var(--color-score-low)'
-    textColor = 'var(--color-score-low)'
+    barColor = 'var(--danger)'
+    textColor = 'var(--danger)'
   }
 
   return (
@@ -38,7 +38,7 @@ export function ScoreBar({ score }: ScoreBarProps) {
         />
       </div>
       <span
-        className="text-xs font-semibold w-6 text-right tabular-nums"
+        className="text-xs font-semibold w-6 text-right tabular-nums font-mono"
         style={{ color: textColor }}
       >
         {score.toFixed(1)}

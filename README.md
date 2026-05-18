@@ -1,123 +1,191 @@
 <div align="center">
 
-# ◉ MakhalReader
+# بَصِيرَة — Baṣīra
 
-**An RSS reader that thinks before you do.**
+**Research-oriented intelligent reading and literature monitor.**
 
-*Built for engineers who have more to read than time to read it.*
+*Scores what matters. Surfaces what you'd have missed.*
 
 ---
 
-[![Made with FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/Frontend-React%2018-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20Python%203.12-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2B%20Vite-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![Docker](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?style=flat-square&logo=docker)](https://docs.docker.com/compose/)
-[![PWA](https://img.shields.io/badge/PWA-Offline%20Ready-5A0FC8?style=flat-square&logo=pwa)](https://web.dev/progressive-web-apps/)
 [![SQLite](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?style=flat-square&logo=sqlite)](https://sqlite.org)
+[![PWA](https://img.shields.io/badge/PWA-Offline%20Ready-5A0FC8?style=flat-square&logo=pwa)](https://web.dev/progressive-web-apps/)
 
 </div>
 
 ---
 
-## The problem
+## What it is
 
-Classic RSS readers show **everything** — the throwaway blog post and the Cloudflare incident post-mortem sit side by side. You end up spending more time triaging than actually reading.
+**Baṣīra** (بَصِيرَة — Arabic for *deep insight*, *discernment*) is a self-hosted RSS reader augmented with a multi-tier LLM pipeline. It was built for a dual use case: daily DevOps/infra reading and continuous PhD-level literature monitoring.
 
-MakhalReader fixes that. Every article is **scored by an LLM before you ever open it.**
+Every article is scored, tagged, and summarized before you open it. Research papers are enriched with metadata — contribution type, RE document type, novelty, rigor — and separated from blog posts at the data layer. The system runs entirely on your own hardware; nothing leaves the machine unless you configure OpenRouter.
 
 ---
 
 ## How it works
 
 ```
-RSS Feeds  →  Full-text    →  LLM Score (0–10)  →  Clean Reader
-  32+          extraction      Gemini / Ollama       no clutter
- sources      trafilatura      tags · summary        no ads
+RSS / arXiv / Semantic Scholar
+        │
+        ▼
+    Poller (APScheduler)
+        │  fetch + deduplicate
+        ▼
+    Extractor (trafilatura / readability)
+        │  full-text + paper metadata
+        ▼
+    Scorer (LLM — three-tier routing)
+        │  score 0–10 · tags · summary · contribution_type · re_document_type
+        ▼
+    API + SQLite  ──SSE──►  React frontend (real-time)
 ```
 
-By the time you open the app, the noise is already gone.
+**Three-tier LLM routing** (in priority order):
+
+| Tier | Backend | When used |
+|------|---------|-----------|
+| 1 | Local Ollama (M5 Max, 36 GB) | Always available, free, private |
+| 2 | University GPU server (VPN) | Heavier inference — synthesis, lit-review |
+| 3 | OpenRouter (Gemini / Claude) | Cloud fallback, optional |
 
 ---
 
-## One command to run
+## Quick start
 
 ```bash
-# 1. Configure your environment
+# 1. Copy and configure your environment
 cp .env.example .env
-# → Set OPENROUTER_API_KEY (or leave blank to run fully local with Ollama)
+# → Set AUTH_PASSWORD (required)
+# → Set OPENROUTER_API_KEY (optional — Ollama works without it)
+# → Set OLLAMA_MODEL to a model you have pulled
 
 # 2. Launch
-docker compose up -d
+docker compose up -d --build
 ```
 
-App is live at **http://localhost**. That's it.
-
-> No dependencies to install. No database to provision. No migrations to run.
+App is live at **http://localhost**. No database to provision. No migrations to run.
 
 ---
 
-## What actually matters
+## Scoring profiles
 
-### LLM scoring — personalized, not generic
+The rubric is a Markdown file selected at runtime via `PROMPT_PROFILE`:
 
-Every article gets a **score from 0 to 10** calibrated against a hardcoded technical profile
-(Kubernetes internals, eBPF, LLM inference, CTF, homelab, post-mortems...).
-The scorer knows the difference between a production incident retrospective and another
-"10 tips to become a senior developer" listicle.
+| Profile | Use case |
+|---------|----------|
+| `infra` | DevOps/platform engineering only (original behavior) |
+| `research` | PhD literature monitoring — rewards surveys, methods, benchmarks, theory |
+| `unified` | **Default.** Dual-mode — scores both infra posts and research papers correctly |
+
+Switch by setting `PROMPT_PROFILE=research` in your `.env`. No rebuild needed.
+
+The scorer returns a multi-dimensional result:
 
 ```
-0–2  ·  Noise         →  Never shown
-3–5  ·  Decent        →  Available if you look for it
-6–7  ·  Good          →  Near the top
-8–10 ·  Exceptional   →  Daily Digest
+score            0–10 scalar
+tags             1–5 technical tags
+summary_bullets  2–3 sentence summary
+reason           one-line score rationale
+contribution_type  method | benchmark | survey | empirical | theory | position | tool | …
+re_document_type   elicitation | extraction | method | none   ← ARISE pipeline signal
+novelty          0–1 float (research only)
+rigor            0–1 float (research only)
+relevance_to_topics  0–1 float (research only)
 ```
-
-Auto-generated tags · bullet-point summaries · one-line score rationale — all visible in the UI.
-
-**The scorer learns from your feedback.** 👍/👎 on any article updates a structured preference
-profile built from tag-frequency aggregation across your full interaction history
-(not just recent titles). Every subsequent score pulls from that profile —
-capped at ~220 tokens, contrastive by design, grounded in research
-(LLM-Rec / NAACL 2024: +15–22% ranking accuracy vs. raw title lists).
 
 ---
 
-### Daily Digest
-
-The **Digest** tab surfaces the best articles from the last 24–48h, tiered by score:
+## Scoring tiers
 
 ```
-🔥 Exceptional  ·  score ≥ 9
-⭐ Top           ·  score ≥ 7
-👍 Good          ·  score ≥ 5
+8–10  ·  Exceptional   →  Daily Digest · top of the list
+6–7   ·  Good          →  Worth reading when time allows
+4–5   ·  Decent        →  Available on scroll
+0–3   ·  Noise         →  Filtered out by default
 ```
 
-Your morning technical briefing, already curated.
+**Feedback loop:** 👍/👎 on any article updates a structured preference profile built from tag-frequency aggregation across your full history. Every subsequent score pulls from that profile. Based on LLM-Rec / NAACL 2024: +15–22% ranking accuracy vs. raw title lists.
 
 ---
 
-### 3-layer deduplication
+## Architecture
 
-The same article routinely appears across Hacker News, Lobsters, and several aggregators.
-MakhalReader stores it exactly once:
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Caddy (reverse proxy / TLS)             │
+└──────────────┬──────────────────────────┬───────────────┘
+               │                          │
+        ┌──────▼──────┐            ┌──────▼──────┐
+        │   Frontend   │            │     API      │
+        │  React + Vite│            │   FastAPI    │
+        │  TypeScript  │            │  SQLite WAL  │
+        │    (PWA)     │            │  routers/*   │
+        └─────────────┘            └──────┬───────┘
+                                          │
+              ┌───────────────────────────┼──────────────────────┐
+              │                           │                      │
+       ┌──────▼──────┐            ┌───────▼──────┐      ┌───────▼──────┐
+       │   Poller     │            │  Extractor   │      │    Scorer    │
+       │  feedparser  │            │ trafilatura  │      │  Ollama /    │
+       │  APScheduler │            │ readability  │      │ Uni server / │
+       └─────────────┘            └─────────────┘      │ OpenRouter   │
+                                                        └─────────────┘
+```
 
-1. **Canonical URL** — normalized (tracking params stripped, `www.` removed, trailing slash unified)
-2. **Title fingerprint** — catches syndicated content with different URLs
-3. **`<link rel="canonical">`** — the source of truth wins
+6 Docker services · 1 internal network (`basira-net`) · SQLite on a Docker volume · 0 mandatory external dependencies
 
 ---
 
-### Built for the iPad (and keyboard warriors)
+## Configuration reference
 
-The UI is **reader-first**: two-column layout on iPad and desktop, full-screen on mobile.
-Every interaction that should be fast is fast.
+All configuration lives in `.env` (copied from `.env.example`):
 
-- Virtualized sidebar with infinite scroll
-- Clean reader, adjustable font (14–22px, persisted)
-- Reading progress bar
+```bash
+# ── LLM ─────────────────────────────────────────────────────
+OPENROUTER_API_KEY=        # Optional cloud fallback
+SCORER_MODEL=google/gemini-2.5-flash-lite
+
+OLLAMA_URL=http://host.docker.internal:11434   # macOS
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_EMBED_MODEL=nomic-embed-text            # For semantic search (Story 3+)
+
+UNI_OLLAMA_URL=https://llm.eva.univ-pau.fr/v1  # University GPU — VPN required
+UNI_OLLAMA_MODEL=                              # Set after: curl $UNI_OLLAMA_URL/models
+
+# ── Scoring ──────────────────────────────────────────────────
+PROMPT_PROFILE=unified    # infra | research | unified
+SCORER_MAX_CHARS=6000     # Auto-doubled for confirmed papers (max 12 000)
+
+# ── App ──────────────────────────────────────────────────────
+DB_PATH=/data/basira.db
+FETCH_INTERVAL_MINUTES=360
+API_SECRET=<random>
+
+# ── Auth ─────────────────────────────────────────────────────
+AUTH_PASSWORD=<strong password>
+HTTPS_ONLY=false          # true in production
+CORS_ORIGIN=http://localhost
+
+# ── Production ───────────────────────────────────────────────
+CADDY_DOMAIN=reader.yourdomain.com   # Activates automatic HTTPS
+```
+
+---
+
+## Features
+
+### Reader
+- 3-pane responsive layout (Sidebar, Topbar, Content) on desktop/iPad, SlidePanel on mobile
+- Reading progress bar · adjustable font (14–22 px, persisted)
 - Swipe left → mark read · Swipe right → bookmark
-- Native dark theme
-- Full keyboard navigation
+- Native dark theme (ProjectOS Design System) · PWA — installable, works offline
+- Real-time article delivery via Server-Sent Events (no refresh needed)
 
+### Keyboard shortcuts
 ```
 j / k   →  next / previous article
 r       →  toggle read / unread
@@ -128,117 +196,59 @@ o       →  open original
 ?       →  help
 ```
 
----
-
-### Real-time via SSE
-
-New articles appear **without a page reload** via Server-Sent Events.
-The moment a score lands, the article surfaces at the top of the list — live.
-
----
-
-### PWA — reads offline too
-
-MakhalReader installs as a native app on iPad and iPhone.
-Articles you've opened are cached — accessible without a network connection.
+### Content
+- 3-layer deduplication: canonical URL · title fingerprint · `<link rel="canonical">`
+- Full-text extraction (not RSS summaries) via trafilatura + readability
+- OPML import (Feedly, NewsBlur, …)
+- Highlights with color labels and notes
+- Ask-AI: stream an answer about the article you're reading
+- Daily Digest: top articles from the last 24–48 h, tiered by score
 
 ---
 
-### 32 pre-configured feeds
+## Feed categories
 
-Ships with a high-signal technical feed selection, ready to use on day one:
+Ships with a curated selection of high-signal feeds:
 
 | Category | Sources |
 |----------|---------|
-| **Infra / Cloud** | Kubernetes Blog, CNCF, Cloudflare, Netflix TechBlog, LWN.net, fasterthanli.me, Fly.io, iximiuz, Tailscale… |
+| **Infra / Cloud** | Kubernetes Blog, CNCF, Cloudflare, Netflix TechBlog, LWN.net, Fly.io, Tailscale… |
 | **AI / LLM** | Anthropic, HuggingFace, Lilian Weng, Sebastian Raschka, Chip Huyen… |
 | **Security** | Google Project Zero, PortSwigger, Trail of Bits, lcamtuf, secret.club… |
 | **High-signal** | Hacker News, Lobsters, Simon Willison, Julia Evans, Dan Luu… |
-
-Add custom feeds, import **OPML** (Feedly, NewsBlur…), organize by category.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    Caddy (proxy / TLS)               │
-└──────────────┬──────────────────────┬───────────────┘
-               │                      │
-        ┌──────▼──────┐        ┌──────▼──────┐
-        │   Frontend   │        │     API      │
-        │  React + Vite│        │   FastAPI    │
-        │     (PWA)    │        │   SQLite     │
-        └─────────────┘        └──────┬───────┘
-                                      │
-              ┌───────────────────────┼───────────────────┐
-              │                       │                   │
-       ┌──────▼──────┐        ┌───────▼──────┐   ┌───────▼──────┐
-       │   Poller     │        │  Extractor   │   │    Scorer    │
-       │  feedparser  │        │ trafilatura  │   │  Gemini via  │
-       │  APScheduler │        │ readability  │   │  OpenRouter  │
-       └─────────────┘        └─────────────┘   └─────────────┘
-```
-
-6 Docker containers · 1 internal network · 0 mandatory external dependencies
+| **Research** | arXiv cs.SE, arXiv cs.AI, Semantic Scholar (RE, MBSE topics) |
 
 ---
 
-## Configuration
+## Tech stack
 
-```bash
-# .env — the only variables that matter
-
-OPENROUTER_API_KEY=sk-or-v1-...            # LLM scoring (free tier available)
-SCORER_MODEL=google/gemini-2.5-flash-lite  # Model used for scoring
-
-# Optional: local Ollama fallback (no API key required)
-OLLAMA_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=mistral
-
-# Polling frequency
-FETCH_INTERVAL_MINUTES=15
-
-# Anti-flood guardrails
-MAX_NEW_ARTICLES_PER_FEED=5
-MAX_ARTICLE_AGE_DAYS=7
-
-# Production
-CADDY_DOMAIN=reader.yourdomain.com    # Enables automatic HTTPS via Let's Encrypt
-```
+| Layer | Technologies |
+|-------|-------------|
+| Frontend | React 18 · TypeScript · Vite · Tailwind CSS (ProjectOS UI) · Zustand · PWA |
+| API | Python 3.12 · FastAPI · SQLAlchemy · SQLite WAL · structlog |
+| Extraction | trafilatura · readability · BeautifulSoup · httpx async |
+| Scoring | Multi-tier: Ollama (local) → University GPU → OpenRouter |
+| Infrastructure | Docker Compose · Caddy · APScheduler · tenacity |
 
 ---
 
 ## Production deployment
 
 ```bash
-# On your server
-git clone <repo> && cd makhalReader
-cp .env.example .env && vim .env   # Set CADDY_DOMAIN + OPENROUTER_API_KEY
+git clone <repo> && cd daily_news_wrap
+cp .env.example .env
+# Edit .env: set CADDY_DOMAIN, AUTH_PASSWORD, OPENROUTER_API_KEY
+# Set HTTPS_ONLY=true
 
-docker compose up -d
+docker compose up -d --build
 ```
 
-Caddy handles TLS automatically. Nothing else to configure.
-
----
-
-## Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 · TypeScript · Vite · Tailwind CSS · Zustand |
-| Backend | Python 3.12 · FastAPI · SQLAlchemy · SQLite WAL |
-| Extraction | trafilatura · readability · BeautifulSoup |
-| Scoring | OpenRouter API (Gemini) · Ollama (Mistral) |
-| Infrastructure | Docker Compose · Caddy · APScheduler · httpx async |
-| PWA | Workbox · vite-plugin-pwa · Service Workers |
+Caddy provisions TLS automatically via Let's Encrypt. Nothing else to configure.
 
 ---
 
 <div align="center">
 
-*Read less. Understand more.*
+*بَصِيرَة — deep insight · discernment*
 
 </div>

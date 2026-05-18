@@ -1,6 +1,8 @@
 import asyncio
+import json
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import feedparser
@@ -8,6 +10,8 @@ import httpx
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from paper_enricher import enrich_paper_meta, is_paper_url
 
 logger = structlog.get_logger()
 
@@ -127,6 +131,7 @@ async def score_article_rate_limited(
     title: str,
     content_text: str,
     rss_summary: str,
+    paper_meta_json: Optional[str] = None,
 ):
     """Acquire the global semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS."""
     async with _score_semaphore:
@@ -138,6 +143,7 @@ async def score_article_rate_limited(
                     "title": title,
                     "content_text": content_text or "",
                     "rss_summary": rss_summary or "",
+                    "paper_meta_json": paper_meta_json,
                 },
                 timeout=120,
             )
@@ -272,6 +278,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 "author": rss_author,
                 "extraction_failed": True,
                 "canonical_url": None,
+                "paper_meta": None,
             }
 
         # Use the site's canonical URL if the extractor found one — it is the
@@ -290,6 +297,29 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 log.info("Using canonical URL", original=article_url, canonical=storage_url)
                 article_url = storage_url
 
+        # ── Paper enrichment ─────────────────────────────────────────────
+        # Runs BEFORE create_article and BEFORE scoring (ARCH6).
+        # Makes a cheap Ollama call to classify the abstract.
+        # Failures are non-blocking — the article is never lost.
+        paper_meta_json: Optional[str] = None
+        enrichment_contribution_type: Optional[str] = None
+        enrichment_re_document_type: Optional[str] = None
+
+        try:
+            paper_meta = await enrich_paper_meta(article_url, extracted, client)
+            if paper_meta:
+                paper_meta_json = json.dumps(paper_meta)
+                enrichment_contribution_type = paper_meta.get("contribution_type")
+                enrichment_re_document_type = paper_meta.get("re_document_type")
+                log.info(
+                    "Paper enriched",
+                    url=article_url,
+                    source=paper_meta.get("source"),
+                    contribution_type=enrichment_contribution_type,
+                )
+        except Exception as e:
+            log.warning("Paper enrichment failed (non-blocking)", url=article_url, error=str(e))
+
         payload = {
             "feed_id": feed_id,
             "title": extracted.get("title") or rss_title,
@@ -300,6 +330,9 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
             "content_text": extracted.get("content_text"),
             "images": extracted.get("images", []),
             "extraction_failed": extracted.get("extraction_failed", False),
+            "paper_meta_json": paper_meta_json,
+            "contribution_type": enrichment_contribution_type,
+            "re_document_type": enrichment_re_document_type,
         }
 
         try:
@@ -322,6 +355,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 extracted.get("title") or rss_title,
                 extracted.get("content_text") or rss_summary,
                 rss_summary,
+                paper_meta_json=paper_meta_json,
             )
             log.info("Article scored", article_id=article_id)
         except Exception as e:

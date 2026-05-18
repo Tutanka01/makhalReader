@@ -3,6 +3,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
 import type { ArticleListItem } from '../types'
 import { ScoreBar } from './ScoreBar'
+import { ContribTypeBadge } from './ContribTypeBadge'
+import { ReDocTypeBadge } from './ReDocTypeBadge'
 import { useArticlesStore } from '../store/articles'
 
 interface ArticleCardProps {
@@ -78,13 +80,13 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
     >
       {/* Swipe left indicator (mark read) */}
       {swipeOffset < -20 && (
-        <div className="absolute right-0 top-0 bottom-0 flex items-center px-4 bg-accent-green text-white text-xs font-medium">
+        <div className="absolute right-0 top-0 bottom-0 flex items-center px-4 bg-success text-white text-xs font-medium">
           Read
         </div>
       )}
       {/* Swipe right indicator (bookmark) */}
       {swipeOffset > 20 && (
-        <div className="absolute left-0 top-0 bottom-0 flex items-center px-4 bg-accent-blue text-white text-xs font-medium">
+        <div className="absolute left-0 top-0 bottom-0 flex items-center px-4 bg-accent text-white text-xs font-medium">
           <Bookmark className="w-4 h-4" />
         </div>
       )}
@@ -92,8 +94,8 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
       <div className="p-3">
         <ScoreBar score={article.score} />
 
-        {/* Tags */}
-        {article.tags.length > 0 && (
+        {/* Tags + research badges */}
+        {(article.tags.length > 0 || article.contribution_type || article.re_document_type) && (
           <div className="flex flex-wrap gap-1 mb-2">
             {article.tags.slice(0, 3).map(tag => (
               <span
@@ -103,6 +105,8 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
                 {tag}
               </span>
             ))}
+            <ContribTypeBadge type={article.contribution_type} />
+            <ReDocTypeBadge type={article.re_document_type} />
           </div>
         )}
 
@@ -133,7 +137,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
           <div className="flex items-center gap-2 text-xs text-text-muted min-w-0">
             <span className="truncate font-medium">{article.feed_name}</span>
             <span className="flex-shrink-0">·</span>
-            <span className="flex-shrink-0">{relativeDate}</span>
+            <span className="flex-shrink-0 font-mono tracking-tight">{relativeDate}</span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
             {article.user_feedback === 1 && (

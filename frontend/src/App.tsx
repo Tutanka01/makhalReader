@@ -1,9 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ArticleList } from './components/ArticleList'
 import { ReaderView } from './components/ReaderView'
+import { Sidebar } from './components/Sidebar'
+import { Topbar } from './components/Topbar'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
+import ResearchProfileEditor from './components/ResearchProfileEditor'
 import { OfflineBanner } from './components/OfflineBanner'
 import { LoginView } from './components/LoginView'
+import { DigestView } from './components/DigestView'
+import { StatsView } from './components/StatsView'
+import ResearchDigestView from './components/ResearchDigestView'
+import LitReviewView from './components/LitReviewView'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -58,7 +65,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats'>('feed')
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -159,6 +167,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         onFeedsChange={refreshFeeds}
       />
 
+      <ResearchProfileEditor
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
+
       {/* Keyboard shortcuts help overlay */}
       {showHelp && (
         <div
@@ -194,126 +207,88 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
-      {/* ── Desktop layout ── */}
-      <div className="hidden lg:flex w-full h-full">
-
-        {/* Sidebar — collapsible */}
+      {/* ── Unified Layout ── */}
+      <div className="flex w-full h-full">
+        {/* Sidebar */}
         <div
           className={`
-            flex-shrink-0 border-r border-border-default h-full overflow-hidden
-            transition-all duration-300 ease-in-out
-            ${sidebarOpen ? 'w-[380px]' : 'w-0'}
+            flex-shrink-0 h-full overflow-hidden transition-all duration-300 ease-in-out
+            ${sidebarOpen ? 'w-[240px]' : 'w-0'}
+            lg:block ${sidebarOpen && !showReader ? 'block absolute z-40 lg:relative' : 'hidden lg:block'}
           `}
         >
-          <div className="w-[380px] h-full">
-            <ArticleList
-              feeds={feeds}
-              onSelect={handleSelectArticle}
-              selectedId={selectedId}
-              onOpenFeedManager={() => setFeedManagerOpen(true)}
+          <div className="w-[240px] h-full shadow-2xl lg:shadow-none">
+            <Sidebar
               currentView={appView}
-              onViewChange={setAppView}
+              onViewChange={(v) => {
+                setAppView(v)
+                setShowReader(false)
+                if (window.innerWidth < 1024) setSidebarOpen(false)
+              }}
+              feeds={feeds}
+              onOpenFeedManager={() => { setFeedManagerOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
+              onOpenProfile={() => { setProfileOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
               onLogout={onLogout}
             />
           </div>
         </div>
 
-        {/* Reader panel */}
-        <div className="flex-1 h-full overflow-hidden min-w-0">
-          {selectedId ? (
-            <ReaderView
-              articleId={selectedId}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen(v => !v)}
-              onNext={handleNext}
-              hasNext={hasNext}
-            />
-          ) : (
-            <EmptyReaderState
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen(v => !v)}
-            />
-          )}
-        </div>
-      </div>
-
-      {/* ── Mobile layout ── */}
-      <div className="flex lg:hidden w-full h-full">
-        {!showReader || !selectedId ? (
-          <div className="w-full h-full">
-            <ArticleList
-              feeds={feeds}
-              onSelect={handleSelectArticle}
-              selectedId={selectedId}
-              onOpenFeedManager={() => setFeedManagerOpen(true)}
-              currentView={appView}
-              onViewChange={setAppView}
-              onLogout={onLogout}
-            />
-          </div>
-        ) : (
-          <div className="w-full h-full">
-            <ReaderView
-              articleId={selectedId}
-              onBack={handleBack}
-              sidebarOpen={false}
-              onToggleSidebar={() => {}}
-              onNext={handleNext}
-              hasNext={hasNext}
-            />
-          </div>
+        {/* Overlay for mobile sidebar */}
+        {sidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/20 z-30 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
         )}
-      </div>
-    </div>
-  )
-}
 
-function EmptyReaderState({
-  sidebarOpen,
-  onToggleSidebar,
-}: {
-  sidebarOpen: boolean
-  onToggleSidebar: () => void
-}) {
-  return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar stub to align with ReaderView toolbar */}
-      <div className="flex items-center px-3 py-3 border-b border-border-subtle bg-bg-surface flex-shrink-0">
-        <button
-          onClick={onToggleSidebar}
-          className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
-          title={sidebarOpen ? 'Hide sidebar  [' : 'Show sidebar  ['}
-        >
-          {sidebarOpen ? (
-            // PanelLeftClose
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>
-            </svg>
-          ) : (
-            // PanelLeftOpen
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>
-            </svg>
-          )}
-        </button>
-      </div>
-      <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
-        <div className="text-5xl mb-4 opacity-30">◉</div>
-        <h2 className="text-base font-semibold text-text-secondary mb-1">
-          Select an article
-        </h2>
-        <p className="text-xs text-text-muted max-w-xs leading-relaxed">
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">j</kbd>
-          {' / '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">k</kbd>
-          {' '}navigate{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">r</kbd>
-          {' '}read{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">b</kbd>
-          {' '}bookmark{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">[</kbd>
-          {' '}sidebar
-        </p>
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0 bg-bg-base relative">
+          <Topbar
+            breadcrumb={
+              appView === 'feed' ? (showReader ? 'Article' : 'Feed') :
+              appView === 'digest' ? 'Digest' :
+              appView === 'stats' ? 'Stats' :
+              appView === 'research' ? 'Research Clusters' : 'Literature Review'
+            }
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen(v => !v)}
+          />
+
+          <div className="flex-1 h-full overflow-hidden min-w-0 relative">
+            {appView === 'feed' ? (
+              showReader && selectedId ? (
+                <ReaderView
+                  articleId={selectedId}
+                  onBack={handleBack}
+                  sidebarOpen={sidebarOpen}
+                  onToggleSidebar={() => setSidebarOpen(v => !v)}
+                  onNext={handleNext}
+                  hasNext={hasNext}
+                  onNavigate={handleSelectArticle}
+                />
+              ) : (
+                <ArticleList
+                  feeds={feeds}
+                  onSelect={handleSelectArticle}
+                  selectedId={selectedId}
+                  onOpenFeedManager={() => setFeedManagerOpen(true)}
+                  onOpenProfile={() => setProfileOpen(true)}
+                  currentView={appView}
+                  onViewChange={setAppView}
+                  onLogout={onLogout}
+                />
+              )
+            ) : appView === 'digest' ? (
+              <DigestView onSelect={handleSelectArticle} />
+            ) : appView === 'stats' ? (
+              <StatsView onClose={() => setAppView('feed')} />
+            ) : appView === 'research' ? (
+              <ResearchDigestView onSelect={handleSelectArticle} />
+            ) : (
+              <LitReviewView onSelectArticle={handleSelectArticle} />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

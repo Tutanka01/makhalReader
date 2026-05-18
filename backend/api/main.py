@@ -1,22 +1,13 @@
 import asyncio
-import hashlib
 import json
 import os
-import re
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Dict, List, Optional
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from typing import AsyncGenerator, Dict, Optional
 
-import httpx
-
-import feedparser
-import xml.etree.ElementTree as ET
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
+import structlog
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
 
 from auth import (
     COOKIE_NAME,
@@ -30,45 +21,47 @@ from auth import (
     purge_expired_sessions,
     require_session,
     set_session_cookie,
+    validate_session,
     verify_password,
 )
-from database import Article, Feed, Highlight, SessionLocal, get_db, init_db
-from models import (
-    ArticleListItem,
-    ArticleOut,
-    AskRequest,
-    DailyReadCount,
-    FeedCreate,
-    FeedOut,
-    FeedWithCount,
-    HighlightCreate,
-    HighlightOut,
-    HighlightUpdate,
-    InternalArticleCreate,
-    InternalScoreUpdate,
-    StatsOut,
-    TagFrequency,
+from database import Feed, ResearchProfile, SessionLocal, init_db
+from routers import (
+    articles,
+    feeds,
+    highlights,
+    ask,
+    stats,
+    admin,
+    internal,
+    research,
 )
+from routers.internal import cleanup_old_articles
+from sse import _sse_queues, broadcast_new_article
 
-API_SECRET = os.getenv("API_SECRET", "changeme")
-MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
-ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
+# ---------------------------------------------------------------------------
+# Structured logging
+# ---------------------------------------------------------------------------
 
-# LLM config (shared with scorer service)
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-QA_MODEL = os.getenv("QA_MODEL", os.getenv("SCORER_MODEL", "google/gemini-flash-1.5"))
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(20),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+)
+logger = structlog.get_logger().bind(service="api")
 
-# Semaphore to prevent concurrent LLM ask calls (cost protection)
-_ask_semaphore = asyncio.Semaphore(2)
+# ---------------------------------------------------------------------------
+# App factory
+# ---------------------------------------------------------------------------
 
-# CORS: in production, lock to your actual domain.
-# Set CORS_ORIGIN=https://reader.yourdomain.com in .env
 _cors_origin = os.getenv("CORS_ORIGIN", "")
 _cors_origins = [_cors_origin] if _cors_origin else []
 
-app = FastAPI(title="MakhalReader API", docs_url=None, redoc_url=None)
+app = FastAPI(title="Baṣīra API", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,151 +71,169 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Internal-Secret"],
 )
 
-# SSE queue registry: maps client_id -> asyncio.Queue
-_sse_queues: Dict[str, asyncio.Queue] = {}
+app.include_router(articles.router)
+app.include_router(feeds.router)
+app.include_router(highlights.router)
+app.include_router(ask.router)
+app.include_router(stats.router)
+app.include_router(admin.router)
+app.include_router(internal.router)
+app.include_router(research.router)
 
-DEFAULT_FEEDS = [
-    # ── Infra / Cloud / Platform ──────────────────────────────────────────
-    {"url": "https://kubernetes.io/feed.xml",                            "name": "Kubernetes Blog",            "category": "Infra"},
-    {"url": "https://www.cncf.io/feed/",                                 "name": "CNCF",                       "category": "Infra"},
-    {"url": "https://thenewstack.io/feed/",                              "name": "The New Stack",              "category": "Infra"},
-    {"url": "https://blog.cloudflare.com/rss/",                          "name": "Cloudflare Blog",            "category": "Infra"},
-    {"url": "https://netflixtechblog.com/feed",                          "name": "Netflix Tech Blog",          "category": "Infra"},
-    {"url": "https://engineering.fb.com/feed/",                          "name": "Meta Engineering",           "category": "Infra"},
-    {"url": "https://fly.io/blog/feed.xml",                              "name": "Fly.io Blog",                "category": "Infra"},
-    {"url": "https://www.brendangregg.com/blog/rss.xml",                 "name": "Brendan Gregg",              "category": "Infra"},
-    {"url": "https://charity.wtf/feed/",                                 "name": "Charity Majors",             "category": "Infra"},
-    {"url": "https://martinfowler.com/feed.atom",                        "name": "Martin Fowler",              "category": "Infra"},
-    {"url": "https://grafana.com/blog/index.xml",                        "name": "Grafana Blog",               "category": "Infra"},
-    {"url": "https://www.datadoghq.com/blog/feed/",                      "name": "Datadog Engineering",        "category": "Infra"},
-    {"url": "https://blog.bytebytego.com/feed",                          "name": "ByteByteGo",                 "category": "Infra"},
-    # ── Linux / Systems / Containers internals ────────────────────────────
-    {"url": "https://iximiuz.com/en/posts.rss",                          "name": "iximiuz",                    "category": "Infra"},
-    {"url": "https://lwn.net/headlines/rss",                             "name": "LWN.net",                    "category": "Infra"},
-    {"url": "https://fasterthanli.me/index.xml",                         "name": "fasterthanli.me",            "category": "Infra"},
-    {"url": "https://danluu.com/atom.xml",                               "name": "Dan Luu",                    "category": "Infra"},
-    {"url": "https://xeiaso.net/blog.rss",                               "name": "Xe Iaso",                    "category": "Infra"},
-    {"url": "https://drewdevault.com/blog/index.xml",                    "name": "Drew DeVault",               "category": "Infra"},
-    {"url": "https://notes.eatonphil.com/rss.xml",                       "name": "Phil Eaton",                 "category": "Infra"},
-    {"url": "https://www.phoronix.com/rss.php",                          "name": "Phoronix",                   "category": "Infra"},
-    {"url": "https://blog.jessfraz.com/index.xml",                       "name": "Jessie Frazelle",            "category": "Infra"},
-    # ── Networking / eBPF ─────────────────────────────────────────────────
-    {"url": "https://tailscale.com/blog/index.xml",                      "name": "Tailscale Blog",             "category": "Infra"},
-    {"url": "https://isovalent.com/blog/index.xml",                      "name": "Isovalent (Cilium/eBPF)",    "category": "Infra"},
-    {"url": "https://www.polarsignals.com/blog/feed",                     "name": "Polar Signals (eBPF)",       "category": "Infra"},
-    # ── Self-hosting / Homelab ────────────────────────────────────────────
-    {"url": "https://blog.alexellis.io/rss/",                            "name": "Alex Ellis",                 "category": "Infra"},
-    {"url": "https://selfh.st/feed/",                                    "name": "selfh.st",                   "category": "Infra"},
-    # ── AI / LLM / Agents ────────────────────────────────────────────────
-    {"url": "https://huyenchip.com/feed",                                "name": "Huyen Chip",                 "category": "AI"},
-    {"url": "https://lilianweng.github.io/feed.xml",                     "name": "Lilian Weng",                "category": "AI"},
-    {"url": "https://www.anthropic.com/news/rss.xml",                    "name": "Anthropic",                  "category": "AI"},
-    {"url": "https://huggingface.co/blog/feed.xml",                      "name": "HuggingFace Blog",           "category": "AI"},
-    {"url": "https://bair.berkeley.edu/blog/feed.xml",                   "name": "BAIR Blog",                  "category": "AI"},
-    {"url": "https://eugeneyan.com/rss.xml",                             "name": "Eugene Yan",                 "category": "AI"},
-    {"url": "https://magazine.sebastianraschka.com/feed",                "name": "Sebastian Raschka",          "category": "AI"},
-    {"url": "https://www.interconnects.ai/feed",                         "name": "interconnects.ai",           "category": "AI"},
-    {"url": "https://www.latent.space/feed",                             "name": "Latent Space",               "category": "AI"},
-    {"url": "https://mlabonne.github.io/blog/feed.xml",                  "name": "Maxime Labonne",             "category": "AI"},
-    {"url": "https://vickiboykis.com/index.xml",                         "name": "Vicky Boykis",               "category": "AI"},
-    {"url": "https://www.deeplearning.ai/the-batch/feed/rss/",           "name": "The Batch (Andrew Ng)",      "category": "AI"},
-    {"url": "https://hamel.dev/feed.xml",                                "name": "Hamel Husain",               "category": "AI"},
-    {"url": "https://timdettmers.com/feed/",                             "name": "Tim Dettmers",               "category": "AI"},
-    # ── Cybersécurité ─────────────────────────────────────────────────────
-    {"url": "https://portswigger.net/research/rss",                      "name": "PortSwigger Research",       "category": "Sec"},
-    {"url": "https://googleprojectzero.blogspot.com/feeds/posts/default","name": "Google Project Zero",        "category": "Sec"},
-    {"url": "https://blog.trailofbits.com/feed/",                        "name": "Trail of Bits",              "category": "Sec"},
-    {"url": "https://lcamtuf.substack.com/feed",                         "name": "lcamtuf",                    "category": "Sec"},
-    {"url": "https://secret.club/feed.xml",                              "name": "secret.club",                "category": "Sec"},
-    {"url": "https://krebsonsecurity.com/feed/",                         "name": "Krebs on Security",          "category": "Sec"},
-    {"url": "https://www.schneier.com/feed/atom/",                       "name": "Bruce Schneier",             "category": "Sec"},
-    {"url": "https://posts.specterops.io/feed",                          "name": "SpecterOps",                 "category": "Sec"},
-    {"url": "https://research.nccgroup.com/feed/",                       "name": "NCC Group Research",         "category": "Sec"},
-    {"url": "https://blog.xpnsec.com/rss.xml",                          "name": "Adam Chester (XPN)",         "category": "Sec"},
-    {"url": "https://objective-see.org/rss.xml",                         "name": "Objective-See",              "category": "Sec"},
-    # ── ArXiv — Research Papers ───────────────────────────────────────────
-    {"url": "https://export.arxiv.org/rss/cs.AI",                       "name": "arXiv cs.AI",                "category": "Papers"},
-    {"url": "https://export.arxiv.org/rss/cs.LG",                       "name": "arXiv cs.LG",                "category": "Papers"},
-    {"url": "https://export.arxiv.org/rss/cs.DC",                       "name": "arXiv cs.DC",                "category": "Papers"},
-    {"url": "https://export.arxiv.org/rss/cs.NI",                       "name": "arXiv cs.NI",                "category": "Papers"},
-    {"url": "https://export.arxiv.org/rss/cs.CR",                       "name": "arXiv cs.CR",                "category": "Papers"},
-    {"url": "https://export.arxiv.org/rss/cs.OS",                       "name": "arXiv cs.OS",                "category": "Papers"},
-    # ── High-signal généraliste ───────────────────────────────────────────
-    {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",             "category": "High-signal"},
-    {"url": "https://jvns.ca/atom.xml",                                  "name": "Julia Evans",                "category": "High-signal"},
-    {"url": "https://rachelbythebay.com/w/atom.xml",                     "name": "rachelbythebay",             "category": "High-signal"},
-    {"url": "https://news.ycombinator.com/rss",                          "name": "Hacker News",                "category": "High-signal"},
-    {"url": "https://lobste.rs/rss",                                     "name": "Lobsters",                   "category": "High-signal"},
-    {"url": "https://newsletter.pragmaticengineer.com/feed",             "name": "Pragmatic Engineer",         "category": "High-signal"},
-    {"url": "https://queue.acm.org/rss/feeds/queuecontent.xml",          "name": "ACM Queue",                  "category": "High-signal"},
-    {"url": "http://www.paulgraham.com/rss.html",                        "name": "Paul Graham",                "category": "High-signal"},
-    {"url": "https://the.scapegoat.dev/rss.xml",                         "name": "The Scapegoat Dev",          "category": "High-signal"},
-    {"url": "https://matklad.github.io/feed.xml",                        "name": "matklad",                    "category": "High-signal"},
+# ---------------------------------------------------------------------------
+# Default feeds seeded at startup
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Research profile taxonomy — seeded once at first startup (table empty)
+# Weights encode tier priority: 5.0=Tier1 critical → 1.0=avoid
+# ---------------------------------------------------------------------------
+
+_SEED_PROFILE: list[dict] = [
+    # ── Tier 1 — Core Thesis (weight 5.0) ───────────────────────────────────
+    {"kind": "topic", "label": "AI-driven MBSE",                            "weight": 5.0},
+    {"kind": "topic", "label": "Cyber-Physical Systems engineering",         "weight": 5.0},
+    {"kind": "topic", "label": "Digital Twin construction and synchronization","weight": 5.0},
+    {"kind": "topic", "label": "Engineering blueprint",                      "weight": 5.0},
+    {"kind": "topic", "label": "AI-assisted system modeling",                "weight": 5.0},
+    {"kind": "topic", "label": "Lifecycle-aware system modeling",            "weight": 5.0},
+    {"kind": "topic", "label": "Engineering knowledge synthesis",            "weight": 5.0},
+    {"kind": "topic", "label": "MBSE + AI integration",                     "weight": 5.0},
+    # ── Tier 2 — Modeling & Representation (weight 3.5) ─────────────────────
+    {"kind": "topic", "label": "Multi-view modeling",                       "weight": 3.5},
+    {"kind": "topic", "label": "System architecture modeling",               "weight": 3.5},
+    {"kind": "topic", "label": "Semantic modeling",                         "weight": 3.5},
+    {"kind": "topic", "label": "Model consistency",                         "weight": 3.5},
+    {"kind": "topic", "label": "Model transformation",                      "weight": 3.5},
+    {"kind": "topic", "label": "Model synchronization",                     "weight": 3.5},
+    {"kind": "topic", "label": "Model traceability",                        "weight": 3.5},
+    {"kind": "topic", "label": "Model-driven engineering",                  "weight": 3.5},
+    {"kind": "topic", "label": "Metamodeling",                              "weight": 3.5},
+    {"kind": "topic", "label": "Ontology engineering",                      "weight": 3.5},
+    {"kind": "topic", "label": "Semantic interoperability",                 "weight": 3.5},
+    {"kind": "topic", "label": "Model quality",                             "weight": 3.5},
+    # ── Tier 3 — Requirements Engineering (weight 3.5) ──────────────────────
+    {"kind": "topic", "label": "Requirements Engineering",                  "weight": 3.5},
+    {"kind": "topic", "label": "NLP-based requirements elicitation",        "weight": 3.5},
+    {"kind": "topic", "label": "Requirements traceability",                 "weight": 3.5},
+    {"kind": "topic", "label": "Requirements formalization",                "weight": 3.5},
+    {"kind": "topic", "label": "Requirements quality",                      "weight": 3.5},
+    {"kind": "topic", "label": "Requirements-to-model traceability",        "weight": 3.5},
+    {"kind": "topic", "label": "Digital thread",                            "weight": 3.5},
+    # ── Tier 4 — Knowledge & Reasoning (weight 3.0) ─────────────────────────
+    {"kind": "topic", "label": "Knowledge graphs for engineering",          "weight": 3.0},
+    {"kind": "topic", "label": "GraphRAG for systems or requirements",      "weight": 3.0},
+    {"kind": "topic", "label": "Semantic retrieval over engineering artifacts","weight": 3.0},
+    {"kind": "topic", "label": "Knowledge-grounded generation",             "weight": 3.0},
+    {"kind": "topic", "label": "Engineering reasoning",                     "weight": 3.0},
+    {"kind": "topic", "label": "Traceability graphs",                       "weight": 3.0},
+    {"kind": "topic", "label": "Knowledge extraction from engineering documents","weight": 3.0},
+    {"kind": "topic", "label": "Ontology-enhanced AI",                     "weight": 3.0},
+    # ── Tier 5 — LLMs & Agents applied to engineering (weight 2.0) ──────────
+    {"kind": "topic", "label": "LLM for engineering or modeling",           "weight": 2.0},
+    {"kind": "topic", "label": "Multi-agent systems for MBSE",             "weight": 2.0},
+    {"kind": "topic", "label": "RAG applied to system artifacts",           "weight": 2.0},
+    {"kind": "topic", "label": "Structured generation for engineering",     "weight": 2.0},
+    {"kind": "topic", "label": "Hallucination mitigation in technical generation","weight": 2.0},
+    {"kind": "topic", "label": "Trustworthy LLM for safety-critical systems","weight": 2.0},
+    # ── Tier 6 — Runtime & Synchronization (weight 3.5) ─────────────────────
+    {"kind": "topic", "label": "Continuous model synchronization",          "weight": 3.5},
+    {"kind": "topic", "label": "Runtime model alignment",                   "weight": 3.5},
+    {"kind": "topic", "label": "Model drift detection",                     "weight": 3.5},
+    {"kind": "topic", "label": "Digital thread construction",               "weight": 3.5},
+    {"kind": "topic", "label": "Change impact analysis",                    "weight": 3.5},
+    {"kind": "topic", "label": "Adaptive digital twins",                    "weight": 3.5},
+    {"kind": "topic", "label": "Runtime monitoring of CPS",                 "weight": 3.5},
+    # ── Tier 7 — Verification, Trust & Certification (weight 3.0) ───────────
+    {"kind": "topic", "label": "Explainable AI for engineering",            "weight": 3.0},
+    {"kind": "topic", "label": "Trustworthy AI",                            "weight": 3.0},
+    {"kind": "topic", "label": "Formal verification for CPS",               "weight": 3.0},
+    {"kind": "topic", "label": "Assurance cases",                           "weight": 3.0},
+    {"kind": "topic", "label": "Safety-critical AI",                        "weight": 3.0},
+    {"kind": "topic", "label": "Certification-aware AI",                    "weight": 3.0},
+    {"kind": "topic", "label": "Human-in-the-loop validation",              "weight": 3.0},
+    # ── Tier 8 — Industrial Context (weight 1.5) ────────────────────────────
+    {"kind": "topic", "label": "Industry 4.0 with MBSE",                   "weight": 1.5},
+    {"kind": "topic", "label": "Industrial digital twins",                  "weight": 1.5},
+    {"kind": "topic", "label": "Systems-of-systems engineering",            "weight": 1.5},
+    {"kind": "topic", "label": "Embedded systems engineering",              "weight": 1.5},
+    # ── Tier 9 — Evaluation & Benchmarks (weight 1.5) ───────────────────────
+    {"kind": "topic", "label": "Benchmarks for engineering AI",             "weight": 1.5},
+    {"kind": "topic", "label": "Evaluation frameworks for MBSE/RE AI",     "weight": 1.5},
+    {"kind": "topic", "label": "Dataset construction for systems engineering","weight": 1.5},
+    # ── Avoid (weight 1.0 — triggers score penalty) ──────────────────────────
+    {"kind": "avoid", "label": "DevOps",                                    "weight": 1.0},
+    {"kind": "avoid", "label": "Kubernetes",                                "weight": 1.0},
+    {"kind": "avoid", "label": "Cloud infrastructure",                      "weight": 1.0},
+    {"kind": "avoid", "label": "Cybersecurity (non-CPS)",                   "weight": 1.0},
+    {"kind": "avoid", "label": "Consumer AI chatbots",                      "weight": 1.0},
+    {"kind": "avoid", "label": "Vibe coding and productivity tools",        "weight": 1.0},
+    {"kind": "avoid", "label": "Generic Python or JS tutorials",            "weight": 1.0},
+    {"kind": "avoid", "label": "Marketing and startup announcements",       "weight": 1.0},
+    {"kind": "avoid", "label": "Social and political news",                 "weight": 1.0},
 ]
 
 
-def _run_cleanup() -> int:
-    """Synchronous cleanup logic — returns number of deleted articles."""
-    db = SessionLocal()
-    try:
-        total_deleted = 0
+def _seed_research_profile(db) -> None:
+    """Populate the research_profile table from the 9-tier taxonomy.
 
-        # 1. Delete non-bookmarked articles older than ARTICLE_RETENTION_DAYS.
-        if ARTICLE_RETENTION_DAYS > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=ARTICLE_RETENTION_DAYS)
-            deleted = (
-                db.query(Article)
-                .filter(Article.created_at < cutoff, Article.bookmarked == False)
-                .delete(synchronize_session=False)
-            )
-            total_deleted += deleted
-
-        # 2. Per-feed cap: keep only the MAX_ARTICLES_PER_FEED most recent articles.
-        feeds = db.query(Feed).filter(Feed.active == True).all()
-        for feed in feeds:
-            count = db.query(Article).filter(Article.feed_id == feed.id).count()
-            if count > MAX_ARTICLES_PER_FEED:
-                keep_ids = (
-                    db.query(Article.id)
-                    .filter(Article.feed_id == feed.id)
-                    .order_by(Article.created_at.desc())
-                    .limit(MAX_ARTICLES_PER_FEED)
-                    .subquery()
-                )
-                deleted = (
-                    db.query(Article)
-                    .filter(
-                        Article.feed_id == feed.id,
-                        Article.id.notin_(keep_ids),
-                        Article.bookmarked == False,
-                    )
-                    .delete(synchronize_session=False)
-                )
-                total_deleted += deleted
-
-        db.commit()
-        return total_deleted
-    except Exception as e:
-        print(f"[cleanup] Error: {e}")
-        db.rollback()
-        return 0
-    finally:
-        db.close()
+    Idempotent: does nothing if any row already exists (first-run only).
+    """
+    from datetime import datetime, timezone
+    count = db.query(ResearchProfile).count()
+    if count > 0:
+        return
+    for entry in _SEED_PROFILE:
+        db.add(ResearchProfile(
+            kind=entry["kind"],
+            label=entry["label"],
+            weight=entry["weight"],
+            source="seed",
+            created_at=datetime.now(timezone.utc),
+        ))
+    db.commit()
+    logger.info("research_profile_seeded", count=len(_SEED_PROFILE))
 
 
-async def cleanup_old_articles():
-    """Run cleanup once at startup, then every 24 h."""
-    # First pass immediately so stale articles are gone before the first poll.
-    deleted = await asyncio.to_thread(_run_cleanup)
-    if deleted:
-        print(f"[cleanup] Startup pass: deleted {deleted} old articles")
+DEFAULT_FEEDS = [
+    # ── ArXiv — Requirements Engineering & Software Engineering ──────────
+    {"url": "https://export.arxiv.org/rss/cs.SE",                       "name": "arXiv cs.SE (RE/SE)",           "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.FL",                       "name": "arXiv cs.FL (Formal Methods)",  "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.PL",                       "name": "arXiv cs.PL (Prog. Languages)", "category": "Papers"},
+    # ── ArXiv — Systems Engineering & Robotics (MBSE) ────────────────────
+    {"url": "https://export.arxiv.org/rss/cs.RO",                       "name": "arXiv cs.RO (Robotics/MBSE)",   "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.SY",                       "name": "arXiv cs.SY (Systems Control)", "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/eess.SY",                     "name": "arXiv eess.SY (Eng. Systems)",  "category": "Papers"},
+    # ── ArXiv — AI / NLP / Agents (pertinents pour RE) ───────────────────
+    {"url": "https://export.arxiv.org/rss/cs.AI",                       "name": "arXiv cs.AI",                   "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.LG",                       "name": "arXiv cs.LG",                   "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.CL",                       "name": "arXiv cs.CL (NLP/LLM)",         "category": "Papers"},
+    {"url": "https://export.arxiv.org/rss/cs.MA",                       "name": "arXiv cs.MA (Multi-Agent)",      "category": "Papers"},
+    # ── Venues de recherche ───────────────────────────────────────────────
+    {"url": "https://aclanthology.org/anthology+abstracts.rss",          "name": "ACL Anthology",                  "category": "Papers"},
+    {"url": "https://openreview.net/rss",                                "name": "OpenReview",                     "category": "Papers"},
+    # ── AI / LLM — blogs de recherche (orientés méthodes et résultats) ───
+    {"url": "https://lilianweng.github.io/feed.xml",                     "name": "Lilian Weng (OpenAI)",           "category": "AI"},
+    {"url": "https://bair.berkeley.edu/blog/feed.xml",                   "name": "BAIR Blog",                      "category": "AI"},
+    {"url": "https://huyenchip.com/feed",                                "name": "Huyen Chip (ML Systems)",        "category": "AI"},
+    {"url": "https://eugeneyan.com/rss.xml",                             "name": "Eugene Yan (Applied ML)",        "category": "AI"},
+    {"url": "https://magazine.sebastianraschka.com/feed",                "name": "Sebastian Raschka (LLM/Research)","category": "AI"},
+    {"url": "https://www.anthropic.com/news/rss.xml",                    "name": "Anthropic Research",             "category": "AI"},
+    {"url": "https://huggingface.co/blog/feed.xml",                      "name": "HuggingFace Blog",               "category": "AI"},
+    {"url": "https://timdettmers.com/feed/",                             "name": "Tim Dettmers (Quantization)",    "category": "AI"},
+    # ── Software Architecture & Engineering (SE proche RE) ────────────────
+    {"url": "https://martinfowler.com/feed.atom",                        "name": "Martin Fowler",                  "category": "SE"},
+    {"url": "https://queue.acm.org/rss/feeds/queuecontent.xml",          "name": "ACM Queue",                      "category": "SE"},
+    {"url": "https://cacm.acm.org/browse-by-subject/rss/software-engineering","name": "CACM Software Engineering", "category": "SE"},
+    # ── High-signal généraliste ───────────────────────────────────────────
+    {"url": "https://simonwillison.net/atom/everything/",                "name": "Simon Willison",                 "category": "High-signal"},
+    {"url": "https://news.ycombinator.com/rss",                          "name": "Hacker News",                    "category": "High-signal"},
+    {"url": "https://www.deeplearning.ai/the-batch/feed/rss/",           "name": "The Batch (Andrew Ng)",          "category": "High-signal"},
+]
 
-    while True:
-        await asyncio.sleep(86400)
-        deleted = await asyncio.to_thread(_run_cleanup)
-        if deleted:
-            print(f"[cleanup] Nightly pass: deleted {deleted} old articles")
-
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
 
 @app.on_event("startup")
 async def startup():
@@ -239,7 +250,7 @@ async def startup():
                 added += 1
         if added:
             db.commit()
-            print(f"[startup] Added {added} new default feed(s)")
+            logger.info("startup_feeds_added", count=added)
     finally:
         db.close()
 
@@ -282,7 +293,6 @@ async def logout(request: Request, response: Response):
 
 @app.get("/auth/status")
 async def auth_status(request: Request):
-    from auth import validate_session
     token = request.cookies.get(COOKIE_NAME)
     if not token or not validate_session(token):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -290,7 +300,7 @@ async def auth_status(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Public — health check (no auth, used by Docker and Caddy)
+# Health check — public (no auth, used by Docker and Caddy)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health")
@@ -299,293 +309,10 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# Protected API routes
+# SSE stream — protected
 # ---------------------------------------------------------------------------
 
 _auth = Depends(require_session)
-
-
-@app.get("/api/articles", response_model=List[ArticleListItem])
-async def list_articles(
-    status: str = Query("unread", enum=["unread", "read", "all"]),
-    sort: str = Query("score", enum=["score", "date"]),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    category: Optional[str] = Query(None),
-    bookmarked: Optional[bool] = Query(None),
-    url: Optional[str] = Query(None),
-    min_score: Optional[float] = Query(None, ge=0, le=10),
-    search: Optional[str] = Query(None, max_length=200),
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    query = db.query(Article, Feed.name.label("feed_name")).join(
-        Feed, Article.feed_id == Feed.id
-    )
-
-    if url is not None:
-        query = query.filter(Article.url == url)
-        results = query.all()
-        if results:
-            row = results[0]
-            item = _row_to_list_item(row)
-            return [item]
-        return []
-
-    # Full-text search: searches across all articles regardless of read status
-    if search:
-        like = f"%{search}%"
-        query = query.filter(
-            or_(
-                Article.title.ilike(like),
-                Article.content_text.ilike(like),
-                Article.tags_json.ilike(like),
-            )
-        )
-    else:
-        if status == "unread":
-            query = query.filter(Article.read_at.is_(None))
-        elif status == "read":
-            query = query.filter(Article.read_at.isnot(None))
-
-    if category and category not in ("All", "all"):
-        query = query.filter(Feed.category == category)
-
-    if bookmarked is not None:
-        query = query.filter(Article.bookmarked == bookmarked)
-
-    if min_score is not None:
-        query = query.filter(Article.score >= min_score)
-
-    # Unread articles always float above read ones (read_at IS NULL = True → 1 > 0)
-    unread_first = Article.read_at.is_(None).desc()
-    if sort == "score":
-        query = query.order_by(unread_first, Article.score.desc().nullslast(), Article.created_at.desc())
-    else:
-        query = query.order_by(unread_first, Article.published_at.desc().nullslast(), Article.created_at.desc())
-
-    query = query.offset(offset).limit(limit)
-    results = query.all()
-    return [_row_to_list_item(row) for row in results]
-
-
-def _row_to_list_item(row) -> ArticleListItem:
-    article, feed_name = row
-    return ArticleListItem(
-        id=article.id,
-        feed_id=article.feed_id,
-        title=article.title,
-        url=article.url,
-        published_at=article.published_at,
-        score=article.score,
-        tags_json=article.tags_json or "[]",
-        summary_bullets_json=article.summary_bullets_json or "[]",
-        reason=article.reason,
-        read_at=article.read_at,
-        bookmarked=article.bookmarked,
-        extraction_failed=article.extraction_failed,
-        created_at=article.created_at,
-        feed_name=feed_name or "",
-        user_feedback=article.user_feedback,
-    )
-
-
-@app.get("/api/articles/{article_id}", response_model=ArticleOut)
-async def get_article(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    return ArticleOut.model_validate(article)
-
-
-@app.post("/api/articles/{article_id}/read")
-async def mark_read(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    article.read_at = datetime.now(timezone.utc)
-    db.commit()
-    return {"status": "ok"}
-
-
-@app.post("/api/articles/{article_id}/unread")
-async def mark_unread(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    article.read_at = None
-    db.commit()
-    return {"status": "ok"}
-
-
-@app.post("/api/articles/read-all")
-async def mark_all_read(
-    category: Optional[str] = Query(None),
-    min_score: Optional[float] = Query(None, ge=0, le=10),
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    query = db.query(Article).filter(Article.read_at.is_(None))
-    if category and category not in ("All", "all"):
-        query = query.join(Feed, Article.feed_id == Feed.id).filter(Feed.category == category)
-    if min_score is not None:
-        query = query.filter(Article.score >= min_score)
-    count = query.update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
-    db.commit()
-    return {"marked_read": count}
-
-
-@app.post("/api/articles/{article_id}/bookmark")
-async def toggle_bookmark(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    article.bookmarked = not article.bookmarked
-    db.commit()
-    return {"bookmarked": article.bookmarked}
-
-
-class FeedbackRequest(BaseModel):
-    value: int  # 1=like, -1=dislike, 0=remove feedback
-
-
-@app.post("/api/articles/{article_id}/feedback")
-async def submit_feedback(
-    article_id: int,
-    body: FeedbackRequest,
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    if body.value not in (-1, 0, 1):
-        raise HTTPException(status_code=422, detail="value must be -1, 0, or 1")
-    article.user_feedback = None if body.value == 0 else body.value
-    db.commit()
-    return {"user_feedback": article.user_feedback}
-
-
-@app.get("/api/feeds", response_model=List[FeedWithCount])
-async def list_feeds(db: Session = Depends(get_db), _: None = _auth):
-    results = (
-        db.query(Feed, func.count(Article.id).label("article_count"))
-        .outerjoin(Article, Feed.id == Article.feed_id)
-        .filter(Feed.active == True)
-        .group_by(Feed.id)
-        .all()
-    )
-    return [
-        FeedWithCount(
-            id=feed.id, url=feed.url, name=feed.name,
-            category=feed.category, active=feed.active,
-            last_fetched=feed.last_fetched, article_count=count,
-        )
-        for feed, count in results
-    ]
-
-
-@app.post("/api/feeds/opml")
-async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), _: None = _auth):
-    content = await file.read()
-    try:
-        root = ET.fromstring(content.decode("utf-8", errors="replace"))
-    except ET.ParseError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid OPML file: {e}")
-
-    feeds_to_add: list[dict] = []
-    body = root.find("body")
-    if body is None:
-        raise HTTPException(status_code=400, detail="No <body> found in OPML")
-
-    for top in body:
-        top_url = top.get("xmlUrl") or top.get("xmlurl")
-        if top_url:
-            # Flat OPML: outline has a feed URL directly
-            feeds_to_add.append({
-                "url": top_url,
-                "name": top.get("title") or top.get("text") or top_url,
-                "category": "General",
-            })
-        else:
-            # Nested: this outline is a category folder
-            category = top.get("title") or top.get("text") or "General"
-            for child in top:
-                child_url = child.get("xmlUrl") or child.get("xmlurl")
-                if child_url:
-                    feeds_to_add.append({
-                        "url": child_url,
-                        "name": child.get("title") or child.get("text") or child_url,
-                        "category": category,
-                    })
-
-    added, skipped = 0, 0
-    for f in feeds_to_add:
-        existing = db.query(Feed).filter(Feed.url == f["url"]).first()
-        if existing:
-            if not existing.active:
-                existing.active = True
-                added += 1
-            else:
-                skipped += 1
-            continue
-        db.add(Feed(url=f["url"], name=f["name"], category=f["category"]))
-        added += 1
-
-    db.commit()
-    return {"added": added, "skipped": skipped, "total": len(feeds_to_add)}
-
-
-@app.get("/api/digest", response_model=List[ArticleListItem])
-async def get_digest(
-    hours: int = Query(24, ge=1, le=168),
-    limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    results = (
-        db.query(Article, Feed.name.label("feed_name"))
-        .join(Feed, Article.feed_id == Feed.id)
-        .filter(Article.created_at >= cutoff, Article.score.isnot(None))
-        .order_by(Article.score.desc())
-        .limit(limit)
-        .all()
-    )
-    return [_row_to_list_item(row) for row in results]
-
-
-@app.post("/api/feeds", response_model=FeedOut)
-async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None = _auth):
-    # Validate the URL by trying to parse it
-    parsed = feedparser.parse(feed_data.url)
-    if parsed.bozo and not parsed.entries:
-        raise HTTPException(status_code=400, detail="Invalid or unreachable feed URL")
-
-    existing = db.query(Feed).filter(Feed.url == feed_data.url).first()
-    if existing:
-        if not existing.active:
-            existing.active = True
-            db.commit()
-            db.refresh(existing)
-            return FeedOut.model_validate(existing)
-        raise HTTPException(status_code=409, detail="Feed already exists")
-
-    feed = Feed(url=feed_data.url, name=feed_data.name, category=feed_data.category)
-    db.add(feed)
-    db.commit()
-    db.refresh(feed)
-    return FeedOut.model_validate(feed)
-
-
-@app.delete("/api/feeds/{feed_id}")
-async def delete_feed(feed_id: int, db: Session = Depends(get_db), _: None = _auth):
-    feed = db.query(Feed).filter(Feed.id == feed_id).first()
-    if not feed:
-        raise HTTPException(status_code=404, detail="Feed not found")
-    feed.active = False
-    db.commit()
-    return {"status": "ok"}
 
 
 async def _sse_event_generator(request: Request, queue: asyncio.Queue) -> AsyncGenerator[str, None]:
@@ -598,7 +325,6 @@ async def _sse_event_generator(request: Request, queue: asyncio.Queue) -> AsyncG
                 message = await asyncio.wait_for(queue.get(), timeout=30.0)
                 yield f"data: {json.dumps(message)}\n\n"
             except asyncio.TimeoutError:
-                # Send keepalive
                 yield ": keepalive\n\n"
     except asyncio.CancelledError:
         pass
@@ -626,640 +352,3 @@ async def sse_stream(request: Request, _: None = _auth):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-async def _broadcast_new_article(article_data: dict):
-    message = {"type": "new_article", "data": article_data}
-    dead_clients = []
-    for client_id, queue in _sse_queues.items():
-        try:
-            queue.put_nowait(message)
-        except asyncio.QueueFull:
-            dead_clients.append(client_id)
-    for client_id in dead_clients:
-        _sse_queues.pop(client_id, None)
-
-
-
-@app.get("/api/internal/feeds")
-async def internal_list_feeds(
-    x_internal_secret: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-):
-    if x_internal_secret != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    results = (
-        db.query(Feed, func.count(Article.id).label("article_count"))
-        .outerjoin(Article, Feed.id == Article.feed_id)
-        .filter(Feed.active == True)
-        .group_by(Feed.id)
-        .all()
-    )
-    return [
-        {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
-        for feed, _ in results
-    ]
-
-
-@app.get("/api/internal/feedback-examples")
-async def internal_feedback_examples(
-    x_internal_secret: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-):
-    """Return an aggregated preference profile (tag frequencies + examples) for scorer personalisation.
-
-    Aggregates tags across the *entire* feedback history rather than just recent titles —
-    this yields a stable, token-efficient signal that generalises to unseen articles.
-    """
-    if x_internal_secret != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    liked_rows = (
-        db.query(Article.title, Article.tags_json)
-        .filter(Article.user_feedback == 1)
-        .order_by(Article.created_at.desc())
-        .all()
-    )
-    disliked_rows = (
-        db.query(Article.title, Article.tags_json)
-        .filter(Article.user_feedback == -1)
-        .order_by(Article.created_at.desc())
-        .all()
-    )
-
-    def aggregate_tags(rows: list, top_n: int) -> list[dict]:
-        counts: dict[str, int] = {}
-        for row in rows:
-            for tag in json.loads(row.tags_json or "[]"):
-                counts[tag] = counts.get(tag, 0) + 1
-        return [
-            {"tag": t, "count": c}
-            for t, c in sorted(counts.items(), key=lambda x: -x[1])[:top_n]
-        ]
-
-    def format_examples(rows: list, max_n: int) -> list[dict]:
-        out = []
-        for row in rows[:max_n]:
-            tags = json.loads(row.tags_json or "[]")
-            out.append({"title": row.title, "tags": tags[:5]})
-        return out
-
-    return {
-        # Tag frequencies over full history — primary personalisation signal
-        "liked_tags": aggregate_tags(liked_rows, top_n=10),
-        "disliked_tags": aggregate_tags(disliked_rows, top_n=8),
-        # Recent examples for contrastive illustration
-        "liked_examples": format_examples(liked_rows, max_n=4),
-        "disliked_examples": format_examples(disliked_rows, max_n=3),
-        # Totals so the scorer can skip if cold-start
-        "total_liked": len(liked_rows),
-        "total_disliked": len(disliked_rows),
-    }
-
-
-@app.get("/api/internal/articles/exists")
-async def internal_article_exists(
-    url: str = Query(...),
-    x_internal_secret: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-):
-    if x_internal_secret != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    exists = db.query(Article.id).filter(Article.url == url).first() is not None
-    return {"exists": exists}
-
-
-@app.post("/api/internal/articles")
-async def internal_create_article(
-    article_data: InternalArticleCreate,
-    x_internal_secret: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-):
-    if x_internal_secret != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    # ── Layer 1: exact URL match ─────────────────────────────────────────────
-    existing = db.query(Article).filter(Article.url == article_data.url).first()
-    if existing:
-        return {"id": existing.id, "created": False}
-
-    # ── Layer 2: title fingerprint (catches syndicated articles) ─────────────
-    # Same normalised title within a 3-day window → treat as duplicate.
-    # The short window avoids false positives on recurring titles like
-    # "Weekly Digest" that would match across different issues.
-    fp = _title_fingerprint(article_data.title)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
-    title_dup = (
-        db.query(Article)
-        .filter(
-            Article.title_fingerprint == fp,
-            Article.created_at >= cutoff,
-        )
-        .first()
-    )
-    if title_dup:
-        return {"id": title_dup.id, "created": False}
-
-    article = Article(
-        feed_id=article_data.feed_id,
-        title=article_data.title,
-        url=article_data.url,
-        published_at=article_data.published_at,
-        author=article_data.author,
-        content_html=article_data.content_html,
-        content_text=article_data.content_text,
-        images_json=json.dumps(article_data.images),
-        extraction_failed=article_data.extraction_failed,
-        created_at=datetime.now(timezone.utc),
-        title_fingerprint=fp,
-    )
-    db.add(article)
-    db.commit()
-    db.refresh(article)
-    return {"id": article.id, "created": True}
-
-
-@app.delete("/api/admin/articles/broken")
-async def delete_broken_articles(db: Session = Depends(get_db), _: None = _auth):
-    """
-    Delete articles that have garbled content or no meaningful title.
-    Call once after upgrading the extractor to clean up old bad data.
-    """
-    import re as _re
-
-    def _is_garbled(text: Optional[str]) -> bool:
-        if not text or len(text) < 20:
-            return False
-        sample = text[:1000]
-        bad = sum(1 for c in sample if c == "\ufffd" or (ord(c) < 32 and c not in "\t\n\r"))
-        return (bad / len(sample)) > 0.04
-
-    def _is_no_title(title: str) -> bool:
-        t = (title or "").strip()
-        return not t or t in ("[no-title]", "no-title", "Untitled", "") or len(t) < 3
-
-    articles = db.query(Article).all()
-    to_delete = []
-    for a in articles:
-        if _is_garbled(a.content_text) or _is_garbled(a.content_html):
-            to_delete.append(a.id)
-        elif _is_no_title(a.title) and not a.bookmarked:
-            to_delete.append(a.id)
-
-    if to_delete:
-        db.query(Article).filter(Article.id.in_(to_delete)).delete(synchronize_session=False)
-        db.commit()
-
-    return {"deleted": len(to_delete)}
-
-
-_TRACKING_PARAMS = frozenset({
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "utm_id", "utm_reader", "utm_name", "utm_cid",
-    "fbclid", "gclid", "msclkid", "yclid", "twclid", "igshid",
-    "_ga", "_gl", "mc_cid", "mc_eid", "ref", "source",
-})
-
-# ---------------------------------------------------------------------------
-# Deduplication helpers
-# ---------------------------------------------------------------------------
-
-def _title_fingerprint(title: str) -> str:
-    """
-    16-char hex fingerprint of a normalised title.
-    Removes punctuation, collapses whitespace, lowercases — so minor formatting
-    differences between syndicated copies don't create separate fingerprints.
-    """
-    t = re.sub(r"[^\w\s]", " ", title.lower())
-    t = re.sub(r"\s+", " ", t).strip()
-    return hashlib.sha1(t.encode()).hexdigest()[:16]
-
-
-def _normalize_url(url: str) -> str:
-    try:
-        p = urlparse(url.strip())
-        scheme = p.scheme.lower()
-        netloc = p.netloc.lower()
-        if netloc.startswith("www."):
-            netloc = netloc[4:]
-        path = p.path.rstrip("/") or "/"
-        params = parse_qs(p.query, keep_blank_values=False)
-        clean = {k: v for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
-        query = urlencode(sorted(clean.items()), doseq=True)
-        return urlunparse((scheme, netloc, path, "", query, ""))
-    except Exception:
-        return url
-
-
-@app.post("/api/admin/normalize-urls")
-async def normalize_article_urls(db: Session = Depends(get_db), _: None = _auth):
-    """
-    One-time migration: normalize all article URLs already in the DB so they
-    match the canonical form now used by the poller.  Safe to call multiple
-    times — idempotent.  Merges duplicate normalized URLs by keeping the
-    article with richer content and deleting the other.
-    """
-    articles = db.query(Article).all()
-    updated = 0
-    merged = 0
-    skipped = 0
-
-    for article in articles:
-        canonical = _normalize_url(article.url)
-        if canonical == article.url:
-            continue  # already canonical
-
-        # Check if another article already holds this canonical URL
-        conflict = db.query(Article).filter(
-            Article.url == canonical,
-            Article.id != article.id,
-        ).first()
-
-        if conflict:
-            # Keep whichever has more content; delete the other
-            keep = conflict if len(conflict.content_text or "") >= len(article.content_text or "") else article
-            drop = article if keep is conflict else conflict
-            # Preserve bookmark status
-            if drop.bookmarked:
-                keep.bookmarked = True
-            db.delete(drop)
-            if keep.url != canonical:
-                keep.url = canonical
-            merged += 1
-        else:
-            article.url = canonical
-            updated += 1
-
-    try:
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
-
-    return {"updated": updated, "merged": merged, "skipped": skipped}
-
-
-# ---------------------------------------------------------------------------
-# Highlights
-# ---------------------------------------------------------------------------
-
-@app.get("/api/articles/{article_id}/highlights", response_model=List[HighlightOut])
-async def list_highlights(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    highlights = (
-        db.query(Highlight)
-        .filter(Highlight.article_id == article_id)
-        .order_by(Highlight.created_at)
-        .all()
-    )
-    return [HighlightOut.model_validate(h) for h in highlights]
-
-
-@app.post("/api/articles/{article_id}/highlights", response_model=HighlightOut, status_code=201)
-async def create_highlight(
-    article_id: int,
-    body: HighlightCreate,
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-    highlight = Highlight(
-        article_id=article_id,
-        selected_text=body.selected_text,
-        prefix_context=body.prefix_context,
-        suffix_context=body.suffix_context,
-        color=body.color,
-        note=body.note,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(highlight)
-    db.commit()
-    db.refresh(highlight)
-    return HighlightOut.model_validate(highlight)
-
-
-@app.put("/api/articles/{article_id}/highlights/{highlight_id}", response_model=HighlightOut)
-async def update_highlight(
-    article_id: int,
-    highlight_id: int,
-    body: HighlightUpdate,
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    highlight = (
-        db.query(Highlight)
-        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
-        .first()
-    )
-    if not highlight:
-        raise HTTPException(status_code=404, detail="Highlight not found")
-    if body.color is not None:
-        highlight.color = body.color
-    if body.note is not None:
-        highlight.note = body.note
-    db.commit()
-    db.refresh(highlight)
-    return HighlightOut.model_validate(highlight)
-
-
-@app.delete("/api/articles/{article_id}/highlights/{highlight_id}")
-async def delete_highlight(
-    article_id: int,
-    highlight_id: int,
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    highlight = (
-        db.query(Highlight)
-        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
-        .first()
-    )
-    if not highlight:
-        raise HTTPException(status_code=404, detail="Highlight not found")
-    db.delete(highlight)
-    db.commit()
-    return {"status": "ok"}
-
-
-# ---------------------------------------------------------------------------
-# Ask AI — streaming Q&A on a specific article
-# ---------------------------------------------------------------------------
-
-@app.post("/api/articles/{article_id}/ask")
-async def ask_article(
-    article_id: int,
-    body: AskRequest,
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-
-    context = (article.content_text or "").strip()
-    if not context and article.content_html:
-        # Rough HTML → text fallback (strip tags)
-        context = re.sub(r"<[^>]+>", " ", article.content_html)
-        context = re.sub(r"\s+", " ", context).strip()
-    context = context[:6000]
-
-    system_prompt = (
-        "You are an expert reading assistant. The user is reading the article below and asks you questions about it.\n\n"
-        "Guidelines:\n"
-        "- Answer using ONLY information present in the article — never invent or assume anything.\n"
-        "- Detect the language of the user's question and reply in that exact language.\n"
-        "- Respond in the most natural way for the question: flowing prose for open questions, "
-        "a list only when the question genuinely calls for enumeration, a direct quote when the user "
-        "wants a specific passage. Let the question shape the format — never impose one.\n"
-        "- Be concise and direct. No greetings, no filler, no meta-commentary.\n"
-        "- Use Markdown sparingly: **bold** for key terms, > for quoting the article directly.\n"
-        "- If the information is not in the article, say so in one sentence without speculating.\n\n"
-        f"Article — {article.title}\n\n{context}"
-    )
-
-    async def generate():
-        async with _ask_semaphore:
-            use_openrouter = bool(OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"))
-            try:
-                if use_openrouter:
-                    async with httpx.AsyncClient(timeout=60) as client:
-                        async with client.stream(
-                            "POST",
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                                "Content-Type": "application/json",
-                            },
-                            json={
-                                "model": QA_MODEL,
-                                "messages": [
-                                    {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": body.question},
-                                ],
-                                "stream": True,
-                                "max_tokens": 1024,
-                                "temperature": 0.3,
-                            },
-                        ) as resp:
-                            async for line in resp.aiter_lines():
-                                if not line.startswith("data: "):
-                                    continue
-                                data = line[6:].strip()
-                                if data == "[DONE]":
-                                    break
-                                try:
-                                    chunk = json.loads(data)
-                                    delta = chunk["choices"][0]["delta"].get("content", "")
-                                    if delta:
-                                        yield f"data: {json.dumps({'text': delta})}\n\n"
-                                except Exception:
-                                    pass
-                else:
-                    # Ollama fallback — streaming via /api/chat
-                    async with httpx.AsyncClient(timeout=60) as client:
-                        async with client.stream(
-                            "POST",
-                            f"{OLLAMA_URL}/api/chat",
-                            json={
-                                "model": OLLAMA_MODEL,
-                                "messages": [
-                                    {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": body.question},
-                                ],
-                                "stream": True,
-                                "options": {"temperature": 0.3, "num_predict": 1024},
-                            },
-                        ) as resp:
-                            async for line in resp.aiter_lines():
-                                if not line.strip():
-                                    continue
-                                try:
-                                    chunk = json.loads(line)
-                                    delta = chunk.get("message", {}).get("content", "")
-                                    if delta:
-                                        yield f"data: {json.dumps({'text': delta})}\n\n"
-                                    if chunk.get("done"):
-                                        break
-                                except Exception:
-                                    pass
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: {\"done\": true}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
-# Reading statistics
-# ---------------------------------------------------------------------------
-
-def _compute_streak(dates: List[str]) -> int:
-    """Return current consecutive reading streak in days."""
-    if not dates:
-        return 0
-    today = datetime.now(timezone.utc).date()
-    unique = sorted(
-        {datetime.strptime(d, "%Y-%m-%d").date() for d in dates if d},
-        reverse=True,
-    )
-    if not unique:
-        return 0
-    # Streak must start from today or yesterday
-    start = unique[0]
-    yesterday = today - timedelta(days=1)
-    if start != today and start != yesterday:
-        return 0
-    streak = 0
-    expected = start
-    for d in unique:
-        if d == expected:
-            streak += 1
-            expected -= timedelta(days=1)
-        elif d < expected:
-            break
-    return streak
-
-
-@app.get("/api/stats", response_model=StatsOut)
-async def get_stats(db: Session = Depends(get_db), _: None = _auth):
-    # Basic counts
-    total_read = db.query(Article).filter(Article.read_at.isnot(None)).count()
-    total_unread = db.query(Article).filter(Article.read_at.is_(None)).count()
-    total_bookmarked = db.query(Article).filter(Article.bookmarked == True).count()
-
-    # Streak: get all distinct read dates
-    date_rows = (
-        db.query(func.strftime("%Y-%m-%d", Article.read_at).label("d"))
-        .filter(Article.read_at.isnot(None))
-        .distinct()
-        .all()
-    )
-    all_dates = [row.d for row in date_rows if row.d]
-    streak_days = _compute_streak(all_dates)
-
-    # Daily read counts — last 30 days
-    cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
-    daily_rows = (
-        db.query(
-            func.strftime("%Y-%m-%d", Article.read_at).label("d"),
-            func.count(Article.id).label("cnt"),
-        )
-        .filter(Article.read_at >= cutoff_30)
-        .group_by(func.strftime("%Y-%m-%d", Article.read_at))
-        .order_by(func.strftime("%Y-%m-%d", Article.read_at))
-        .all()
-    )
-    daily_counts = [DailyReadCount(date=row.d, count=row.cnt) for row in daily_rows if row.d]
-
-    # Average score of read articles
-    avg_row = (
-        db.query(func.avg(Article.score))
-        .filter(Article.read_at.isnot(None), Article.score.isnot(None))
-        .scalar()
-    )
-    avg_score_read = round(float(avg_row), 2) if avg_row is not None else None
-
-    # Top tags from read articles (last 2000 to cap memory usage)
-    tag_rows = (
-        db.query(Article.tags_json)
-        .filter(Article.read_at.isnot(None), Article.tags_json.isnot(None))
-        .order_by(Article.read_at.desc())
-        .limit(2000)
-        .all()
-    )
-    tag_counts: Dict[str, int] = {}
-    for (tags_json,) in tag_rows:
-        try:
-            for tag in json.loads(tags_json or "[]"):
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-        except Exception:
-            pass
-    top_tags = [
-        TagFrequency(tag=t, count=c)
-        for t, c in sorted(tag_counts.items(), key=lambda x: -x[1])[:20]
-    ]
-
-    # Highlights count (graceful if table missing)
-    try:
-        total_highlights = db.query(Highlight).count()
-    except Exception:
-        total_highlights = 0
-
-    # Articles per category (read articles only)
-    cat_rows = (
-        db.query(Feed.category, func.count(Article.id).label("cnt"))
-        .join(Article, Article.feed_id == Feed.id)
-        .filter(Article.read_at.isnot(None))
-        .group_by(Feed.category)
-        .all()
-    )
-    articles_per_category = {row.category: row.cnt for row in cat_rows}
-
-    return StatsOut(
-        total_read=total_read,
-        total_unread=total_unread,
-        total_bookmarked=total_bookmarked,
-        streak_days=streak_days,
-        daily_counts=daily_counts,
-        avg_score_read=avg_score_read,
-        top_tags=top_tags,
-        total_highlights=total_highlights,
-        articles_per_category=articles_per_category,
-    )
-
-
-@app.post("/api/internal/articles/{article_id}/score")
-async def internal_score_article(
-    article_id: int,
-    score_data: InternalScoreUpdate,
-    x_internal_secret: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-):
-    if x_internal_secret != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
-
-    article.score = score_data.score
-    article.tags_json = json.dumps(score_data.tags)
-    article.summary_bullets_json = json.dumps(score_data.summary_bullets)
-    article.reason = score_data.reason
-    db.commit()
-    db.refresh(article)
-
-    # Broadcast to SSE clients
-    feed = db.query(Feed).filter(Feed.id == article.feed_id).first()
-    article_dict = {
-        "id": article.id,
-        "feed_id": article.feed_id,
-        "title": article.title,
-        "url": article.url,
-        "published_at": article.published_at.isoformat() if article.published_at else None,
-        "score": article.score,
-        "tags": json.loads(article.tags_json or "[]"),
-        "summary_bullets": json.loads(article.summary_bullets_json or "[]"),
-        "reason": article.reason,
-        "read_at": article.read_at.isoformat() if article.read_at else None,
-        "bookmarked": article.bookmarked,
-        "extraction_failed": article.extraction_failed,
-        "created_at": article.created_at.isoformat(),
-        "feed_name": feed.name if feed else "",
-        "user_feedback": article.user_feedback,
-    }
-    await _broadcast_new_article(article_dict)
-
-    return {"status": "ok"}

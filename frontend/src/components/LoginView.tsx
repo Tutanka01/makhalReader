@@ -53,7 +53,7 @@ export function LoginView({ onLogin }: Props) {
   return (
     <div
       style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
-      className="min-h-screen w-full flex items-center justify-center bg-[#0a0a0b] overflow-hidden relative"
+      className="min-h-screen w-full flex items-center justify-center bg-bg-base overflow-hidden relative"
     >
       {/* Background glow */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -65,7 +65,7 @@ export function LoginView({ onLogin }: Props) {
             top: '50%',
             left: '50%',
             transform: 'translate(-50%, -60%)',
-            background: 'radial-gradient(circle, #6366f1 0%, #8b5cf6 40%, transparent 70%)',
+            background: 'radial-gradient(circle, var(--accent) 0%, var(--purple) 40%, transparent 70%)',
           }}
         />
       </div>
@@ -86,14 +86,14 @@ export function LoginView({ onLogin }: Props) {
         <div className="text-center mb-10 select-none">
           <div
             className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-5"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--purple))' }}
           >
             <span style={{ fontSize: 26, color: 'white', lineHeight: 1 }}>◉</span>
           </div>
-          <h1 style={{ color: '#f4f4f5', fontSize: 22, fontWeight: 600, letterSpacing: '-0.03em', margin: 0 }}>
-            MakhalReader
+          <h1 style={{ color: 'var(--text-primary)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.03em', margin: 0 }}>
+            Baṣīra
           </h1>
-          <p style={{ color: '#71717a', fontSize: 13, marginTop: 6 }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
             Your private intelligence feed
           </p>
         </div>
@@ -102,8 +102,8 @@ export function LoginView({ onLogin }: Props) {
         <form
           onSubmit={submit}
           style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
             borderRadius: 20,
             padding: '28px 28px 24px',
             backdropFilter: 'blur(12px)',
@@ -122,7 +122,7 @@ export function LoginView({ onLogin }: Props) {
 
           {/* Password field */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 12, color: '#a1a1aa', marginBottom: 7, fontWeight: 500 }}>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
               Password
             </label>
             <input
@@ -136,27 +136,27 @@ export function LoginView({ onLogin }: Props) {
                 width: '100%',
                 padding: '11px 14px',
                 borderRadius: 10,
-                border: `1.5px solid ${error ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}`,
-                background: 'rgba(255,255,255,0.06)',
-                color: '#f4f4f5',
+                border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border-default)'}`,
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
                 fontSize: 14,
                 outline: 'none',
                 boxSizing: 'border-box',
                 transition: 'border-color 0.15s',
               }}
               onFocus={e => {
-                if (!error) e.target.style.borderColor = 'rgba(99,102,241,0.7)'
+                if (!error) e.target.style.borderColor = 'var(--accent)'
               }}
               onBlur={e => {
-                if (!error) e.target.style.borderColor = 'rgba(255,255,255,0.1)'
+                if (!error) e.target.style.borderColor = 'var(--border-default)'
               }}
             />
             {error && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinecap="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round">
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                <span style={{ fontSize: 12, color: '#f87171' }}>{error}</span>
+                <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
               </div>
             )}
           </div>
@@ -172,7 +172,7 @@ export function LoginView({ onLogin }: Props) {
               width: 36,
               height: 20,
               borderRadius: 99,
-              background: remember ? '#6366f1' : 'rgba(255,255,255,0.1)',
+              background: remember ? 'var(--accent)' : 'var(--bg-hover)',
               transition: 'background 0.2s',
               flexShrink: 0,
             }}>
@@ -188,7 +188,7 @@ export function LoginView({ onLogin }: Props) {
                 boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
               }}/>
             </div>
-            <span style={{ fontSize: 13, color: '#a1a1aa' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
               Keep me signed in
             </span>
           </div>
@@ -204,8 +204,8 @@ export function LoginView({ onLogin }: Props) {
               border: 'none',
               cursor: loading || !password ? 'not-allowed' : 'pointer',
               background: loading || !password
-                ? 'rgba(99,102,241,0.35)'
-                : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                ? 'color-mix(in srgb, var(--accent) 35%, transparent)'
+                : 'linear-gradient(135deg, var(--accent), var(--purple))',
               color: loading || !password ? 'rgba(255,255,255,0.4)' : 'white',
               fontSize: 14,
               fontWeight: 600,
@@ -226,7 +226,7 @@ export function LoginView({ onLogin }: Props) {
         </form>
 
         {/* Footer */}
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: '#3f3f46', letterSpacing: '0.02em' }}>
+        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: 'var(--text-muted)', letterSpacing: '0.02em' }}>
           HttpOnly · Secure · SameSite=Strict
         </p>
       </div>

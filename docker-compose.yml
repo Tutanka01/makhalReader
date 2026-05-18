@@ -1,7 +1,7 @@
 version: "3.9"
 
 networks:
-  makhal-net:
+  basira-net:
     driver: bridge
 
 volumes:
@@ -17,7 +17,7 @@ services:
     volumes:
       - data:/data
     networks:
-      - makhal-net
+      - basira-net
     expose:
       - "8000"
 
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - basira-net
     expose:
       - "8001"
 
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - basira-net
     expose:
       - "8002"
     depends_on:
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - makhal-net
+      - basira-net
     depends_on:
       - api
       - extractor
@@ -56,7 +56,7 @@ services:
     build: ./frontend
     restart: unless-stopped
     networks:
-      - makhal-net
+      - basira-net
     expose:
       - "80"
 
@@ -69,7 +69,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     networks:
-      - makhal-net
+      - basira-net
     ports:
       - "80:80"
       - "443:443"

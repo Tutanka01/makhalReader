@@ -28,6 +28,8 @@ interface ArticlesState {
 
 const PAGE_SIZE = 50
 
+const ARISE_RE_TYPES = new Set(['elicitation', 'extraction', 'method'])
+
 function buildQueryParams(filter: ArticleFilter, limit: number, offset: number): string {
   const params = new URLSearchParams()
   params.set('status', filter.bookmarked ? 'all' : filter.status)
@@ -43,6 +45,12 @@ function buildQueryParams(filter: ArticleFilter, limit: number, offset: number):
   if (filter.minScore > 0) {
     params.set('min_score', String(filter.minScore))
   }
+  if (filter.contributionType) {
+    params.set('contribution_type', filter.contributionType)
+  }
+  if (filter.ariseOnly) {
+    params.set('re_document_type', 'arise')
+  }
   return params.toString()
 }
 
@@ -56,6 +64,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     status: 'unread',
     bookmarked: false,
     minScore: 0,
+    contributionType: null,
+    ariseOnly: false,
   },
   loading: false,
   hasMore: true,
@@ -275,6 +285,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       if (filter.minScore > 0 && (article.score ?? 0) < filter.minScore) return {}
       // New articles from SSE are always unread — skip only if filtering to read-only
       if (filter.status === 'read') return {}
+      if (filter.contributionType && article.contribution_type !== filter.contributionType) return {}
+      if (filter.ariseOnly && !ARISE_RE_TYPES.has(article.re_document_type ?? '')) return {}
 
       return { articles: [article, ...state.articles] }
     })

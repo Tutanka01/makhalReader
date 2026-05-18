@@ -67,7 +67,7 @@ export function DigestView({ onSelect }: DigestViewProps) {
                 onClick={() => setHours(h)}
                 className={`px-2.5 py-1 transition-colors ${
                   hours === h
-                    ? 'bg-accent-blue text-white'
+                    ? 'bg-accent text-white'
                     : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
                 } ${h === 48 ? 'border-l border-border-default' : ''}`}
               >

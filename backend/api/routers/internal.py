@@ -1,0 +1,292 @@
+import asyncio
+import json
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from database import Article, Feed, ResearchProfile, SessionLocal, get_db
+from models import InternalArticleCreate, InternalScoreUpdate
+from routers.articles import _title_fingerprint
+from embedder import embed_article_async
+from sse import broadcast_new_article
+
+router = APIRouter(prefix="/api/internal", tags=["internal"])
+
+API_SECRET = os.getenv("API_SECRET", "changeme")
+MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
+ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
+
+
+def _run_cleanup() -> int:
+    """Synchronous cleanup logic — returns number of deleted articles."""
+    db = SessionLocal()
+    try:
+        total_deleted = 0
+
+        if ARTICLE_RETENTION_DAYS > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=ARTICLE_RETENTION_DAYS)
+            deleted = (
+                db.query(Article)
+                .filter(Article.created_at < cutoff, Article.bookmarked == False)
+                .delete(synchronize_session=False)
+            )
+            total_deleted += deleted
+
+        feeds = db.query(Feed).filter(Feed.active == True).all()
+        for feed in feeds:
+            count = db.query(Article).filter(Article.feed_id == feed.id).count()
+            if count > MAX_ARTICLES_PER_FEED:
+                keep_ids = (
+                    db.query(Article.id)
+                    .filter(Article.feed_id == feed.id)
+                    .order_by(Article.created_at.desc())
+                    .limit(MAX_ARTICLES_PER_FEED)
+                    .subquery()
+                )
+                deleted = (
+                    db.query(Article)
+                    .filter(
+                        Article.feed_id == feed.id,
+                        Article.id.notin_(keep_ids),
+                        Article.bookmarked == False,
+                    )
+                    .delete(synchronize_session=False)
+                )
+                total_deleted += deleted
+
+        db.commit()
+        return total_deleted
+    except Exception as e:
+        print(f"[cleanup] Error: {e}")
+        db.rollback()
+        return 0
+    finally:
+        db.close()
+
+
+async def cleanup_old_articles():
+    """Run cleanup once at startup, then every 24 h."""
+    deleted = await asyncio.to_thread(_run_cleanup)
+    if deleted:
+        print(f"[cleanup] Startup pass: deleted {deleted} old articles")
+
+    while True:
+        await asyncio.sleep(86400)
+        deleted = await asyncio.to_thread(_run_cleanup)
+        if deleted:
+            print(f"[cleanup] Nightly pass: deleted {deleted} old articles")
+
+
+@router.get("/feeds")
+async def internal_list_feeds(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    results = (
+        db.query(Feed, func.count(Article.id).label("article_count"))
+        .outerjoin(Article, Feed.id == Article.feed_id)
+        .filter(Feed.active == True)
+        .group_by(Feed.id)
+        .all()
+    )
+    return [
+        {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
+        for feed, _ in results
+    ]
+
+
+@router.get("/feedback-examples")
+async def internal_feedback_examples(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Return an aggregated preference profile (tag frequencies + examples) for scorer personalisation."""
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    liked_rows = (
+        db.query(Article.title, Article.tags_json)
+        .filter(Article.user_feedback == 1)
+        .order_by(Article.created_at.desc())
+        .all()
+    )
+    disliked_rows = (
+        db.query(Article.title, Article.tags_json)
+        .filter(Article.user_feedback == -1)
+        .order_by(Article.created_at.desc())
+        .all()
+    )
+
+    def aggregate_tags(rows: list, top_n: int) -> list[dict]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            for tag in json.loads(row.tags_json or "[]"):
+                counts[tag] = counts.get(tag, 0) + 1
+        return [
+            {"tag": t, "count": c}
+            for t, c in sorted(counts.items(), key=lambda x: -x[1])[:top_n]
+        ]
+
+    def format_examples(rows: list, max_n: int) -> list[dict]:
+        out = []
+        for row in rows[:max_n]:
+            tags = json.loads(row.tags_json or "[]")
+            out.append({"title": row.title, "tags": tags[:5]})
+        return out
+
+    # Build structured preference block from the researcher profile table
+    profile_rows = (
+        db.query(ResearchProfile)
+        .order_by(ResearchProfile.kind, ResearchProfile.weight.desc())
+        .all()
+    )
+
+    def _group_profile(rows, kind: str) -> list[dict]:
+        return [
+            {"label": r.label, "weight": r.weight, "source": r.source}
+            for r in rows if r.kind == kind
+        ]
+
+    profile_preference_block = {
+        "topics":  _group_profile(profile_rows, "topic"),
+        "methods": _group_profile(profile_rows, "method"),
+        "domains": _group_profile(profile_rows, "domain"),
+        "avoid":   _group_profile(profile_rows, "avoid"),
+    }
+
+    return {
+        "liked_tags": aggregate_tags(liked_rows, top_n=10),
+        "disliked_tags": aggregate_tags(disliked_rows, top_n=8),
+        "liked_examples": format_examples(liked_rows, max_n=4),
+        "disliked_examples": format_examples(disliked_rows, max_n=3),
+        "total_liked": len(liked_rows),
+        "total_disliked": len(disliked_rows),
+        "profile_preference_block": profile_preference_block,
+    }
+
+
+@router.get("/articles/exists")
+async def internal_article_exists(
+    url: str = Query(...),
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    exists = db.query(Article.id).filter(Article.url == url).first() is not None
+    return {"exists": exists}
+
+
+@router.post("/articles")
+async def internal_create_article(
+    article_data: InternalArticleCreate,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    existing = db.query(Article).filter(Article.url == article_data.url).first()
+    if existing:
+        return {"id": existing.id, "created": False}
+
+    fp = _title_fingerprint(article_data.title)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+    title_dup = (
+        db.query(Article)
+        .filter(
+            Article.title_fingerprint == fp,
+            Article.created_at >= cutoff,
+        )
+        .first()
+    )
+    if title_dup:
+        return {"id": title_dup.id, "created": False}
+
+    article = Article(
+        feed_id=article_data.feed_id,
+        title=article_data.title,
+        url=article_data.url,
+        published_at=article_data.published_at,
+        author=article_data.author,
+        content_html=article_data.content_html,
+        content_text=article_data.content_text,
+        images_json=json.dumps(article_data.images),
+        extraction_failed=article_data.extraction_failed,
+        created_at=datetime.now(timezone.utc),
+        title_fingerprint=fp,
+        paper_meta_json=article_data.paper_meta_json,
+        contribution_type=article_data.contribution_type,
+        re_document_type=article_data.re_document_type,
+    )
+    db.add(article)
+    db.commit()
+    db.refresh(article)
+    return {"id": article.id, "created": True}
+
+
+@router.post("/articles/{article_id}/score")
+async def internal_score_article(
+    article_id: int,
+    score_data: InternalScoreUpdate,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    article.score = score_data.score
+    article.tags_json = json.dumps(score_data.tags)
+    article.summary_bullets_json = json.dumps(score_data.summary_bullets)
+    article.reason = score_data.reason
+    article.contribution_type = score_data.contribution_type
+    article.re_document_type = score_data.re_document_type
+    score_meta = {
+        "contribution_type": score_data.contribution_type,
+        "re_document_type": score_data.re_document_type,
+        "novelty": score_data.novelty,
+        "rigor": score_data.rigor,
+        "relevance_to_topics": score_data.relevance_to_topics,
+    }
+    article.score_meta_json = json.dumps(
+        {k: v for k, v in score_meta.items() if v is not None}
+    )
+    db.commit()
+    db.refresh(article)
+
+    feed = db.query(Feed).filter(Feed.id == article.feed_id).first()
+    article_dict = {
+        "id": article.id,
+        "feed_id": article.feed_id,
+        "title": article.title,
+        "url": article.url,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "score": article.score,
+        "tags": json.loads(article.tags_json or "[]"),
+        "summary_bullets": json.loads(article.summary_bullets_json or "[]"),
+        "reason": article.reason,
+        "read_at": article.read_at.isoformat() if article.read_at else None,
+        "bookmarked": article.bookmarked,
+        "extraction_failed": article.extraction_failed,
+        "created_at": article.created_at.isoformat(),
+        "feed_name": feed.name if feed else "",
+        "user_feedback": article.user_feedback,
+        "contribution_type": article.contribution_type,
+        "re_document_type": article.re_document_type,
+    }
+    await broadcast_new_article(article_dict)
+
+    # Fire-and-forget embedding — must not block or raise
+    asyncio.create_task(embed_article_async(article.id))
+
+    return {"status": "ok"}

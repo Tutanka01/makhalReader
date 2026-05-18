@@ -3,28 +3,28 @@
 @tailwind utilities;
 
 :root {
-  /* Dark theme CSS variables */
-  --color-bg-base: #0E1117;
-  --color-bg-surface: #161B22;
-  --color-bg-elevated: #1E2430;
-  --color-bg-hover: #232B39;
-  --color-border-subtle: #1E2430;
-  --color-border-default: #2A3341;
-  --color-text-primary: #E6EDF3;
-  --color-text-secondary: #A0ADB8;
-  --color-text-muted: #6B7685;
-  --color-accent-blue: #4493F8;
-  --color-accent-green: #3FB950;
-  --color-accent-yellow: #D29922;
-  --color-accent-red: #F85149;
-  --color-score-high: #3FB950;
-  --color-score-mid: #D29922;
-  --color-score-low: #F85149;
+  /* Legacy dark theme vars mapped to new tokens to prevent raw CSS breaks */
+  --color-bg-base: var(--bg);
+  --color-bg-surface: var(--bg-secondary);
+  --color-bg-elevated: var(--bg-active);
+  --color-bg-hover: var(--bg-hover);
+  --color-border-subtle: var(--border);
+  --color-border-default: var(--border-strong);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent-blue: var(--accent);
+  --color-accent-green: var(--success);
+  --color-accent-yellow: var(--warning);
+  --color-accent-red: var(--danger);
+  --color-score-high: var(--success);
+  --color-score-mid: var(--warning);
+  --color-score-low: var(--danger);
 }
 
-/* Always use dark mode */
+/* Base styling */
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -37,11 +37,21 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: var(--color-bg-base);
-  color: var(--color-text-primary);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
 /* Hide scrollbars utility */

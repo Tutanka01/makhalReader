@@ -9,9 +9,9 @@ interface DigestCardProps {
 }
 
 function scoreColor(score: number) {
-  if (score >= 9) return 'text-score-high bg-score-high/10 border-score-high/30'
-  if (score >= 7) return 'text-accent-blue bg-accent-blue/10 border-accent-blue/30'
-  return 'text-score-mid bg-score-mid/10 border-score-mid/30'
+  if (score >= 9) return 'text-success bg-success/10 border-success/30'
+  if (score >= 7) return 'text-accent bg-accent/10 border-accent/30'
+  return 'text-warning bg-warning/10 border-warning/30'
 }
 
 export function DigestCard({ article, onClick }: DigestCardProps) {
@@ -40,7 +40,7 @@ export function DigestCard({ article, onClick }: DigestCardProps) {
           {article.feed_name}
         </span>
         {article.bookmarked && (
-          <BookmarkCheck className="w-3.5 h-3.5 text-accent-blue flex-shrink-0" />
+          <BookmarkCheck className="w-3.5 h-3.5 text-accent flex-shrink-0" />
         )}
         {!article.bookmarked && article.read_at && (
           <Bookmark className="w-3.5 h-3.5 text-text-muted flex-shrink-0 opacity-40" />
