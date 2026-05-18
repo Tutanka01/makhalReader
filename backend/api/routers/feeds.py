@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 
 import feedparser
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -110,7 +111,19 @@ async def get_digest(
 
 @router.post("/api/feeds", response_model=FeedOut)
 async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None = _auth):
-    parsed = feedparser.parse(feed_data.url)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Basira/1.0",
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+    }
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        try:
+            resp = await client.get(feed_data.url, headers=headers)
+            resp.raise_for_status()
+            content = resp.content
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Invalid or unreachable feed URL")
+
+    parsed = feedparser.parse(content)
     if parsed.bozo and not parsed.entries:
         raise HTTPException(status_code=400, detail="Invalid or unreachable feed URL")
 
