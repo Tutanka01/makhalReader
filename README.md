@@ -44,14 +44,6 @@ RSS / arXiv / Semantic Scholar
     API + SQLite  ──SSE──►  React frontend (real-time)
 ```
 
-**Three-tier LLM routing** (in priority order):
-
-| Tier | Backend | When used |
-|------|---------|-----------|
-| 1 | Local Ollama (M5 Max, 36 GB) | Always available, free, private |
-| 2 | University GPU server (VPN) | Heavier inference — synthesis, lit-review |
-| 3 | OpenRouter (Gemini / Claude) | Cloud fallback, optional |
-
 ---
 
 ## Quick start
@@ -249,6 +241,6 @@ Caddy provisions TLS automatically via Let's Encrypt. Nothing else to configure.
 
 <div align="center">
 
-*بَصِيرَة — deep insight · discernment*
+*بَصِيرَة — deep insight *
 
 </div>
