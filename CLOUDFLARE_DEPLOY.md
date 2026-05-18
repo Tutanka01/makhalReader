@@ -29,14 +29,14 @@ Pour que votre frontend statique puisse communiquer avec votre backend hébergé
 
 ## 3. Configuration de GitHub Actions (CI/CD)
 
-Le workflow automatisé est déjà créé et configuré dans `.github/workflows/deploy-pages.yml`.
+Le workflow automatisé est configuré dans `.github/workflows/deploy-pages.yml` et utilise l'action officielle et moderne **`cloudflare/wrangler-action@v3`**.
 
-Pour l'activer, rendez-vous sur la page de votre dépôt sur **GitHub > Settings > Secrets and variables > Actions**, et ajoutez les deux secrets suivants :
+Pour l'activer, rendez-vous sur la page de votre dépôt sur **GitHub > Settings > Secrets and variables > Actions**, et assurez-vous que les deux secrets suivants existent et sont exactement nommés ainsi :
 
 | Secret GitHub | Description / Obtention |
 |---------------|-------------------------|
 | `CLOUDFLARE_ACCOUNT_ID` | Votre Account ID Cloudflare (trouvable en bas à droite de votre tableau de bord Cloudflare). |
-| `CLOUDFLARE_API_TOKEN` | Un jeton d'API Cloudflare. Créez-le sur votre profil Cloudflare > API Tokens avec la permission **Cloudflare Pages > Edit**. |
+| `CLOUDFLARE_API_TOKEN` | Un jeton d'API Cloudflare. Créez-le sur votre profil Cloudflare > API Tokens avec la permission **Cloudflare Pages / Workers > Edit**. (Attention : si vous avez nommé votre secret `CLOUDFLARE_API_KEY`, renommez-le en `CLOUDFLARE_API_TOKEN` ou modifiez le fichier `.yml`). |
 
 ---
 

@@ -34,11 +34,9 @@ jobs:
         working-directory: ./frontend
         run: npm run build
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+      - name: Deploy to Cloudflare with Wrangler
+        uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }} # Note: si votre secret s'appelle CLOUDFLARE_API_KEY, modifiez ce nom
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: 'basira-reader' # Nom du projet Cloudflare Pages
-          directory: './frontend/dist' # Dossier compilé
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          command: pages deploy ./frontend/dist --project-name=basira-reader
