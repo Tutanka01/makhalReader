@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   Cluster,
+  ExternalReview,
   LiteratureReview,
   LiteratureReviewSummary,
   ResearchProfileEntry,
@@ -32,6 +33,13 @@ interface ResearchStore {
   fetchReviewById: (id: number) => Promise<void>
   generateReview: (topic: string, windowDays: number, minRigor: number) => Promise<void>
   deleteReview: (id: number) => Promise<void>
+
+  // ── External review (State of the Art) ──────────────────────────────────
+  externalReview: ExternalReview | null
+  externalReviewGenerating: boolean
+  externalReviewError: string | null
+  generateExternalReview: (topic: string, maxResults: number, minYear: number) => Promise<void>
+  clearExternalReview: () => void
 }
 
 export const useResearchStore = create<ResearchStore>((set) => ({
@@ -188,4 +196,38 @@ export const useResearchStore = create<ResearchStore>((set) => ({
       set({ reviewError: err instanceof Error ? err.message : 'Delete failed' })
     }
   },
+
+  // ── External review ──────────────────────────────────────────────────────
+  externalReview: null,
+  externalReviewGenerating: false,
+  externalReviewError: null,
+
+  generateExternalReview: async (topic, maxResults, minYear) => {
+    set({ externalReviewGenerating: true, externalReviewError: null, externalReview: null })
+    try {
+      const r = await fetch('/api/research/external-review', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, max_results: maxResults, min_year: minYear }),
+      })
+      const bodyText = await r.text()
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`
+        try {
+          const j = JSON.parse(bodyText)
+          if (typeof j.detail === 'string') msg = j.detail
+        } catch { if (bodyText) msg = bodyText.slice(0, 200) }
+        throw new Error(msg)
+      }
+      set({ externalReview: JSON.parse(bodyText) as ExternalReview, externalReviewGenerating: false })
+    } catch (err) {
+      set({
+        externalReviewError: err instanceof Error ? err.message : 'Generation failed',
+        externalReviewGenerating: false,
+      })
+    }
+  },
+
+  clearExternalReview: () => set({ externalReview: null, externalReviewError: null }),
 }))

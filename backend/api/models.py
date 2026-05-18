@@ -196,6 +196,38 @@ class LiteratureReviewSummaryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── External literature review (State of the Art) ────────────────────────────
+
+class ExternalPaper(BaseModel):
+    title: str
+    abstract: str = ""
+    authors: List[str] = []
+    year: Optional[int] = None
+    citation_count: int = 0
+    venue: str = ""
+    url: str = ""
+    source: str = ""
+    relevance_score: float = 0.0
+
+
+class ExternalReviewCreate(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=500)
+    max_results: int = Field(default=20, ge=5, le=40)
+    min_year: int = Field(default=2018, ge=2000, le=2026)
+
+
+class ExternalReviewOut(BaseModel):
+    topic: str
+    papers: List[ExternalPaper]
+    synthesis: str
+    relevance_notes: str = ""
+    comparison_table: List[ComparisonRow] = []
+    gaps: List[str] = []
+    top_cite: str = ""
+    source: str
+    generated_at: datetime
+
+
 # ── ARISE export (Story 4.1) ──────────────────────────────────────────────────
 
 

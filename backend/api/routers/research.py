@@ -20,6 +20,9 @@ from models import (
     AriseExportRequest,
     ClusterOut,
     ComparisonRow,
+    ExternalPaper,
+    ExternalReviewCreate,
+    ExternalReviewOut,
     LiteratureReviewCreate,
     LiteratureReviewOut,
     LiteratureReviewSummaryOut,
@@ -517,6 +520,103 @@ async def get_literature_review(
         min_rigor=row.min_rigor,
         clusters=clusters,
         created_at=row.created_at,
+    )
+
+
+def _build_external_paper_block(papers: List[dict], max_chars: int = 12000) -> str:
+    lines: List[str] = []
+    for i, p in enumerate(papers, 1):
+        abstract = (p.get("abstract") or "")[:400]
+        authors = ", ".join((p.get("authors") or []))[:80]
+        lines.append(
+            f"[{i}] {p.get('title', '')}\n"
+            f"Authors: {authors}\n"
+            f"Year: {p.get('year') or 'n/a'} | Citations: {p.get('citation_count', 0)} | Venue: {p.get('venue') or 'n/a'}\n"
+            f"Abstract: {abstract}\n"
+        )
+    return "\n".join(lines)[:max_chars]
+
+
+@router.post("/external-review", response_model=ExternalReviewOut)
+async def post_external_review(
+    payload: ExternalReviewCreate,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Search Semantic Scholar → OpenAlex fallback → rerank → LLM state-of-the-art synthesis."""
+    from external_review import rerank_papers, search_openalex, search_semantic_scholar
+    from lit_review_llm import synthesize_external_review_json
+
+    topic = payload.topic.strip()
+    min_year = payload.min_year
+
+    papers = await search_semantic_scholar(topic, limit=30, min_year=min_year)
+    source = "semantic_scholar"
+
+    if len(papers) < 8:
+        logger.info("ss_thin_falling_back", n_ss=len(papers), topic=topic)
+        oa_papers = await search_openalex(topic, limit=30, min_year=min_year)
+        if oa_papers:
+            if papers:
+                ss_titles = {p["title"].lower() for p in papers}
+                deduped = [p for p in oa_papers if p["title"].lower() not in ss_titles]
+                papers = papers + deduped
+                source = "merged" if deduped else "semantic_scholar"
+            else:
+                papers = oa_papers
+                source = "openalex"
+
+    if len(papers) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail="Not enough papers found. Try a broader topic or lower min_year.",
+        )
+
+    ranked = rerank_papers(papers)[: payload.max_results]
+    paper_block = _build_external_paper_block(ranked)
+
+    try:
+        raw = await synthesize_external_review_json(topic, paper_block)
+    except Exception as e:
+        logger.warning("external_review_synthesis_failed", error=str(e))
+        raise HTTPException(status_code=503, detail="LLM synthesis failed — try again shortly.")
+
+    paper_models = [
+        ExternalPaper(
+            title=p["title"],
+            abstract=(p.get("abstract") or "")[:600],
+            authors=p.get("authors") or [],
+            year=p.get("year") or None,
+            citation_count=p.get("citation_count") or 0,
+            venue=p.get("venue") or "",
+            url=p.get("url") or "",
+            source=p.get("source") or "",
+            relevance_score=p.get("relevance_score") or 0.0,
+        )
+        for p in ranked
+    ]
+    comp_rows = [
+        ComparisonRow(
+            work=str(row.get("work") or ""),
+            method=str(row.get("method") or ""),
+            dataset=str(row.get("dataset") or ""),
+            key_result=str(row.get("key_result") or ""),
+        )
+        for row in (raw.get("comparison_table") or [])[:5]
+        if isinstance(row, dict)
+    ]
+
+    logger.info("external_review_done", topic=topic, n_papers=len(paper_models), source=source)
+    return ExternalReviewOut(
+        topic=topic,
+        papers=paper_models,
+        synthesis=str(raw.get("synthesis") or ""),
+        relevance_notes=str(raw.get("relevance_notes") or ""),
+        comparison_table=comp_rows,
+        gaps=[str(g).strip() for g in (raw.get("gaps") or [])[:5] if g],
+        top_cite=str(raw.get("top_cite") or ""),
+        source=source,
+        generated_at=datetime.now(timezone.utc),
     )
 
 

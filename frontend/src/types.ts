@@ -139,6 +139,32 @@ export interface LiteratureReviewSummary {
   created_at: string
 }
 
+// ── External literature review — State of the Art (Semantic Scholar / OpenAlex) ──
+
+export interface ExternalPaper {
+  title: string
+  abstract: string
+  authors: string[]
+  year: number | null
+  citation_count: number
+  venue: string
+  url: string
+  source: 'semantic_scholar' | 'openalex' | string
+  relevance_score: number
+}
+
+export interface ExternalReview {
+  topic: string
+  papers: ExternalPaper[]
+  synthesis: string
+  relevance_notes: string
+  comparison_table: ComparisonRow[]
+  gaps: string[]
+  top_cite: string
+  source: string
+  generated_at: string
+}
+
 export interface ArticleListItem {
   id: number
   feed_id: number

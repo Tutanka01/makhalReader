@@ -192,6 +192,24 @@ async def _chat_openrouter(client: httpx.AsyncClient, system: str, user: str) ->
         return None
 
 
+_EXTERNAL_REVIEW_SYSTEM = """You are a senior research assistant helping a PhD student specializing in AI-driven model-based systems engineering (MBSE) for cyber-physical systems (CPS) in the industry of the future.
+
+Given a numbered list of academic papers, output a single JSON object ONLY with this exact shape:
+{
+  "synthesis": "<2–3 paragraphs: state of the art, main research streams, methodological evolution. Cite specific authors, year, and venue.>",
+  "relevance_notes": "<1 paragraph: how this body of work connects to AI-driven MBSE/CPS/RE research and which stream is most actionable for the thesis.>",
+  "comparison_table": [
+    {"work": "<Author et al., Year>", "method": "<core approach>", "dataset": "<benchmark or system used>", "key_result": "<main finding or contribution>"}
+  ],
+  "gaps": ["<gap 1>", "<gap 2>", "<gap 3>"],
+  "top_cite": "<exact title of the single most important paper to read first>"
+}
+Rules:
+- comparison_table: top 5 most impactful papers only, using [N] references from the input list
+- gaps: focus on gaps that open research opportunities specifically for AI-driven MBSE/CPS integration
+- synthesis: technical and precise — name methods, datasets, metrics; avoid vague statements
+- Output pure JSON only — no markdown fences, no preamble, no trailing text"""
+
 SYSTEM_JSON = """You are an expert research assistant. Output a single JSON object ONLY, no markdown, with this exact shape:
 {
   "synthesis": "<one paragraph comparing the works below>",
@@ -250,4 +268,38 @@ async def synthesize_cluster_json(
         lit_review_llm_tier=tier_used,
         latency_ms=elapsed_ms,
     )
+    return parsed
+
+
+async def synthesize_external_review_json(topic: str, paper_block: str) -> Dict[str, Any]:
+    """Tiered LLM synthesis for external (SS/OpenAlex) state-of-the-art reviews."""
+    user_msg = f"Topic: {topic}\n\nPapers:\n{paper_block}"
+    t0 = time.perf_counter()
+    tier_used = "none"
+    content: Optional[str] = None
+
+    async with httpx.AsyncClient() as client:
+        content = await _chat_uni(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+        if content:
+            tier_used = "uni"
+        if not content:
+            content = await _chat_ollama(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+            if content:
+                tier_used = "local"
+        if not content:
+            content = await _chat_openrouter(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+            if content:
+                tier_used = "openrouter"
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    if not content:
+        logger.warning("external_review_all_tiers_failed", topic=topic, latency_ms=elapsed_ms)
+        raise RuntimeError("all LLM tiers failed for external review")
+
+    parsed = extract_json_from_text(content)
+    if not isinstance(parsed, dict):
+        logger.warning("external_review_bad_json", topic=topic, tier=tier_used, latency_ms=elapsed_ms)
+        raise ValueError("model did not return a JSON object")
+
+    logger.info("external_review_llm_ok", topic=topic, tier=tier_used, latency_ms=elapsed_ms)
     return parsed
