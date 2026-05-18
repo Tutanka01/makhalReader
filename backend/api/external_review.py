@@ -94,7 +94,7 @@ async def search_openalex(
     """Return up to `limit` papers from OpenAlex matching `query`."""
     params = {
         "search": query,
-        "filter": f"publication_year:>={min_year},type:article",
+        "filter": f"from_publication_date:{min_year}-01-01,type:article",
         "sort": "relevance_score:desc",
         "per-page": min(limit + 10, 200),
         "select": (
