@@ -105,10 +105,10 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
     }
   }
 
-  // Use ar5iv HTML in iframe by default (more reliable than arXiv PDF framing).
-  // PDF stays available via "open in new tab" links.
-  const viewerUrl = htmlUrl || pdfUrl
-  const viewerLabel = htmlUrl ? 'HTML Viewer' : 'PDF'
+  // ar5iv HTML blocks iframes (X-Frame-Options: SAMEORIGIN), so we embed the PDF instead.
+  // HTML version remains available via "open in new tab" buttons.
+  const viewerUrl = pdfUrl ? `${pdfUrl}.pdf` : null
+  const viewerLabel = 'PDF Viewer'
 
   // ── Full-screen viewer mode ───────────────────────────────────────────────
   if (pdfMode === 'full' && viewerUrl) {
@@ -312,7 +312,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 style={{ fontSize: '0.875em' }}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
-                {pdfMode !== 'none' ? 'Hide viewer' : htmlUrl ? 'Read paper (HTML)' : 'View PDF'}
+                {pdfMode !== 'none' ? 'Hide viewer' : 'View PDF inline'}
               </button>
             )}
             {htmlUrl && (

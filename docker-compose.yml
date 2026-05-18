@@ -34,6 +34,8 @@ services:
     build: ./backend/scorer
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./backend/scorer/prompts:/app/prompts:ro
     networks:
       - basira-net
     expose:

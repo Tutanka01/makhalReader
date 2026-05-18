@@ -87,7 +87,8 @@ async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db
 @router.get("/api/digest", response_model=List[ArticleListItem])
 async def get_digest(
     hours: int = Query(24, ge=1, le=168),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(20, ge=1, le=50),
+    min_score: float = Query(5.0, ge=0.0, le=10.0),
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
@@ -95,7 +96,11 @@ async def get_digest(
     results = (
         db.query(Article, Feed.name.label("feed_name"))
         .join(Feed, Article.feed_id == Feed.id)
-        .filter(Article.created_at >= cutoff, Article.score.isnot(None))
+        .filter(
+            Article.created_at >= cutoff,
+            Article.score.isnot(None),
+            Article.score >= min_score,
+        )
         .order_by(Article.score.desc())
         .limit(limit)
         .all()

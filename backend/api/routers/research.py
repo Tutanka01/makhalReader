@@ -106,6 +106,7 @@ def _normalize_llm_cluster(
     raw: Dict[str, Any],
     cluster_label: str,
     article_ids: List[int],
+    article_titles: List[str],
 ) -> ReviewClusterOut:
     synthesis = str(raw.get("synthesis") or "").strip()
     rows_in = raw.get("comparison_table") or []
@@ -133,6 +134,7 @@ def _normalize_llm_cluster(
         gaps=gaps,
         top_cite=top_cite,
         article_ids=article_ids,
+        article_titles=article_titles,
     )
 
 
@@ -332,7 +334,7 @@ async def post_literature_review(
         n_coll = collection.count()
         if n_coll == 0:
             raise HTTPException(status_code=422, detail=_NOT_ENOUGH_ARTICLES)
-        n_query = min(50, max(1, n_coll))
+        n_query = min(100, max(1, n_coll))
         qres = collection.query(
             query_embeddings=[topic_vector],
             n_results=n_query,
@@ -425,9 +427,10 @@ async def post_literature_review(
     for clabel, members in cluster_groups:
         user_block = _build_cluster_user_block(members)
         member_ids = [a.id for a in members]
+        member_titles = [a.title for a in members]
         try:
             raw = await synthesize_cluster_json(clabel, user_block)
-            cluster_payloads.append(_normalize_llm_cluster(raw, clabel, member_ids))
+            cluster_payloads.append(_normalize_llm_cluster(raw, clabel, member_ids, member_titles))
         except Exception as e:
             logger.warning("lit_review_cluster_llm_failed", cluster=clabel, error=str(e))
             cluster_payloads.append(
@@ -438,6 +441,7 @@ async def post_literature_review(
                     gaps=[],
                     top_cite="",
                     article_ids=member_ids,
+                    article_titles=member_titles,
                 )
             )
 
@@ -514,6 +518,20 @@ async def get_literature_review(
         clusters=clusters,
         created_at=row.created_at,
     )
+
+
+@router.delete("/reviews/{review_id}", status_code=204)
+async def delete_literature_review(
+    review_id: int,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    row = db.query(LiteratureReview).filter(LiteratureReview.id == review_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Review not found")
+    db.delete(row)
+    db.commit()
+    logger.info("literature_review_deleted", review_id=review_id)
 
 
 # ── ARISE JSON export (Story 4.1) ─────────────────────────────────────────────

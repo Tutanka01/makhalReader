@@ -10,6 +10,7 @@ export default defineConfig({
       injectRegister: 'auto',
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
@@ -77,8 +78,8 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'MakhalReader',
-        short_name: 'MakhalReader',
+        name: 'Baṣīra',
+        short_name: 'Baṣīra',
         description: 'Smart RSS reader with AI scoring',
         theme_color: '#0E1117',
         background_color: '#0E1117',

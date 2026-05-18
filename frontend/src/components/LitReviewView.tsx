@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BookOpen, Download, Loader2 } from 'lucide-react'
+import { BookOpen, Download, Loader2, Trash2 } from 'lucide-react'
 import { useResearchStore } from '../store/research'
 import { useArticlesStore } from '../store/articles'
 import type { LiteratureReview } from '../types'
 
-const WINDOW_OPTIONS = [14, 30, 60, 90] as const
+const WINDOW_OPTIONS = [14, 30, 60, 90, 180] as const
 
 export function buildMarkdownExport(review: LiteratureReview): string {
   const lines: string[] = []
@@ -63,6 +63,7 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
     fetchReviewList,
     fetchReviewById,
     generateReview,
+    deleteReview,
   } = useResearchStore()
   const { articles } = useArticlesStore()
 
@@ -109,20 +110,32 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
             <p className="text-[10px] text-amber-500 px-1">{reviewsError}</p>
           )}
           {!reviewsLoading && reviews?.map(r => (
-            <button
+            <div
               key={r.id}
-              type="button"
-              onClick={() => fetchReviewById(r.id)}
-              className={`text-left text-[10px] px-1.5 py-1 rounded-md truncate flex-shrink-0 md:w-full ${
-                currentReview?.id === r.id
-                  ? 'bg-success/15 text-success'
-                  : 'text-text-muted hover:bg-bg-hover'
+              className={`group flex items-start gap-0.5 rounded-md flex-shrink-0 md:w-full ${
+                currentReview?.id === r.id ? 'bg-success/15' : 'hover:bg-bg-hover'
               }`}
-              title={r.topic}
             >
-              <span className="block truncate">{r.topic}</span>
-              <span className="block text-[9px] opacity-70">{r.created_at.slice(0, 10)}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => fetchReviewById(r.id)}
+                className={`flex-1 text-left text-[10px] px-1.5 py-1 truncate ${
+                  currentReview?.id === r.id ? 'text-success' : 'text-text-muted'
+                }`}
+                title={r.topic}
+              >
+                <span className="block truncate">{r.topic}</span>
+                <span className="block text-[9px] opacity-70">{r.created_at.slice(0, 10)}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteReview(r.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-danger transition-opacity flex-shrink-0 mt-0.5"
+                title="Delete review"
+              >
+                <Trash2 className="w-2.5 h-2.5" />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -277,8 +290,9 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
                     <div className="pt-1 border-t border-border-subtle/60">
                       <p className="text-[10px] text-text-muted uppercase mb-1">Articles</p>
                       <ul className="space-y-0.5">
-                        {c.article_ids.map(aid => {
-                          const a = articleMap.get(aid)
+                        {c.article_ids.map((aid, i) => {
+                          const storedTitle = c.article_titles?.[i]
+                          const title = storedTitle || articleMap.get(aid)?.title || `Article #${aid}`
                           return (
                             <li key={aid}>
                               <button
@@ -286,7 +300,7 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
                                 onClick={() => onSelectArticle(aid)}
                                 className="text-[11px] text-left text-accent hover:underline truncate max-w-full"
                               >
-                                {a?.title ?? `Article #${aid}`}
+                                {title}
                               </button>
                             </li>
                           )

@@ -15,7 +15,7 @@ const TIERS = [
   { emoji: '👍', label: 'Bon', min: 5 },
 ] as const
 
-type Hours = 24 | 48
+type Hours = 24 | 48 | 72
 
 export function DigestView({ onSelect }: DigestViewProps) {
   const [articles, setArticles] = useState<ArticleListItem[]>([])
@@ -25,7 +25,7 @@ export function DigestView({ onSelect }: DigestViewProps) {
   const fetchDigest = useCallback(async (h: Hours) => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/digest?hours=${h}&limit=20`)
+      const res = await fetch(`/api/digest?hours=${h}&limit=20&min_score=5`)
       if (res.ok) {
         const data = await res.json()
         setArticles(data)
@@ -61,7 +61,7 @@ export function DigestView({ onSelect }: DigestViewProps) {
         <div className="flex items-center gap-1.5">
           {/* Hours toggle */}
           <div className="flex rounded-lg overflow-hidden border border-border-default text-[11px]">
-            {([24, 48] as Hours[]).map(h => (
+            {([24, 48, 72] as Hours[]).map(h => (
               <button
                 key={h}
                 onClick={() => setHours(h)}
@@ -93,9 +93,9 @@ export function DigestView({ onSelect }: DigestViewProps) {
       ) : byTier.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 text-center px-8 py-16">
           <div className="text-4xl mb-3 opacity-20">◎</div>
-          <p className="text-sm font-medium text-text-secondary mb-1">Aucun article scoré</p>
+          <p className="text-sm font-medium text-text-secondary mb-1">Rien de notable</p>
           <p className="text-xs text-text-muted leading-relaxed max-w-[200px]">
-            Le scorer n'a pas encore traité les articles des dernières {hours}h.
+            Aucun article scoré ≥ 5 dans les dernières {hours}h. Essayez 48h ou 72h.
           </p>
         </div>
       ) : (

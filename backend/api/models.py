@@ -168,11 +168,12 @@ class ReviewClusterOut(BaseModel):
     gaps: List[str] = []
     top_cite: str = ""
     article_ids: List[int] = []
+    article_titles: List[str] = []
 
 
 class LiteratureReviewCreate(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
-    window_days: int = Field(default=30, ge=1, le=120)
+    window_days: int = Field(default=30, ge=1, le=365)
     min_rigor: float = Field(default=0.0, ge=0.0, le=1.0)
 
 

@@ -51,34 +51,73 @@ class ScoreResult(BaseModel):
     relevance_to_topics: Optional[float] = None
 
 
+def _extract_balanced_json(text: str, start: int) -> Optional[str]:
+    """Return the substring of `text` that forms a balanced JSON object starting at `start`."""
+    depth = 0
+    in_string = False
+    escape = False
+    for i, c in enumerate(text[start:]):
+        if escape:
+            escape = False
+            continue
+        if c == "\\" and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : start + i + 1]
+    return None
+
+
 def extract_json_from_text(text: str) -> Optional[dict]:
-    """Extract JSON from text, handling markdown code blocks."""
-    # Try direct parse first
+    """Extract a JSON object from model output.
+
+    Handles: plain JSON, markdown code blocks, preamble/thinking text,
+    and responses truncated mid-string at a token limit (scans backward
+    from the last '{' so a complete outer object is preferred over a
+    fragment inside a truncated response).
+    """
     text = text.strip()
+
+    # 1. Direct parse — fastest path for well-behaved models
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Try to extract from markdown code blocks
-    patterns = [
-        r"```json\s*([\s\S]*?)\s*```",
-        r"```\s*([\s\S]*?)\s*```",
-        r"\{[\s\S]*\}",
-    ]
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
+    # 2. Extract from markdown code blocks
+    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
+        for m in re.findall(pattern, text, re.DOTALL):
             try:
-                return json.loads(match if pattern == r"\{[\s\S]*\}" else match)
+                result = json.loads(m)
+                if isinstance(result, dict) and result:
+                    return result
             except json.JSONDecodeError:
-                # Try finding JSON object inside the match
-                obj_match = re.search(r"\{[\s\S]*\}", match)
-                if obj_match:
-                    try:
-                        return json.loads(obj_match.group())
-                    except json.JSONDecodeError:
-                        continue
+                pass
+
+    # 3. Balanced-brace scan — scans BACKWARD so the last complete JSON object
+    #    wins.  This handles models that emit <thinking>...</thinking> preamble
+    #    (which may contain '{...}' fragments) before the actual JSON response,
+    #    and also handles token-limit truncation where earlier inner objects may
+    #    be complete while the outer object is not.
+    brace_positions = [i for i, c in enumerate(text) if c == "{"]
+    for start in reversed(brace_positions):
+        candidate = _extract_balanced_json(text, start)
+        if candidate:
+            try:
+                result = json.loads(candidate)
+                if isinstance(result, dict) and result:
+                    return result
+            except json.JSONDecodeError:
+                continue
 
     return None
 
@@ -145,7 +184,7 @@ async def score_with_uni_server(client: httpx.AsyncClient, user_message: str) ->
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
             },
             timeout=90,
         )
@@ -175,7 +214,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
                 "HTTP-Referer": "https://github.com/basira",
-                "X-Title": "Baṣīra",
+                "X-Title": "Basira",
             },
             json={
                 "model": SCORER_MODEL,
@@ -320,7 +359,7 @@ async def score_article(req: ScoreRequest):
         # Build user message with optional preference profile for personalisation
         content_preview = (req.content_text or req.rss_summary or "")[:cap]
         preference_block = await build_preference_block(client)
-        user_message = f"Titre: {req.title}\n\nContenu:\n{content_preview}{preference_block}"
+        user_message = f"Title: {req.title}\n\nContent:\n{content_preview}{preference_block}"
 
         # Tier 1: University GPU server (highest quality, free)
         if UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:

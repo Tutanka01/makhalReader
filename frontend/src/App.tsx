@@ -255,29 +255,27 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           />
 
           <div className="flex-1 h-full overflow-hidden min-w-0 relative">
-            {appView === 'feed' ? (
-              showReader && selectedId ? (
-                <ReaderView
-                  articleId={selectedId}
-                  onBack={handleBack}
-                  sidebarOpen={sidebarOpen}
-                  onToggleSidebar={() => setSidebarOpen(v => !v)}
-                  onNext={handleNext}
-                  hasNext={hasNext}
-                  onNavigate={handleSelectArticle}
-                />
-              ) : (
-                <ArticleList
-                  feeds={feeds}
-                  onSelect={handleSelectArticle}
-                  selectedId={selectedId}
-                  onOpenFeedManager={() => setFeedManagerOpen(true)}
-                  onOpenProfile={() => setProfileOpen(true)}
-                  currentView={appView}
-                  onViewChange={setAppView}
-                  onLogout={onLogout}
-                />
-              )
+            {showReader && selectedId ? (
+              <ReaderView
+                articleId={selectedId}
+                onBack={handleBack}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen(v => !v)}
+                onNext={handleNext}
+                hasNext={hasNext}
+                onNavigate={handleSelectArticle}
+              />
+            ) : appView === 'feed' ? (
+              <ArticleList
+                feeds={feeds}
+                onSelect={handleSelectArticle}
+                selectedId={selectedId}
+                onOpenFeedManager={() => setFeedManagerOpen(true)}
+                onOpenProfile={() => setProfileOpen(true)}
+                currentView={appView}
+                onViewChange={setAppView}
+                onLogout={onLogout}
+              />
             ) : appView === 'digest' ? (
               <DigestView onSelect={handleSelectArticle} />
             ) : appView === 'stats' ? (

@@ -31,6 +31,7 @@ interface ResearchStore {
   fetchReviewList: () => Promise<void>
   fetchReviewById: (id: number) => Promise<void>
   generateReview: (topic: string, windowDays: number, minRigor: number) => Promise<void>
+  deleteReview: (id: number) => Promise<void>
 }
 
 export const useResearchStore = create<ResearchStore>((set) => ({
@@ -169,6 +170,22 @@ export const useResearchStore = create<ResearchStore>((set) => ({
         reviewError: err instanceof Error ? err.message : 'Generation failed',
         reviewGenerating: false,
       })
+    }
+  },
+
+  deleteReview: async (id: number) => {
+    try {
+      const r = await fetch(`/api/research/reviews/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      set(state => ({
+        reviews: (state.reviews ?? []).filter(rv => rv.id !== id),
+        currentReview: state.currentReview?.id === id ? null : state.currentReview,
+      }))
+    } catch (err) {
+      set({ reviewError: err instanceof Error ? err.message : 'Delete failed' })
     }
   },
 }))

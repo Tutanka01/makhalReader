@@ -84,12 +84,11 @@ export function LoginView({ onLogin }: Props) {
 
         {/* Logo */}
         <div className="text-center mb-10 select-none">
-          <div
-            className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-5"
-            style={{ background: 'linear-gradient(135deg, var(--accent), var(--purple))' }}
-          >
-            <span style={{ fontSize: 26, color: 'white', lineHeight: 1 }}>◉</span>
-          </div>
+          <img 
+            src="/logo.png" 
+            alt="Baṣīra Logo" 
+            className="inline-flex w-14 h-14 rounded-2xl mb-5 object-cover" 
+          />
           <h1 style={{ color: 'var(--text-primary)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.03em', margin: 0 }}>
             Baṣīra
           </h1>

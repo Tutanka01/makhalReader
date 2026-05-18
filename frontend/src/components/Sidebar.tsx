@@ -86,12 +86,9 @@ export function Sidebar({
 
   return (
     <aside style={{ backgroundColor: 'var(--sidebar-bg)' }} className="w-[240px] min-w-[240px] border-r border-border-subtle flex flex-col h-screen overflow-y-auto overflow-x-hidden z-10">
-      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border-subtle cursor-pointer">
-        <div className="w-7 h-7 rounded-md bg-text-primary text-bg-base flex items-center justify-center flex-shrink-0">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-        </div>
+      <div className="h-[52px] px-3 flex items-center gap-2 border-b border-border-subtle flex-shrink-0">
+        <img src="/logo.png" alt="Logo" className="w-6 h-6 rounded object-cover flex-shrink-0" />
         <span className="text-sm font-semibold tracking-tight text-text-primary">Baṣīra</span>
-        <span className="text-[10px] bg-accent-light text-accent rounded px-1.5 py-[1px] font-medium ml-auto">Beta</span>
       </div>
 
       <div className="px-2 pt-4 pb-1.5">

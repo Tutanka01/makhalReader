@@ -119,6 +119,7 @@ export interface ReviewCluster {
   gaps: string[]
   top_cite: string
   article_ids: number[]
+  article_titles: string[]
 }
 
 export interface LiteratureReview {

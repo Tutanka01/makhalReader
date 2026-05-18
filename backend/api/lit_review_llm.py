@@ -25,31 +25,60 @@ SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
 _UNI_HEALTH_OK_UNTIL = 0.0  # time.monotonic()
 
 
+def _extract_balanced_json(text: str, start: int) -> Optional[str]:
+    depth = 0
+    in_string = False
+    escape = False
+    for i, c in enumerate(text[start:]):
+        if escape:
+            escape = False
+            continue
+        if c == "\\" and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : start + i + 1]
+    return None
+
+
 def extract_json_from_text(text: str) -> Optional[dict]:
-    """Extract JSON object from model output (markdown fences or raw)."""
+    """Extract JSON object from model output.
+
+    Handles markdown code blocks, thinking preambles, and token-limit truncation
+    by scanning backward from the last '{' to find the last complete JSON object.
+    """
     text = text.strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    patterns = [
-        r"```json\s*([\s\S]*?)\s*```",
-        r"```\s*([\s\S]*?)\s*```",
-        r"\{[\s\S]*\}",
-    ]
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
+    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
+        for m in re.findall(pattern, text, re.DOTALL):
             try:
-                blob = match if pattern == r"\{[\s\S]*\}" else match
-                return json.loads(blob)
+                result = json.loads(m)
+                if isinstance(result, dict) and result:
+                    return result
             except json.JSONDecodeError:
-                obj_match = re.search(r"\{[\s\S]*\}", match)
-                if obj_match:
-                    try:
-                        return json.loads(obj_match.group())
-                    except json.JSONDecodeError:
-                        continue
+                pass
+    brace_positions = [i for i, c in enumerate(text) if c == "{"]
+    for start in reversed(brace_positions):
+        candidate = _extract_balanced_json(text, start)
+        if candidate:
+            try:
+                result = json.loads(candidate)
+                if isinstance(result, dict) and result:
+                    return result
+            except json.JSONDecodeError:
+                continue
     return None
 
 
@@ -62,7 +91,7 @@ async def _uni_server_healthy(client: httpx.AsyncClient) -> bool:
     if not UNI_OLLAMA_URL or not UNI_OLLAMA_MODEL:
         return False
     try:
-        models_url = f"{UNI_OLLAMA_URL}/models"
+        models_url = f"{UNI_OLLAMA_URL}/v1/models"
         headers = {}
         if UNI_OLLAMA_API_KEY:
             headers["Authorization"] = f"Bearer {UNI_OLLAMA_API_KEY}"
@@ -141,7 +170,7 @@ async def _chat_openrouter(client: httpx.AsyncClient, system: str, user: str) ->
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
                 "HTTP-Referer": "https://github.com/basira",
-                "X-Title": "Baṣīra",
+                "X-Title": "Basira",
             },
             json={
                 "model": SCORER_MODEL,
