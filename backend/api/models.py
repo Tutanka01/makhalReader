@@ -91,6 +91,7 @@ class ArticleListItem(BaseModel):
     extraction_failed: bool = False
     created_at: datetime
     feed_name: str = ""
+    feed_category: str = ""
     user_feedback: Optional[int] = None
     reading_time: Optional[int] = None
 

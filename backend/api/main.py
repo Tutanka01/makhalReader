@@ -336,6 +336,7 @@ async def list_articles(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     category: Optional[str] = Query(None),
+    exclude_category: Optional[str] = Query(None),
     bookmarked: Optional[bool] = Query(None),
     url: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
@@ -343,9 +344,11 @@ async def list_articles(
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
-    query = db.query(Article, Feed.name.label("feed_name")).join(
-        Feed, Article.feed_id == Feed.id
-    )
+    query = db.query(
+        Article,
+        Feed.name.label("feed_name"),
+        Feed.category.label("feed_category"),
+    ).join(Feed, Article.feed_id == Feed.id)
 
     if url is not None:
         query = query.filter(Article.url == url)
@@ -374,6 +377,8 @@ async def list_articles(
 
     if category and category not in ("All", "all"):
         query = query.filter(Feed.category == category)
+    elif exclude_category:
+        query = query.filter(Feed.category != exclude_category)
 
     if bookmarked is not None:
         query = query.filter(Article.bookmarked == bookmarked)
@@ -394,7 +399,7 @@ async def list_articles(
 
 
 def _row_to_list_item(row) -> ArticleListItem:
-    article, feed_name = row
+    article, feed_name, feed_category = row
     return ArticleListItem(
         id=article.id,
         feed_id=article.feed_id,
@@ -411,6 +416,7 @@ def _row_to_list_item(row) -> ArticleListItem:
         extraction_failed=article.extraction_failed,
         created_at=article.created_at,
         feed_name=feed_name or "",
+        feed_category=feed_category or "",
         user_feedback=article.user_feedback,
         reading_time=article.reading_time,
     )
@@ -447,13 +453,18 @@ async def mark_unread(article_id: int, db: Session = Depends(get_db), _: None = 
 @app.post("/api/articles/read-all")
 async def mark_all_read(
     category: Optional[str] = Query(None),
+    exclude_category: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
     query = db.query(Article).filter(Article.read_at.is_(None))
     if category and category not in ("All", "all"):
-        query = query.join(Feed, Article.feed_id == Feed.id).filter(Feed.category == category)
+        feed_ids = db.query(Feed.id).filter(Feed.category == category)
+        query = query.filter(Article.feed_id.in_(feed_ids))
+    elif exclude_category:
+        feed_ids = db.query(Feed.id).filter(Feed.category != exclude_category)
+        query = query.filter(Article.feed_id.in_(feed_ids))
     if min_score is not None:
         query = query.filter(Article.score >= min_score)
     count = query.update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
@@ -571,7 +582,11 @@ async def get_digest(
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     results = (
-        db.query(Article, Feed.name.label("feed_name"))
+        db.query(
+            Article,
+            Feed.name.label("feed_name"),
+            Feed.category.label("feed_category"),
+        )
         .join(Feed, Article.feed_id == Feed.id)
         .filter(Article.created_at >= cutoff, Article.score.isnot(None))
         .order_by(Article.score.desc())
@@ -1306,6 +1321,7 @@ async def internal_score_article(
         "extraction_failed": article.extraction_failed,
         "created_at": article.created_at.isoformat(),
         "feed_name": feed.name if feed else "",
+        "feed_category": feed.category if feed else "",
         "user_feedback": article.user_feedback,
         "reading_time": article.reading_time,
     }

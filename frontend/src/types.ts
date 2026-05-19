@@ -48,6 +48,7 @@ export interface ArticleListItem {
   extraction_failed: boolean
   created_at: string
   feed_name: string
+  feed_category: string
   user_feedback: number | null
   reading_time: number | null
   tags: string[]

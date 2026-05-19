@@ -27,6 +27,7 @@ interface ArticlesState {
 }
 
 const PAGE_SIZE = 50
+const PAPER_CATEGORY = 'Papers'
 
 function buildQueryParams(filter: ArticleFilter, limit: number, offset: number): string {
   const params = new URLSearchParams()
@@ -36,6 +37,8 @@ function buildQueryParams(filter: ArticleFilter, limit: number, offset: number):
   params.set('offset', String(offset))
   if (filter.category && filter.category !== 'All') {
     params.set('category', filter.category)
+  } else if (!filter.bookmarked) {
+    params.set('exclude_category', PAPER_CATEGORY)
   }
   if (filter.bookmarked) {
     params.set('bookmarked', 'true')
@@ -159,6 +162,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     const params = new URLSearchParams()
     if (state.filter.category && state.filter.category !== 'All') {
       params.set('category', state.filter.category)
+    } else if (!state.filter.bookmarked) {
+      params.set('exclude_category', PAPER_CATEGORY)
     }
     if (state.filter.minScore > 0) {
       params.set('min_score', String(state.filter.minScore))
@@ -240,7 +245,19 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     }
     set({ isSearching: true })
     try {
-      const params = new URLSearchParams({ search: query, limit: '50', sort: 'score' })
+      const { filter } = get()
+      const params = new URLSearchParams({ search: query, limit: '50', sort: 'score', status: 'all' })
+      if (filter.category && filter.category !== 'All') {
+        params.set('category', filter.category)
+      } else if (!filter.bookmarked) {
+        params.set('exclude_category', PAPER_CATEGORY)
+      }
+      if (filter.bookmarked) {
+        params.set('bookmarked', 'true')
+      }
+      if (filter.minScore > 0) {
+        params.set('min_score', String(filter.minScore))
+      }
       const resp = await fetch(`/api/articles?${params}`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data: ArticleListItem[] = await resp.json()
@@ -272,6 +289,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
 
       // Skip if doesn't match active filters
       if (filter.bookmarked && !article.bookmarked) return {}
+      if (!filter.bookmarked && !filter.category && article.feed_category === PAPER_CATEGORY) return {}
+      if (filter.category && filter.category !== article.feed_category) return {}
       if (filter.minScore > 0 && (article.score ?? 0) < filter.minScore) return {}
       // New articles from SSE are always unread — skip only if filtering to read-only
       if (filter.status === 'read') return {}
