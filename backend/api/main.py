@@ -127,6 +127,7 @@ DEFAULT_FEEDS = [
     {"url": "https://newsletter.systemdesign.one/feed",                   "name": "System Design Newsletter",   "category": "Infra"},
     {"url": "https://dataengweekly.substack.com/feed",                    "name": "Data Eng Weekly",            "category": "Infra"},
     {"url": "https://cirinc.substack.com/feed",                           "name": "CIR DeepTech",               "category": "Infra"},
+    {"url": "https://read.srepath.com/feed",                              "name": "Reliability Enablers",       "category": "Infra"},
     {"url": "https://slack.engineering/feed",                            "name": "Slack Engineering",          "category": "Infra"},
     # ── eBPF deep dives ───────────────────────────────────────────────────
     {"url": "https://howtech.substack.com/feed",                         "name": "How Tech (eBPF/XDP)",        "category": "Infra"},
