@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { BookOpen, Download, ExternalLink, Loader2, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BookOpen, ChevronDown, Download, ExternalLink, FileDown, FileText, Loader2, Trash2 } from 'lucide-react'
 import { useResearchStore } from '../store/research'
 import { useArticlesStore } from '../store/articles'
 import type { ExternalReview, LiteratureReview } from '../types'
@@ -155,11 +155,46 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
     [articles]
   )
 
-  const handleCorpusExport = () => {
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!exportOpen) return
+    function handleClick(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [exportOpen])
+
+  const handleCorpusExport = useCallback(async (format: 'md' | 'docx' | 'pdf') => {
     if (!currentReview) return
     const day = currentReview.created_at.slice(0, 10)
-    downloadMd(buildMarkdownExport(currentReview), `${slugTopic(currentReview.topic)}-${day}.md`)
-  }
+    const slug = slugTopic(currentReview.topic)
+
+    if (format === 'md') {
+      downloadMd(buildMarkdownExport(currentReview), `${slug}-${day}.md`)
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/research/reviews/${currentReview.id}/export?format=${format}`, {
+        credentials: 'include',
+      })
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${slug}-${day}.${format === 'docx' ? 'docx' : 'pdf'}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {}
+  }, [currentReview])
 
   const handleExternalExport = () => {
     if (!externalReview) return
@@ -319,13 +354,37 @@ export default function LitReviewView({ onSelectArticle }: LitReviewViewProps) {
               <div className="space-y-3 pt-1">
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold text-text-primary truncate">{currentReview.topic}</h2>
-                  <button
-                    type="button"
-                    onClick={handleCorpusExport}
-                    className="flex-shrink-0 flex items-center gap-1 text-[11px] text-success hover:text-success/80 px-2 py-1 rounded-md border border-border-subtle"
-                  >
-                    <Download className="w-3 h-3" /> Export Markdown
-                  </button>
+                  <div ref={exportRef} className="relative flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setExportOpen(v => !v)}
+                      className="flex items-center gap-1 text-[11px] text-success hover:text-success/80 px-2 py-1 rounded-md border border-border-subtle"
+                    >
+                      <Download className="w-3 h-3" /> Export <ChevronDown size={10} />
+                    </button>
+                    {exportOpen && (
+                      <div className="absolute right-0 top-full mt-1 bg-bg-surface border border-border-default rounded-lg shadow-xl z-10 min-w-[140px] overflow-hidden">
+                        <button
+                          onClick={() => { setExportOpen(false); handleCorpusExport('md') }}
+                          className="w-full flex items-center gap-2 text-left text-xs px-3 py-2 text-text-secondary hover:bg-bg-hover transition-colors"
+                        >
+                          <FileText size={12} /> Markdown
+                        </button>
+                        <button
+                          onClick={() => { setExportOpen(false); handleCorpusExport('docx') }}
+                          className="w-full flex items-center gap-2 text-left text-xs px-3 py-2 text-text-secondary hover:bg-bg-hover transition-colors"
+                        >
+                          <FileDown size={12} /> DOCX
+                        </button>
+                        <button
+                          onClick={() => { setExportOpen(false); handleCorpusExport('pdf') }}
+                          className="w-full flex items-center gap-2 text-left text-xs px-3 py-2 text-text-secondary hover:bg-bg-hover transition-colors"
+                        >
+                          <FileDown size={12} /> PDF
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {currentReview.clusters.map((c, idx) => (

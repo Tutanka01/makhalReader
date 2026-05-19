@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { FileText, ChevronDown, Copy, Check, Loader2 } from 'lucide-react'
+import { FileText, ChevronDown, Copy, Check, Loader2, Download } from 'lucide-react'
 import type { HighlightSectionCount } from '../types'
 import { VALID_THESIS_SECTIONS } from '../types'
 
@@ -11,6 +11,7 @@ export default function WriteAssistPanel() {
   const [output, setOutput] = useState('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedSections, setSelectedSections] = useState<Set<string>>(new Set())
   const sectionRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -121,6 +122,57 @@ export default function WriteAssistPanel() {
     } catch {}
   }
 
+  const handleMultiExport = async (format: 'markdown' | 'latex') => {
+    if (selectedSections.size < 1) return
+    setGenerating(true)
+    setError(null)
+    setOutput('')
+
+    try {
+      const res = await fetch('/api/research/export-highlights/multi', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sections: Array.from(selectedSections),
+          format,
+          window_days: 30,
+          max_highlights_per_section: 20,
+        } as any),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        setError(err.detail || 'Export failed')
+        setGenerating(false)
+        return
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = format === 'markdown' ? 'writing-export.md' : 'writing-export.tex'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setError(e.message || 'Export failed')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const toggleSection = (s: string) => {
+    setSelectedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
+  }
+
   const sectionCount = sections.find(s => s.thesis_section === selectedSection)
 
   return (
@@ -133,10 +185,10 @@ export default function WriteAssistPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-5 max-w-3xl mx-auto w-full">
-        {/* Section selector */}
+        {/* Single-section selector */}
         <div className="space-y-2">
           <label className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-            Thesis Section
+            Single Section Synthesis
           </label>
           <div ref={sectionRef} className="relative">
             <button
@@ -177,6 +229,64 @@ export default function WriteAssistPanel() {
             <p className="text-[11px] text-warning">
               At least 2 highlights are needed for synthesis. This section only has {sectionCount.count}.
             </p>
+          )}
+        </div>
+
+        {/* Multi-section export */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+            Multi-Section Export
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+            {VALID_THESIS_SECTIONS.map(s => {
+              const cnt = sections.find(sc => sc.thesis_section === s)?.count ?? 0
+              const checked = selectedSections.has(s)
+              return (
+                <button
+                  key={s}
+                  onClick={() => toggleSection(s)}
+                  disabled={cnt < 2}
+                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border transition-colors text-left ${
+                    checked
+                      ? 'bg-accent/10 border-accent text-accent font-medium'
+                      : cnt < 2
+                        ? 'bg-bg-surface border-border-default text-text-muted opacity-40 cursor-not-allowed'
+                        : 'bg-bg-surface border-border-default text-text-secondary hover:border-border-strong'
+                  }`}
+                >
+                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
+                    checked ? 'bg-accent border-accent' : 'border-border-strong'
+                  }`}>
+                    {checked && <span className="text-[9px] text-white leading-none">✓</span>}
+                  </div>
+                  <span className="flex-1 truncate">{s}</span>
+                  <span className="text-[10px] font-mono opacity-60">{cnt}</span>
+                </button>
+              )
+            })}
+          </div>
+          {selectedSections.size > 0 && (
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => handleMultiExport('markdown')}
+                disabled={generating}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-accent text-white hover:bg-accent-strong disabled:opacity-40 transition-colors"
+              >
+                <Download size={12} />
+                Export Markdown
+              </button>
+              <button
+                onClick={() => handleMultiExport('latex')}
+                disabled={generating}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-bg-elevated text-text-primary hover:bg-border-default disabled:opacity-40 transition-colors border border-border-default"
+              >
+                <Download size={12} />
+                Export LaTeX
+              </button>
+              <span className="text-[11px] text-text-muted ml-1">
+                {generating ? 'Generating…' : `${selectedSections.size} section${selectedSections.size > 1 ? 's' : ''} selected`}
+              </span>
+            </div>
           )}
         </div>
 

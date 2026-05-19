@@ -1,10 +1,11 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { Conference } from '../types'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
+import { usePolling } from '../hooks/usePolling'
 
-export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences'
+export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'
 
 interface SidebarProps {
   currentView: AppView
@@ -13,6 +14,17 @@ interface SidebarProps {
   onOpenFeedManager: () => void
   onOpenProfile: () => void
   onLogout: () => void
+}
+
+const NO_NOTIFICATIONS: NotificationCounts = { new_threats: 0, urgent_deadlines: 0, new_author_papers: 0 }
+
+function dismissNotification(type: 'threats' | 'conferences' | 'authors') {
+  fetch('/api/research/notifications/dismiss', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type }),
+  }).catch(() => {})
 }
 
 export function Sidebar({
@@ -24,16 +36,29 @@ export function Sidebar({
   onLogout
 }: SidebarProps) {
   const { filter, setFilter, articles } = useArticlesStore()
-  const [conferences, setConferences] = useState<Conference[]>([])
+  const [notifications, setNotifications] = useState<NotificationCounts>(NO_NOTIFICATIONS)
 
-  useEffect(() => {
-    fetch('/api/research/conferences', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setConferences(data))
+  const fetchNotifications = useCallback(() => {
+    if (currentView === 'conferences' || currentView === 'threats' || currentView === 'authors') return
+    fetch('/api/research/notifications', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : NO_NOTIFICATIONS)
+      .then(data => setNotifications(data))
       .catch(() => {})
-  }, [])
+  }, [currentView])
 
-  const hasUrgent = conferences.some(c => !c.is_past && c.days_to_paper <= 14)
+  usePolling(fetchNotifications, 60_000)
+
+  const handleNavClick = useCallback((view: AppView, dismissType?: 'threats' | 'conferences' | 'authors') => {
+    if (dismissType) {
+      const next = { ...notifications }
+      if (dismissType === 'threats') next.new_threats = 0
+      else if (dismissType === 'conferences') next.urgent_deadlines = 0
+      else if (dismissType === 'authors') next.new_author_papers = 0
+      setNotifications(next)
+      dismissNotification(dismissType)
+    }
+    onViewChange(view)
+  }, [notifications, onViewChange])
 
   const categories = ['All', ...Array.from(new Set(feeds.map(f => f.category))).sort()]
   const activeCategory = filter.bookmarked ? 'Bookmarks' : (filter.category ?? 'All')
@@ -113,10 +138,12 @@ export function Sidebar({
         <NavItem icon={Sparkles} label="Digest" active={currentView === 'digest'} onClick={() => onViewChange('digest')} />
         <NavItem icon={BookOpen} label="Lit Review" active={currentView === 'litreview'} onClick={() => onViewChange('litreview')} />
         <NavItem icon={Network} label="Clusters" active={currentView === 'research'} onClick={() => onViewChange('research')} />
-        <NavItem icon={Users} label="Authors" active={currentView === 'authors'} onClick={() => onViewChange('authors')} />
-        <NavItem icon={AlertTriangle} label="Threats" active={currentView === 'threats'} onClick={() => onViewChange('threats')} />
+        <NavItem icon={Layers} label="Highlights" active={currentView === 'highlights'} onClick={() => onViewChange('highlights')} />
+        <NavItem icon={Users} label="Authors" active={currentView === 'authors'} count={notifications.new_author_papers} onClick={() => handleNavClick('authors', 'authors')} />
+        <NavItem icon={AlertTriangle} label="Threats" active={currentView === 'threats'} count={notifications.new_threats} onClick={() => handleNavClick('threats', 'threats')} />
         <NavItem icon={FileText} label="Writing" active={currentView === 'write'} onClick={() => onViewChange('write')} />
-        <NavItem icon={Calendar} label="Conferences" active={currentView === 'conferences'} onClick={() => onViewChange('conferences')} dot={hasUrgent} />
+        <NavItem icon={Calendar} label="Conferences" active={currentView === 'conferences'} count={notifications.urgent_deadlines} onClick={() => handleNavClick('conferences', 'conferences')} />
+        <NavItem icon={BookMarked} label="Bibliography" active={currentView === 'bibliography'} onClick={() => onViewChange('bibliography')} />
         <NavItem icon={BarChart2} label="Stats" active={currentView === 'stats'} onClick={() => onViewChange('stats')} />
       </div>
 

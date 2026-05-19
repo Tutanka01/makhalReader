@@ -36,6 +36,7 @@ from routers import (
     research,
 )
 from routers.internal import cleanup_old_articles
+from scheduler import start_scheduler, stop_scheduler
 from sse import _sse_queues, broadcast_new_article
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,12 @@ async def startup():
             logger.info("startup_feeds_added", count=added)
     finally:
         db.close()
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    stop_scheduler()
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,33 @@
+# generated: 2026-05-19
+# last_updated: 2026-05-19
+# project: daily_news_wrap
+# project_key: BASIRA
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status: backlog → in-progress → done
+# Story Status: backlog → ready-for-dev → in-progress → review → done
+
+generated: 2026-05-19
+last_updated: 2026-05-19
+project: daily_news_wrap
+project_key: BASIRA
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ── Sprint 6: Automation & Productivity ──
+  epic-6: backlog
+  6-1-background-task-scheduler: backlog
+  6-2-notification-badges: backlog
+  6-3-writing-assistant-pipeline: backlog
+  epic-6-retrospective: optional
+
+  # ── Sprint 7: Export & Advanced Features ──
+  epic-7: backlog
+  7-1-bibtex-export: backlog
+  7-2-litreview-multi-format-export: backlog
+  7-3-full-corpus-rag-qa: backlog
+  epic-7-retrospective: optional

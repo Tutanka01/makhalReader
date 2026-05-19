@@ -612,3 +612,40 @@ class ConferenceOut(BaseModel):
 class ConferenceBookmark(BaseModel):
     venue: str = Field(..., min_length=1)
     bookmarked: bool
+
+
+# ---------------------------------------------------------------------------
+# Notification Badges (Story 6.2)
+# ---------------------------------------------------------------------------
+
+class NotificationCounts(BaseModel):
+    new_threats: int = 0
+    urgent_deadlines: int = 0
+    new_author_papers: int = 0
+
+
+class DismissNotificationsRequest(BaseModel):
+    type: str = Field(..., pattern=r"^(threats|conferences|authors)$")
+
+
+# ---------------------------------------------------------------------------
+# Multi-Section Export (Story 6.3)
+# ---------------------------------------------------------------------------
+
+class MultiSectionExportRequest(BaseModel):
+    sections: List[str] = Field(..., min_length=1, max_length=20)
+    format: str = Field(default="markdown", pattern=r"^(markdown|latex)$")
+    window_days: int = Field(default=90, ge=1, le=365)
+    max_highlights_per_section: int = Field(default=30, ge=2, le=100)
+
+
+class BulkUpdateHighlightsRequest(BaseModel):
+    highlight_ids: List[int] = Field(..., min_length=1)
+    thesis_section: str = Field(..., min_length=1)
+
+    @field_validator("thesis_section")
+    @classmethod
+    def validate_section(cls, v: str) -> str:
+        if v not in _VALID_THESIS_SECTIONS:
+            raise ValueError(f"thesis_section must be one of {sorted(_VALID_THESIS_SECTIONS)}")
+        return v

@@ -348,3 +348,31 @@ export interface Conference {
   is_past: boolean
   bookmarked: boolean
 }
+
+export interface NotificationCounts {
+  new_threats: number
+  urgent_deadlines: number
+  new_author_papers: number
+}
+
+export interface MultiSectionExportRequest {
+  sections: string[]
+  format: 'markdown' | 'latex'
+  window_days?: number
+  max_highlights_per_section?: number
+}
+
+export interface HighlightManagerItem {
+  id: number
+  article_id: number
+  selected_text: string
+  prefix_context: string
+  suffix_context: string
+  color: string
+  note: string | null
+  thesis_section: string | null
+  created_at: string
+  article_title: string
+  article_url: string
+  article_score: number | null
+}

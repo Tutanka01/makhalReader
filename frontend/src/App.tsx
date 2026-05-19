@@ -15,6 +15,8 @@ import ThreatView from './components/ThreatView'
 import AuthorRadarView from './components/AuthorRadarView'
 import WriteAssistPanel from './components/WriteAssistPanel'
 import ConferenceRadar from './components/ConferenceRadar'
+import HighlightManager from './components/HighlightManager'
+import BibliographyPanel from './components/BibliographyPanel'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -70,7 +72,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -256,6 +258,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               appView === 'threats' ? 'Threat Monitor' :
               appView === 'authors' ? 'Author Radar' :
               appView === 'write' ? 'Writing Assistant' :
+              appView === 'highlights' ? 'Highlight Manager' :
+              appView === 'bibliography' ? 'BibTeX Export' :
               appView === 'conferences' ? 'Conference Radar' : 'Literature Review'
             }
             sidebarOpen={sidebarOpen}
@@ -296,6 +300,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               <AuthorRadarView />
             ) : appView === 'write' ? (
               <WriteAssistPanel />
+            ) : appView === 'highlights' ? (
+              <HighlightManager />
+            ) : appView === 'bibliography' ? (
+              <BibliographyPanel />
             ) : appView === 'conferences' ? (
               <ConferenceRadar />
             ) : (

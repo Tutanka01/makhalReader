@@ -16,7 +16,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from database import (
     Article,
@@ -29,17 +29,21 @@ from database import (
     TrackedAuthor,
     get_db,
     get_setting,
+    set_setting,
 )
+from conferences import get_conferences_with_countdown
 from models import (
     AriseArticleOut,
     AriseExportRequest,
     AuthorScanResponse,
+    BulkUpdateHighlightsRequest,
     CitationIndexResult,
     CitationStatsOut,
     ClusterOut,
     ComparisonRow,
     ConferenceBookmark,
     ConferenceOut,
+    DismissNotificationsRequest,
     ExternalPaper,
     ExternalReviewCreate,
     ExternalReviewOut,
@@ -49,6 +53,8 @@ from models import (
     LiteratureReviewCreate,
     LiteratureReviewOut,
     LiteratureReviewSummaryOut,
+    MultiSectionExportRequest,
+    NotificationCounts,
     NoveltyAlertOut,
     ResearchProfileEntry,
     ResearchProfileUpsert,
@@ -665,6 +671,58 @@ async def delete_literature_review(
     logger.info("literature_review_deleted", review_id=review_id)
 
 
+@router.get("/reviews/{review_id}/export")
+async def export_literature_review(
+    review_id: int,
+    format: str = Query(default="md", pattern=r"^(md|docx|pdf)$"),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Export a literature review as Markdown, DOCX, or PDF."""
+    row = db.query(LiteratureReview).filter(LiteratureReview.id == review_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    clusters = json.loads(row.body_json) if row.body_json else []
+    review_data = {
+        "topic": row.topic,
+        "window_days": row.window_days,
+        "min_rigor": row.min_rigor,
+        "created_at": row.created_at.isoformat(),
+        "clusters": clusters,
+    }
+
+    if format == "md":
+        from litreview_exporter import review_to_markdown  # noqa: PLC0415
+
+        content = review_to_markdown(review_data)
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="review-{review_id}.md"'},
+        )
+
+    if format == "docx":
+        from litreview_exporter import export_review_docx  # noqa: PLC0415
+
+        buf = export_review_docx(review_data)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="review-{review_id}.docx"'},
+        )
+
+    if format == "pdf":
+        from litreview_exporter import export_review_pdf  # noqa: PLC0415
+
+        buf = export_review_pdf(review_data)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="review-{review_id}.pdf"'},
+        )
+
+
 # ── ARISE JSON export (Story 4.1) ─────────────────────────────────────────────
 
 
@@ -1199,6 +1257,112 @@ async def list_highlight_sections(
     ]
 
 
+async def _synthesize_section_text(thesis_section: str, db: Session, window_days: int = 90, max_highlights: int = 30) -> str:
+    """Run synthesis for a section and return the plain text result."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+    results = (
+        db.query(Highlight, Article, Article.score)
+        .join(Article, Highlight.article_id == Article.id)
+        .filter(
+            Highlight.thesis_section == thesis_section,
+            Highlight.created_at >= cutoff,
+        )
+        .order_by(Article.score.desc().nullslast())
+        .all()
+    )
+
+    if len(results) < 2:
+        return f"*Insufficient highlights for {thesis_section} (found {len(results)}, minimum 2).*"
+
+    results = results[:max_highlights]
+    article_ids = list({r.article_id for r, _, _ in results})
+    formatted = _format_highlights_for_prompt(results)
+
+    text_parts: list[str] = []
+    async for event in _llm_synthesize_highlights(thesis_section, formatted, len(article_ids)):
+        if event.startswith("data: "):
+            payload = event[6:].strip()
+            if payload == '{"done": true}':
+                break
+            try:
+                parsed = json.loads(payload)
+                if parsed.get("text"):
+                    text_parts.append(parsed["text"])
+                if parsed.get("error"):
+                    text_parts.append(f"\n\n[Error: {parsed['error']}]")
+            except json.JSONDecodeError:
+                pass
+
+    return "".join(text_parts)
+
+
+@router.post("/export-highlights/multi")
+async def export_highlights_multi(
+    body: MultiSectionExportRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Export multiple thesis sections as a single Markdown or LaTeX document."""
+    parts: list[str] = []
+
+    if body.format == "markdown":
+        for section in body.sections:
+            text = await _synthesize_section_text(section, db, body.window_days, body.max_highlights_per_section)
+            parts.append(f"## {section}\n\n{text}\n")
+        content = "\n".join(parts)
+        media_type = "text/markdown"
+        filename = "writing-export.md"
+    else:
+        for section in body.sections:
+            text = await _synthesize_section_text(section, db, body.window_days, body.max_highlights_per_section)
+            safe = section.replace("&", "\\&").replace("%", "\\%")
+            parts.append(f"\\section{{{safe}}}\n\n{text}\n")
+        content = "\\documentclass{article}\n\\begin{document}\n" + "\n".join(parts) + "\n\\end{document}"
+        media_type = "text/plain"
+        filename = "writing-export.tex"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/highlights/all", response_model=List[dict])
+async def list_all_highlights(
+    thesis_section: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """List all highlights with article info, optionally filtered by thesis_section."""
+    q = (
+        db.query(Highlight, Article.title, Article.url, Article.score)
+        .join(Article, Highlight.article_id == Article.id)
+    )
+    if thesis_section:
+        q = q.filter(Highlight.thesis_section == thesis_section)
+    rows = q.order_by(Highlight.created_at.desc()).all()
+
+    return [
+        {
+            "id": h.id,
+            "article_id": h.article_id,
+            "selected_text": h.selected_text,
+            "prefix_context": h.prefix_context,
+            "suffix_context": h.suffix_context,
+            "color": h.color,
+            "note": h.note,
+            "thesis_section": h.thesis_section,
+            "created_at": h.created_at.isoformat(),
+            "article_title": title,
+            "article_url": url,
+            "article_score": score,
+        }
+        for h, title, url, score in rows
+    ]
+
+
 # ── In-Corpus Citation Graph (Story 5.5) ──────────────────────────────────────
 
 
@@ -1306,3 +1470,98 @@ async def toggle_conference_bookmark(
 
     set_setting(db, "bookmarked_conferences", ",".join(sorted(bookmarked)))
     return get_conferences_with_countdown(bookmarked)
+
+
+# ── Notification Badges (Story 6.2) ────────────────────────────────────────────
+
+
+_NOTIFICATION_KEY_MAP = {
+    "threats": "notifications_last_dismissed_threats",
+    "conferences": "notifications_last_dismissed_conferences",
+    "authors": "notifications_last_dismissed_authors",
+}
+
+
+@router.get("/notifications", response_model=NotificationCounts)
+async def get_notifications(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return counts for notification badges in the sidebar."""
+
+    # Threat alerts since last dismissal
+    dismissed_threats = get_setting(db, "notifications_last_dismissed_threats", "")
+    threat_cutoff = datetime.fromisoformat(dismissed_threats) if dismissed_threats else datetime.min.replace(tzinfo=timezone.utc)
+    new_threats = db.query(NoveltyAlert).filter(NoveltyAlert.checked_at > threat_cutoff).count()
+
+    # Urgent conference deadlines (days_to_paper <= 14, not past)
+    dismissed_confs = get_setting(db, "notifications_last_dismissed_conferences", "")
+    conf_cutoff = datetime.fromisoformat(dismissed_confs) if dismissed_confs else datetime.min.replace(tzinfo=timezone.utc)
+    all_confs = get_conferences_with_countdown()
+    urgent_deadlines = sum(
+        1 for c in all_confs
+        if not c["is_past"] and c["days_to_paper"] <= 14
+    )
+
+    # Author papers since last dismissal
+    dismissed_authors = get_setting(db, "notifications_last_dismissed_authors", "")
+    author_cutoff = datetime.fromisoformat(dismissed_authors) if dismissed_authors else datetime.min.replace(tzinfo=timezone.utc)
+    new_author_papers = (
+        db.query(Article)
+        .filter(
+            Article.tracked_author_alert.is_(True),
+            Article.created_at > author_cutoff,
+        )
+        .count()
+    )
+
+    return NotificationCounts(
+        new_threats=new_threats,
+        urgent_deadlines=urgent_deadlines,
+        new_author_papers=new_author_papers,
+    )
+
+
+@router.post("/notifications/dismiss")
+async def dismiss_notifications(
+    body: DismissNotificationsRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Mark a notification category as seen so its badge goes to zero."""
+    key = _NOTIFICATION_KEY_MAP[body.type]
+    set_setting(db, key, datetime.now(timezone.utc).isoformat())
+    return {"status": "ok"}
+
+
+# ── BibTeX Bibliography Export (Story 7.1) ─────────────────────────────────────
+
+
+@router.get("/bibliography")
+async def export_bibliography(
+    since_days: int = Query(default=365, ge=1, le=3650),
+    min_score: Optional[float] = Query(default=None, ge=0, le=10),
+    contribution_type: Optional[str] = Query(default=None, max_length=32),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Export a BibTeX bibliography from the article corpus."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    q = db.query(Article).filter(Article.created_at >= cutoff)
+
+    if min_score is not None:
+        q = q.filter(Article.score >= min_score)
+    if contribution_type:
+        q = q.filter(Article.contribution_type == contribution_type)
+
+    articles = q.order_by(Article.created_at.desc()).all()
+
+    from bibliography import generate_bibtex  # noqa: PLC0415
+
+    content = generate_bibtex(articles)
+
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="bibliography.bib"'},
+    )

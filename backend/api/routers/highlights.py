@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_session
 from database import Article, Highlight, get_db
-from models import HighlightCreate, HighlightOut, HighlightUpdate
+from models import BulkUpdateHighlightsRequest, HighlightCreate, HighlightOut, HighlightUpdate
 
 router = APIRouter()
 _auth = Depends(require_session)
@@ -96,6 +96,22 @@ async def patch_highlight(
         h.thesis_section = body.thesis_section
     db.commit()
     return HighlightOut.model_validate(h)
+
+
+@router.post("/api/research/highlights/bulk-update")
+async def bulk_update_highlights(
+    body: BulkUpdateHighlightsRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Update thesis_section for multiple highlights at once."""
+    updated = (
+        db.query(Highlight)
+        .filter(Highlight.id.in_(body.highlight_ids))
+        .update({Highlight.thesis_section: body.thesis_section}, synchronize_session=False)
+    )
+    db.commit()
+    return {"status": "ok", "updated": updated}
 
 
 @router.delete("/api/articles/{article_id}/highlights/{highlight_id}")
