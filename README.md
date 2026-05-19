@@ -144,16 +144,17 @@ Articles you've opened are cached — accessible without a network connection.
 
 ---
 
-### 32 pre-configured feeds
+### 100+ pre-configured feeds
 
 Ships with a high-signal technical feed selection, ready to use on day one:
 
 | Category | Sources |
 |----------|---------|
-| **Infra / Cloud** | Kubernetes Blog, CNCF, Cloudflare, Netflix TechBlog, LWN.net, fasterthanli.me, Fly.io, iximiuz, Tailscale… |
+| **Infra / Cloud** | Kubernetes Blog, CNCF, Cloudflare, Netflix TechBlog, LWN.net, fasterthanli.me, Fly.io, iximiuz, Tailscale, InfoQ SRE, incident.io, LWCN, AWS Architecture… |
 | **AI / LLM** | Anthropic, HuggingFace, Lilian Weng, Sebastian Raschka, Chip Huyen… |
 | **Security** | Google Project Zero, PortSwigger, Trail of Bits, lcamtuf, secret.club… |
 | **High-signal** | Hacker News, Lobsters, Simon Willison, Julia Evans, Dan Luu… |
+| **Communities** | r/sre, r/devops, r/kubernetes, r/sysadmin, r/homelab, r/selfhosted, r/networking, r/Observability… |
 
 Add custom feeds, import **OPML** (Feedly, NewsBlur…), organize by category.
 

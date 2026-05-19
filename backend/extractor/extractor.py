@@ -1,8 +1,9 @@
 import asyncio
+import html as html_lib
 import json
 import re
 from typing import List, Optional, Tuple
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 import httpx
 import trafilatura
@@ -35,6 +36,7 @@ ARXIV_ABS_RE = re.compile(
     r"arxiv\.org/abs/(?P<id>[0-9]{4}\.[0-9]+(v\d+)?|[a-z\-]+/\d{7})", re.I
 )
 SUBSTACK_HOST_RE = re.compile(r"(^|\.)substack\.com$", re.I)
+REDDIT_HOST_RE = re.compile(r"(^|\.)reddit\.com$", re.I)
 
 
 def arxiv_paper_id(url: str) -> Optional[str]:
@@ -288,6 +290,151 @@ def is_substack_url(url: str) -> bool:
         return bool(SUBSTACK_HOST_RE.search(host))
     except Exception:
         return False
+
+
+def is_reddit_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).netloc or "").split(":")[0].lower()
+        return bool(REDDIT_HOST_RE.search(host))
+    except Exception:
+        return False
+
+
+def reddit_json_url(url: str) -> Optional[str]:
+    try:
+        parsed = urlparse(url)
+        if "/comments/" not in parsed.path:
+            return None
+        path = parsed.path.rstrip("/")
+        if not path.endswith(".json"):
+            path = f"{path}.json"
+        return urlunparse(("https", "www.reddit.com", path, "", "raw_json=1", ""))
+    except Exception:
+        return None
+
+
+def extract_reddit_rss_context(req: ExtractRequest) -> dict:
+    """Build useful scoring context from Reddit RSS HTML when JSON is unavailable."""
+    source_html = req.rss_content or req.rss_summary or ""
+    source_text = strip_html(source_html)
+    if not source_text and not req.rss_title:
+        return {}
+
+    external_links: list[str] = []
+    try:
+        soup = BeautifulSoup(source_html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "").strip()
+            if not href.startswith(("http://", "https://")):
+                continue
+            host = (urlparse(href).netloc or "").lower()
+            if "reddit.com" in host or href in external_links:
+                continue
+            external_links.append(href)
+            if len(external_links) >= 3:
+                break
+    except Exception:
+        pass
+
+    lines = [
+        "Reddit RSS item.",
+        f"Title: {req.rss_title.strip()}" if req.rss_title.strip() else "",
+        f"Post URL: {req.url}",
+    ]
+    if external_links:
+        lines.append("External link(s): " + ", ".join(external_links))
+    if source_text:
+        lines.append(f"RSS context: {source_text[:1800]}")
+
+    text = "\n".join(line for line in lines if line)
+    if len(text) < 80:
+        return {}
+
+    return {
+        "title": req.rss_title or None,
+        "text": text,
+        "author": None,
+        "raw_html": text_to_html(text),
+    }
+
+
+async def extract_reddit_from_json(client: httpx.AsyncClient, req: ExtractRequest) -> dict:
+    """Extract post metadata/body from Reddit's public JSON endpoint."""
+    json_url = reddit_json_url(req.url)
+    if not json_url:
+        return {}
+
+    try:
+        resp = await client.get(
+            json_url,
+            headers={**HEADERS, "Accept": "application/json"},
+            follow_redirects=True,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        post = data[0]["data"]["children"][0]["data"]
+    except Exception:
+        return {}
+
+    title = post.get("title") or req.rss_title
+    selftext = post.get("selftext") or ""
+    subreddit = post.get("subreddit") or ""
+    author = post.get("author") or None
+    score = post.get("score")
+    comments = post.get("num_comments")
+    flair = post.get("link_flair_text") or ""
+    outbound_url = post.get("url_overridden_by_dest") or post.get("url") or ""
+    permalink = post.get("permalink") or ""
+    if permalink.startswith("/"):
+        permalink = f"https://www.reddit.com{permalink}"
+
+    is_external = outbound_url and is_reddit_url(req.url) and not is_reddit_url(outbound_url)
+    lines = [
+        f"Reddit post from r/{subreddit}." if subreddit else "Reddit post.",
+        f"Title: {title}" if title else "",
+        f"Author: u/{author}" if author else "",
+        f"Score: {score}" if score is not None else "",
+        f"Comments: {comments}" if comments is not None else "",
+        f"Flair: {flair}" if flair else "",
+        f"Post URL: {permalink or req.url}",
+        f"External link: {outbound_url}" if is_external else "",
+    ]
+    if selftext:
+        lines.append(f"Post body:\n{selftext[:3000]}")
+
+    top_comments: list[str] = []
+    try:
+        for child in data[1]["data"]["children"]:
+            cdata = child.get("data", {})
+            body = (cdata.get("body") or "").strip()
+            if not body:
+                continue
+            cscore = cdata.get("score")
+            top_comments.append(f"- score {cscore}: {body[:500]}")
+            if len(top_comments) >= 3:
+                break
+    except Exception:
+        pass
+    if top_comments:
+        lines.append("Top comment excerpts:\n" + "\n".join(top_comments))
+
+    text = "\n".join(line for line in lines if line)
+    if len(text) < 80:
+        return {}
+
+    content_html = "\n".join(
+        f"<p>{html_lib.escape(line).replace(chr(10), '<br>')}</p>"
+        for line in lines
+        if line
+    )
+    return {
+        "title": title or None,
+        "text": text,
+        "author": author,
+        "raw_html": content_html,
+    }
 
 
 def extract_substack_body_html(html: str) -> Optional[str]:
@@ -607,6 +754,32 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                     read_time_minutes=estimate_read_time(abstract),
                     extraction_failed=False,
                     canonical_url=canonical_url,
+                )
+
+        # ── Strategy 0b: Reddit post extraction ──────────────────────────
+        # Reddit RSS entries usually point at comment pages. Fetch the public
+        # JSON form first so the scorer receives post body, score/comment
+        # counts, outbound link, and a few comment excerpts instead of only a
+        # brittle scraped page title.
+        if is_reddit_url(req.url):
+            reddit_data = await extract_reddit_from_json(client, req)
+            if not reddit_data:
+                reddit_data = extract_reddit_rss_context(req)
+            if reddit_data.get("text"):
+                content_text = reddit_data["text"]
+                content_html = reddit_data["raw_html"]
+                extracted_title = reddit_data.get("title")
+                author = reddit_data.get("author")
+                final_title = resolve_title(extracted_title, req.rss_title, content_text)
+                return ExtractResponse(
+                    title=final_title,
+                    content_html=content_html,
+                    content_text=content_text,
+                    images=[],
+                    author=author,
+                    read_time_minutes=estimate_read_time(content_text or ""),
+                    extraction_failed=len(content_text or "") < MIN_CONTENT_LENGTH,
+                    canonical_url=None,
                 )
 
         # ── Strategy 1: direct fetch ──────────────────────────────────────

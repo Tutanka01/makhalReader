@@ -36,6 +36,8 @@ confidence is 0.0 to 1.0:
 
 Important calibration:
 - A short release/news item can still have high topic_fit, strategic_value, or novelty if it is a strong infrastructure/security/AI-agent signal.
+- Reddit/community posts can be valuable when they contain concrete production experience, debugging details, incident lessons, architecture tradeoffs, or strong links to technical material.
+- Penalize Reddit/community posts that are career chatter, tool polls, memes, vague questions, drama, or low-context link drops.
 - Do not inflate scores for articles that merely mention Kubernetes, cloud, Linux, security, or AI.
 - Generic AI-agent optimism should have high noise_penalty and low novelty.
 - Pure product announcements are capped by low technical_depth unless they change real engineering workflows or infrastructure strategy.

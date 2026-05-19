@@ -115,6 +115,18 @@ DEFAULT_FEEDS = [
     {"url": "https://blog.palark.com/feed",                              "name": "Palark",                     "category": "Infra"},
     {"url": "https://aphyr.com/feed",                                    "name": "Aphyr (Jepsen)",             "category": "Infra"},
     {"url": "https://sreweekly.com/feed",                                "name": "SRE Weekly",                 "category": "Infra"},
+    {"url": "https://feed.infoq.com/sre/",                                "name": "InfoQ SRE",                  "category": "Infra"},
+    {"url": "https://incident.io/blog.xml",                               "name": "incident.io Blog",           "category": "Infra"},
+    {"url": "https://lwcn.dev/newsletter/feed.xml",                       "name": "Last Week in Cloud Native",  "category": "Infra"},
+    {"url": "http://feeds.feedburner.com/HighScalability",                "name": "High Scalability",           "category": "Infra"},
+    {"url": "https://aws.amazon.com/blogs/architecture/feed/",            "name": "AWS Architecture Blog",      "category": "Infra"},
+    {"url": "https://aws.amazon.com/about-aws/whats-new/recent/feed/",    "name": "AWS What's New",             "category": "Infra"},
+    {"url": "https://www.linkedin.com/blog/engineering/feed",             "name": "LinkedIn Engineering",       "category": "Infra"},
+    {"url": "https://eng.uber.com/feed/",                                 "name": "Uber Engineering",           "category": "Infra"},
+    {"url": "https://thereliabilityengineering.substack.com/feed",        "name": "Reliability Engineering",    "category": "Infra"},
+    {"url": "https://newsletter.systemdesign.one/feed",                   "name": "System Design Newsletter",   "category": "Infra"},
+    {"url": "https://dataengweekly.substack.com/feed",                    "name": "Data Eng Weekly",            "category": "Infra"},
+    {"url": "https://cirinc.substack.com/feed",                           "name": "CIR DeepTech",               "category": "Infra"},
     {"url": "https://slack.engineering/feed",                            "name": "Slack Engineering",          "category": "Infra"},
     # ── eBPF deep dives ───────────────────────────────────────────────────
     {"url": "https://howtech.substack.com/feed",                         "name": "How Tech (eBPF/XDP)",        "category": "Infra"},
@@ -176,6 +188,15 @@ DEFAULT_FEEDS = [
     {"url": "http://www.paulgraham.com/rss.html",                        "name": "Paul Graham",                "category": "High-signal"},
     {"url": "https://the.scapegoat.dev/rss.xml",                         "name": "The Scapegoat Dev",          "category": "High-signal"},
     {"url": "https://matklad.github.io/feed.xml",                        "name": "matklad",                    "category": "High-signal"},
+    # ── Reddit communities — scored carefully via Reddit-aware extraction ─
+    {"url": "https://www.reddit.com/r/sre/.rss",                          "name": "r/sre",                      "category": "Communities"},
+    {"url": "https://www.reddit.com/r/devops/.rss",                       "name": "r/devops",                   "category": "Communities"},
+    {"url": "https://www.reddit.com/r/kubernetes/.rss",                   "name": "r/kubernetes",               "category": "Communities"},
+    {"url": "https://www.reddit.com/r/sysadmin/.rss",                     "name": "r/sysadmin",                 "category": "Communities"},
+    {"url": "https://www.reddit.com/r/homelab/.rss",                      "name": "r/homelab",                  "category": "Communities"},
+    {"url": "https://www.reddit.com/r/selfhosted/.rss",                   "name": "r/selfhosted",               "category": "Communities"},
+    {"url": "https://www.reddit.com/r/networking/.rss",                   "name": "r/networking",               "category": "Communities"},
+    {"url": "https://www.reddit.com/r/Observability/.rss",                "name": "r/Observability",            "category": "Communities"},
 ]
 
 

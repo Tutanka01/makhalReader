@@ -60,14 +60,15 @@ Endpoint principal : `POST /extract`
 Strategies, dans l'ordre :
 
 1. extraction specialisee arXiv pour les pages `/abs/`;
-2. fetch direct avec headers navigateur;
-3. Readability et Trafilatura;
-4. extraction Substack depuis payload HTML embarque;
-5. `content:encoded` RSS;
-6. resume RSS;
-7. Google cache;
-8. Wayback Machine;
-9. fallback court sur resume RSS avec `extraction_failed=true`.
+2. extraction Reddit via JSON public du post, avec fallback sur le contexte RSS;
+3. fetch direct avec headers navigateur;
+4. Readability et Trafilatura;
+5. extraction Substack depuis payload HTML embarque;
+6. `content:encoded` RSS;
+7. resume RSS;
+8. Google cache;
+9. Wayback Machine;
+10. fallback court sur resume RSS avec `extraction_failed=true`.
 
 L'extractor renvoie aussi une URL canonique quand un `<link rel="canonical">` fiable est trouve. Le poller l'utilise pour ameliorer la deduplication.
 
@@ -108,4 +109,3 @@ Le champ `score_details_json` permet de comprendre pourquoi un article a ete cap
 - Les routes admin sont protegees par session utilisateur, mais il n'y a pas de role admin separe.
 - Le rendu HTML cote frontend depend de la qualite/sanitisation de l'extraction.
 - Les services externes de fallback d'extraction peuvent etre lents ou indisponibles.
-
