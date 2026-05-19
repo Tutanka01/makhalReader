@@ -152,7 +152,7 @@ function isArxivUrl(url: string): boolean {
 
 export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, onNext, hasNext, onNavigate }: ReaderViewProps) {
   const { selectedArticle, fetchArticle, markRead, markUnread, toggleBookmark, submitFeedback } = useArticlesStore()
-  const { highlights, fetchHighlights, createHighlight, deleteHighlight } = useHighlightsStore()
+  const { highlights, fetchHighlights, createHighlight, deleteHighlight, patchHighlight } = useHighlightsStore()
   const [fontSize, setFontSize] = useState(getSavedFontSize)
   const [scrollProgress, setScrollProgress] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -160,6 +160,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   const [showAskPanel, setShowAskPanel] = useState(false)
   const [showRelatedPanel, setShowRelatedPanel] = useState(false)
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
+  const [editingHighlight, setEditingHighlight] = useState<{ highlight: Highlight; position: { x: number; top: number; bottom: number } } | null>(null)
   const [noteTooltip, setNoteTooltip] = useState<{ note: string; x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -216,6 +217,29 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
     }
   }, [])
 
+  // Click to edit highlight
+  useEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+
+    const handleClick = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-hid]') as HTMLElement | null
+      if (!mark) { setEditingHighlight(null); return }
+      const hid = parseInt(mark.getAttribute('data-hid') || '0', 10)
+      const h = articleHighlightsRef.current.find(h => h.id === hid)
+      if (!h) return
+      const rect = mark.getBoundingClientRect()
+      setEditingHighlight({
+        highlight: h,
+        position: { x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom },
+      })
+      setPendingSelection(null)
+    }
+
+    container.addEventListener('click', handleClick)
+    return () => container.removeEventListener('click', handleClick)
+  }, [])
+
   // Note tooltip on highlight hover
   useEffect(() => {
     const container = contentRef.current
@@ -241,7 +265,17 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
     }
   }, [])
 
-  const handleSaveHighlight = async (color: string, note: string) => {
+  const handleSaveHighlight = async (color: string, note: string, thesisSection?: string | null) => {
+    if (editingHighlight) {
+      const h = editingHighlight.highlight
+      setEditingHighlight(null)
+      await patchHighlight(h.id, {
+        color,
+        note: note || null,
+        thesis_section: thesisSection ?? null,
+      })
+      return
+    }
     if (!pendingSelection) return
     setPendingSelection(null)
     window.getSelection()?.removeAllRanges()
@@ -664,13 +698,14 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
       </div>{/* end horizontal split */}
 
-      {/* Highlight popover — appears on text selection */}
-      {pendingSelection && (
+      {/* Highlight popover — appears on text selection or highlight click */}
+      {(pendingSelection || editingHighlight) && (
         <HighlightPopover
-          position={pendingSelection.position}
-          selectedText={pendingSelection.selectedText}
+          position={editingHighlight ? editingHighlight.position : pendingSelection!.position}
+          selectedText={editingHighlight ? editingHighlight.highlight.selected_text : pendingSelection!.selectedText}
+          highlight={editingHighlight?.highlight}
           onSave={handleSaveHighlight}
-          onClose={() => setPendingSelection(null)}
+          onClose={() => { setPendingSelection(null); setEditingHighlight(null) }}
         />
       )}
 

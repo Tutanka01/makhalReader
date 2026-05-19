@@ -183,6 +183,10 @@ export interface ArticleListItem {
   user_feedback: number | null
   contribution_type: ContribType | null
   re_document_type: REDocType | null
+  threat_overlap?: number | null
+  threat_positioning_note?: string | null
+  tracked_author_alert?: boolean | null
+  cited_by_corpus_count?: number
   tags: string[]
   summary_bullets: string[]
 }
@@ -195,8 +199,38 @@ export interface Highlight {
   suffix_context: string
   color: 'yellow' | 'green' | 'blue' | 'purple'
   note: string | null
+  thesis_section?: string | null
   created_at: string
 }
+
+export interface HighlightExportRequest {
+  thesis_section: string
+  window_days?: number
+  max_highlights?: number
+}
+
+export interface SourceArticle {
+  id: number
+  title: string
+  url: string
+}
+
+export interface HighlightSectionCount {
+  thesis_section: string
+  count: number
+}
+
+export const VALID_THESIS_SECTIONS = [
+  'P1 Construction',
+  'P2 Consistency',
+  'P3 Model Drift',
+  'P4 Trust',
+  'P5 Blueprint Query',
+  'Lit Review / Gap',
+  'Motivation',
+  'Related Work',
+  'Counter-argument',
+] as const
 
 export interface DailyReadCount {
   date: string
@@ -220,7 +254,47 @@ export interface Stats {
   articles_per_category: Record<string, number>
 }
 
-export type SortOption = 'score' | 'date'
+// ── Novelty Threat Monitor (Story 5.1) ───────────────────────────────────────
+
+// ── Author Radar (Story 5.2) ─────────────────────────────────────────────
+
+export interface TrackedAuthor {
+  ss_author_id: string
+  name: string
+  paper_count: number
+  avg_score: number
+  alert_count: number
+  last_checked: string | null
+}
+
+export interface AuthorScanResponse {
+  authors_checked: number
+  new_articles_queued: number
+  skipped: number
+}
+
+export interface NoveltyAlert {
+  article_id: number
+  title: string
+  url: string
+  score: number | null
+  overlap_score: number
+  positioning_note: string
+  checked_at: string
+}
+
+export interface ThreatScanResponse {
+  scanned: number
+  alerts_created: number
+  skipped: number
+}
+
+export interface ThesisContribution {
+  statement: string
+  updated_at: string
+}
+
+export type SortOption = 'score' | 'date' | 'cited_by_corpus'
 export type StatusOption = 'unread' | 'read' | 'all'
 
 export interface ArticleFilter {
@@ -231,4 +305,46 @@ export interface ArticleFilter {
   minScore: number          // 0 = all, 6 = 6+, 8 = 8+
   contributionType: ContribType | null
   ariseOnly: boolean        // true = re_document_type ∈ {elicitation, extraction, method}
+}
+
+// ── Reading Debt Dashboard (Story 5.4) ────────────────────────────────────
+
+export interface OldestUnreadItem {
+  id: number
+  title: string
+  score: number | null
+  age_days: number
+}
+
+export interface ScoreBucket {
+  bucket: string
+  unread_count: number
+}
+
+export interface ReadingDebt {
+  unread_high: number
+  unread_critical: number
+  unread_high_minutes: number
+  weekly_goal: number
+  weekly_progress: number
+  backlog_clear_days: number | null
+  oldest_unread_high: OldestUnreadItem[]
+  score_distribution: ScoreBucket[]
+}
+
+// ── Conference Radar (Story 5.6) ──────────────────────────────────────────
+
+export interface Conference {
+  venue: string
+  track: string
+  abstract_deadline: string | null
+  paper_deadline: string
+  notification_date: string | null
+  conference_date: string
+  url: string
+  note: string | null
+  days_to_abstract: number | null
+  days_to_paper: number
+  is_past: boolean
+  bookmarked: boolean
 }

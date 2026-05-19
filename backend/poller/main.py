@@ -333,6 +333,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
             "paper_meta_json": paper_meta_json,
             "contribution_type": enrichment_contribution_type,
             "re_document_type": enrichment_re_document_type,
+            "ss_paper_id": paper_meta.get("paperId") if paper_meta else None,
         }
 
         try:

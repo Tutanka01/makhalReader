@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { X, ChevronDown } from 'lucide-react'
+import type { Highlight } from '../types'
+import { VALID_THESIS_SECTIONS } from '../types'
 
 const COLORS = [
   { id: 'yellow', label: 'Jaune',  dot: '#B45309', bg: 'var(--warning-bg)', border: 'var(--warning)' },
@@ -12,37 +14,41 @@ interface HighlightPopoverProps {
   /** Viewport x-center, top and bottom of the selection */
   position: { x: number; top: number; bottom: number }
   selectedText: string
-  onSave: (color: string, note: string) => void
+  /** If set, popover operates in edit mode for an existing highlight */
+  highlight?: Highlight
+  onSave: (color: string, note: string, thesisSection?: string | null) => void
   onClose: () => void
 }
 
 const WIDTH = 260
 const MARGIN = 10
-const GAP = 8   // gap between selection and popover
+const GAP = 8
 
-export function HighlightPopover({ position, selectedText, onSave, onClose }: HighlightPopoverProps) {
-  const [color, setColor] = useState<string>('yellow')
-  const [note, setNote] = useState('')
-  const [showNote, setShowNote] = useState(false)
+export function HighlightPopover({ position, selectedText, highlight, onSave, onClose }: HighlightPopoverProps) {
+  const [color, setColor] = useState<string>(highlight?.color ?? 'yellow')
+  const [note, setNote] = useState(highlight?.note ?? '')
+  const [showNote, setShowNote] = useState(!!highlight?.note)
+  const [thesisSection, setThesisSection] = useState<string | null>(highlight?.thesis_section ?? null)
+  const [sectionOpen, setSectionOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const sectionRef = useRef<HTMLDivElement>(null)
+
+  const isEdit = !!highlight
 
   // Compute height dynamically
-  const baseHeight = 88
+  const baseHeight = isEdit ? 130 : 88
   const noteHeight = showNote ? 96 : 0
   const popoverHeight = baseHeight + noteHeight
 
   const vw = window.innerWidth
   const vh = window.innerHeight
 
-  // Horizontal: centered on selection, clamped to viewport
   let left = position.x - WIDTH / 2
   left = Math.max(MARGIN, Math.min(left, vw - WIDTH - MARGIN))
 
-  // Vertical: prefer ABOVE the selection
   let top = position.top - popoverHeight - GAP
   let below = false
   if (top < MARGIN) {
-    // Flip below the selection
     top = position.bottom + GAP
     below = true
   }
@@ -64,7 +70,21 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
     return () => document.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
+  // Close section dropdown on outside click
+  useEffect(() => {
+    if (!sectionOpen) return
+    function handleClick(e: MouseEvent) {
+      if (sectionRef.current && !sectionRef.current.contains(e.target as Node)) {
+        setSectionOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [sectionOpen])
+
   const selectedColor = COLORS.find(c => c.id === color)!
+
+  const sectionLabel = thesisSection ?? 'Assigner à une section…'
 
   return (
     <div
@@ -73,7 +93,6 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
       style={{ left, top, width: WIDTH }}
       onMouseDown={e => e.stopPropagation()}
     >
-      {/* Arrow indicator */}
       <div
         className="absolute left-1/2 -translate-x-1/2 w-0 h-0"
         style={
@@ -83,14 +102,48 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
         }
       />
 
-      {/* Card */}
       <div className="rounded-xl shadow-2xl overflow-hidden bg-bg-surface border border-border-default">
-        {/* Selected text preview */}
         <div className="px-3 pt-3 pb-2">
           <p className="text-[11px] text-text-muted line-clamp-1 italic">
             « {selectedText.slice(0, 60)}{selectedText.length > 60 ? '…' : ''} »
           </p>
         </div>
+
+        {/* Thesis Section dropdown (edit mode) */}
+        {isEdit && (
+          <div className="px-3 pb-2" ref={sectionRef}>
+            <button
+              onClick={() => setSectionOpen(v => !v)}
+              className="w-full flex items-center justify-between gap-1.5 text-[11px] bg-bg-base border border-border-default rounded-lg px-2.5 py-1.5 text-text-secondary hover:text-text-primary transition-colors"
+            >
+              <span className={thesisSection ? 'text-text-primary' : 'text-text-muted'}>
+                {sectionLabel}
+              </span>
+              <ChevronDown size={12} className={`transition-transform ${sectionOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {sectionOpen && (
+              <div className="absolute left-3 right-3 mt-1 bg-bg-surface border border-border-default rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
+                <button
+                  onClick={() => { setThesisSection(null); setSectionOpen(false) }}
+                  className="w-full text-left text-[11px] px-2.5 py-1.5 text-text-muted hover:bg-bg-hover transition-colors"
+                >
+                  Aucune
+                </button>
+                {VALID_THESIS_SECTIONS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => { setThesisSection(s); setSectionOpen(false) }}
+                    className={`w-full text-left text-[11px] px-2.5 py-1.5 transition-colors ${
+                      thesisSection === s ? 'text-accent font-medium bg-accent/5' : 'text-text-secondary hover:bg-bg-hover'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Color row */}
         <div className="flex items-center gap-2 px-3 pb-3">
@@ -137,7 +190,7 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
         {showNote && (
           <div className="px-3 pb-2">
             <textarea
-              autoFocus
+              autoFocus={!isEdit}
               value={note}
               onChange={e => setNote(e.target.value)}
               placeholder="Ajouter une note…"
@@ -149,7 +202,7 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
 
         {/* Save button */}
         <button
-          onClick={() => onSave(color, note)}
+          onClick={() => onSave(color, note, thesisSection)}
           className="w-full py-2.5 text-xs font-semibold transition-colors"
           style={{
             background: selectedColor.bg,
@@ -157,7 +210,7 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
             borderTop: `1px solid ${selectedColor.border}`,
           }}
         >
-          Surligner
+          {isEdit ? 'Enregistrer' : 'Surligner'}
         </button>
       </div>
     </div>

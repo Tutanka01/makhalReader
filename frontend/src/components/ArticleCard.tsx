@@ -5,6 +5,7 @@ import type { ArticleListItem } from '../types'
 import { ScoreBar } from './ScoreBar'
 import { ContribTypeBadge } from './ContribTypeBadge'
 import { ReDocTypeBadge } from './ReDocTypeBadge'
+import { ThreatBadge } from './ThreatBadge'
 import { useArticlesStore } from '../store/articles'
 
 interface ArticleCardProps {
@@ -107,6 +108,20 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
             ))}
             <ContribTypeBadge type={article.contribution_type} />
             <ReDocTypeBadge type={article.re_document_type} />
+            <ThreatBadge overlap={article.threat_overlap ?? 0} positioningNote={article.threat_positioning_note} />
+            {article.tracked_author_alert && (
+              <span className="inline-flex items-center px-1.5 py-[1px] rounded-[4px] text-[10px] font-medium tracking-wide bg-accent-light text-accent">
+                👤 Radar
+              </span>
+            )}
+            {(article.cited_by_corpus_count ?? 0) >= 2 && (
+              <span
+                className="inline-flex items-center px-1.5 py-[1px] rounded-[4px] text-[10px] font-medium tracking-wide"
+                style={{ background: '#E6F7F7', color: '#0D7C7C' }}
+              >
+                cited by {article.cited_by_corpus_count}
+              </span>
+            )}
           </div>
         )}
 

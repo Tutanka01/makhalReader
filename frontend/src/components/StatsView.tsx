@@ -1,9 +1,11 @@
-import { useEffect } from 'react'
-import { Flame, BookOpen, Bookmark, Star, X, RefreshCw } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { Flame, BookOpen, Bookmark, Star, X, RefreshCw, ChevronRight } from 'lucide-react'
 import { useStatsStore } from '../store/stats'
+import type { ReadingDebt } from '../types'
 
 interface StatsViewProps {
   onClose: () => void
+  onSelectArticle?: (id: number) => void
 }
 
 const ACCENT_COLORS = [
@@ -15,12 +17,51 @@ const ACCENT_COLORS = [
   'text-accent',
 ]
 
-export function StatsView({ onClose }: StatsViewProps) {
+export function StatsView({ onClose, onSelectArticle }: StatsViewProps) {
   const { stats, loading, fetchStats } = useStatsStore()
+
+  const [debt, setDebt] = useState<ReadingDebt | null>(null)
+  const [debtLoading, setDebtLoading] = useState(true)
+  const [goalInput, setGoalInput] = useState<number>(10)
+  const [goalSaving, setGoalSaving] = useState(false)
+
+  const fetchDebt = useCallback(async () => {
+    setDebtLoading(true)
+    try {
+      const res = await fetch('/api/stats/reading-debt', { credentials: 'include' })
+      if (res.ok) {
+        const data: ReadingDebt = await res.json()
+        setDebt(data)
+        setGoalInput(data.weekly_goal)
+      }
+    } catch (e) {
+      console.error('Failed to fetch reading debt', e)
+    } finally {
+      setDebtLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     fetchStats()
-  }, [])
+    fetchDebt()
+  }, [fetchStats, fetchDebt])
+
+  const handleGoalSave = async () => {
+    setGoalSaving(true)
+    try {
+      await fetch('/api/stats/reading-goal', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekly_goal: goalInput }),
+      })
+      fetchDebt()
+    } catch (e) {
+      console.error('Failed to save goal', e)
+    } finally {
+      setGoalSaving(false)
+    }
+  }
 
   if (loading && !stats) {
     return (
@@ -129,6 +170,149 @@ export function StatsView({ onClose }: StatsViewProps) {
             <span className="text-sm font-semibold text-warning">{s?.total_highlights}</span>
           </div>
         )}
+
+        {/* ── Reading Debt Dashboard (Story 5.4) ── */}
+        <div>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Reading Debt
+          </h3>
+          <div className="bg-bg-surface rounded-xl border border-border-subtle p-4 space-y-4">
+            {debtLoading && !debt ? (
+              <div className="flex items-center justify-center py-4">
+                <RefreshCw className="w-4 h-4 animate-spin text-text-muted" />
+              </div>
+            ) : debt ? (
+              <>
+                {/* Unread high counter */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-4xl font-bold tabular-nums text-text-primary">
+                      {debt.unread_high}
+                    </div>
+                    <div className="text-xs text-text-muted mt-1">
+                      high-value papers unread
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-semibold tabular-nums text-warning">
+                      {Math.round(debt.unread_high_minutes / 60)}h
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      estimated reading time
+                    </div>
+                  </div>
+                </div>
+
+                {/* Critical indicator */}
+                {debt.unread_critical > 0 && (
+                  <div className="flex items-center gap-2 text-xs text-danger bg-danger/5 rounded-lg px-3 py-2">
+                    <Star className="w-3 h-3 fill-danger" />
+                    {debt.unread_critical} paper{debt.unread_critical > 1 ? 's' : ''} with score ≥ 9
+                  </div>
+                )}
+
+                {/* Weekly progress */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-text-secondary">Weekly progress</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-text-primary font-medium tabular-nums">
+                        {debt.weekly_progress} / {debt.weekly_goal}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={goalInput}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10)
+                            if (!isNaN(v)) setGoalInput(Math.max(1, Math.min(100, v)))
+                          }}
+                          onBlur={handleGoalSave}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          className="w-10 text-center text-[11px] bg-bg-base border border-border-default rounded px-1 py-0.5 text-text-muted focus:outline-none focus:border-accent/50 tabular-nums"
+                        />
+                        <span className="text-text-muted">/wk</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="h-2 rounded-full bg-bg-elevated overflow-hidden">
+                    <div
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        debt.weekly_progress >= debt.weekly_goal ? 'bg-success' : 'bg-accent'
+                      }`}
+                      style={{
+                        width: `${Math.min(100, Math.round((debt.weekly_progress / debt.weekly_goal) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-text-muted">
+                    {debt.backlog_clear_days != null
+                      ? `At your current pace, clear backlog in ${debt.backlog_clear_days} day${debt.backlog_clear_days !== 1 ? 's' : ''}`
+                      : 'Set a goal and read to see estimate'}
+                  </p>
+                </div>
+
+                {/* Score distribution */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-text-muted">Score distribution</span>
+                  {debt.score_distribution.map((b) => {
+                    const maxDist = Math.max(...debt.score_distribution.map((x) => x.unread_count), 1)
+                    return (
+                      <div key={b.bucket} className="flex items-center gap-2">
+                        <span className="text-[11px] text-text-secondary w-8 flex-shrink-0 text-right">{b.bucket}</span>
+                        <div className="flex-1 bg-bg-elevated rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-accent/60 transition-all"
+                            style={{ width: `${(b.unread_count / maxDist) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-[11px] text-text-muted tabular-nums w-6 text-right">{b.unread_count}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Top 5 oldest unread */}
+                {debt.oldest_unread_high.length > 0 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] text-text-muted">Oldest high-value unread</span>
+                    {debt.oldest_unread_high.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => onSelectArticle?.(item.id)}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover cursor-pointer transition-colors group"
+                      >
+                        <span className="text-[11px] text-text-muted tabular-nums w-8 flex-shrink-0 font-mono">
+                          {item.age_days}d
+                        </span>
+                        <span className="text-xs text-text-secondary flex-1 truncate group-hover:text-text-primary transition-colors">
+                          {item.title}
+                        </span>
+                        {item.score != null && (
+                          <span className="text-[11px] text-accent font-medium tabular-nums">{item.score.toFixed(1)}</span>
+                        )}
+                        <ChevronRight className="w-3 h-3 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Empty state for no debt */}
+                {debt.unread_high === 0 && (
+                  <div className="text-center py-3 text-xs text-text-muted">
+                    All caught up! No high-value papers waiting.
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-center py-3 text-xs text-text-muted">
+                Could not load reading debt data.
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* 7-day bar chart */}
         <div>

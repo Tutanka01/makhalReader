@@ -201,15 +201,25 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, on
         <div className="flex items-center gap-1.5">
           {/* Sort toggle */}
           <button
-            onClick={() => setFilter({ sort: filter.sort === 'score' ? 'date' : 'score' })}
+            onClick={() => {
+              const order: Array<'score' | 'date' | 'cited_by_corpus'> = ['score', 'date', 'cited_by_corpus']
+              const idx = order.indexOf(filter.sort as any)
+              setFilter({ sort: order[(idx + 1) % order.length] })
+            }}
             className="flex items-center gap-1 px-2 py-1 rounded-md border border-border-default text-xs text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title={filter.sort === 'score' ? 'Sorted by score — click for date' : 'Sorted by date — click for score'}
-          >
-            {filter.sort === 'score'
-              ? <Star className="w-3 h-3" />
-              : <Clock className="w-3 h-3" />
+            title={
+              filter.sort === 'score' ? 'Sorted by score' :
+              filter.sort === 'cited_by_corpus' ? 'Sorted by most cited in corpus' :
+              'Sorted by date'
             }
-            {filter.sort === 'score' ? 'Score' : 'Date'}
+          >
+            {filter.sort === 'score' ? <Star className="w-3 h-3" /> :
+             filter.sort === 'cited_by_corpus' ? <Network className="w-3 h-3" /> :
+             <Clock className="w-3 h-3" />
+            }
+            {filter.sort === 'score' ? 'Score' :
+             filter.sort === 'cited_by_corpus' ? 'Most cited' :
+             'Date'}
             <ArrowUpDown className="w-3 h-3 opacity-50" />
           </button>
 

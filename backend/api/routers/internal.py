@@ -224,6 +224,8 @@ async def internal_create_article(
         paper_meta_json=article_data.paper_meta_json,
         contribution_type=article_data.contribution_type,
         re_document_type=article_data.re_document_type,
+        tracked_author_alert=article_data.tracked_author_alert,
+        ss_paper_id=article_data.ss_paper_id,
     )
     db.add(article)
     db.commit()

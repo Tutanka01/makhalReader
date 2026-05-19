@@ -70,9 +70,32 @@ async def update_highlight(
         highlight.color = body.color
     if body.note is not None:
         highlight.note = body.note
+    if body.thesis_section is not None:
+        highlight.thesis_section = body.thesis_section
     db.commit()
     db.refresh(highlight)
     return HighlightOut.model_validate(highlight)
+
+
+@router.patch("/api/highlights/{highlight_id}", response_model=HighlightOut)
+async def patch_highlight(
+    highlight_id: int,
+    body: HighlightUpdate,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Partial update of a highlight — only the fields present in the body are updated."""
+    h = db.query(Highlight).filter(Highlight.id == highlight_id).first()
+    if not h:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    if body.color is not None:
+        h.color = body.color
+    if body.note is not None:
+        h.note = body.note
+    if body.thesis_section is not None:
+        h.thesis_section = body.thesis_section
+    db.commit()
+    return HighlightOut.model_validate(h)
 
 
 @router.delete("/api/articles/{article_id}/highlights/{highlight_id}")

@@ -100,6 +100,10 @@ class ArticleListItem(BaseModel):
     user_feedback: Optional[int] = None
     contribution_type: Optional[str] = None
     re_document_type: Optional[str] = None
+    threat_overlap: Optional[float] = None
+    threat_positioning_note: Optional[str] = None
+    tracked_author_alert: Optional[bool] = None
+    cited_by_corpus_count: int = 0
 
     # Computed fields
     tags: List[str] = []
@@ -325,6 +329,8 @@ class InternalArticleCreate(BaseModel):
     paper_meta_json: Optional[str] = None
     contribution_type: Optional[str] = None
     re_document_type: Optional[str] = None
+    tracked_author_alert: bool = False
+    ss_paper_id: Optional[str] = None
 
 
 class InternalScoreUpdate(BaseModel):
@@ -367,15 +373,36 @@ class HighlightCreate(BaseModel):
         return v
 
 
+_VALID_THESIS_SECTIONS = {
+    "P1 Construction",
+    "P2 Consistency",
+    "P3 Model Drift",
+    "P4 Trust",
+    "P5 Blueprint Query",
+    "Lit Review / Gap",
+    "Motivation",
+    "Related Work",
+    "Counter-argument",
+}
+
+
 class HighlightUpdate(BaseModel):
     color: Optional[str] = None
     note: Optional[str] = None
+    thesis_section: Optional[str] = None
 
     @field_validator("color")
     @classmethod
     def validate_color(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _HIGHLIGHT_COLORS:
             raise ValueError(f"color must be one of {sorted(_HIGHLIGHT_COLORS)}")
+        return v
+
+    @field_validator("thesis_section")
+    @classmethod
+    def validate_thesis_section(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_THESIS_SECTIONS:
+            raise ValueError(f"thesis_section must be one of {sorted(_VALID_THESIS_SECTIONS)}")
         return v
 
 
@@ -387,9 +414,30 @@ class HighlightOut(BaseModel):
     suffix_context: str
     color: str
     note: Optional[str] = None
+    thesis_section: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class HighlightExportRequest(BaseModel):
+    thesis_section: str = Field(..., min_length=1)
+    window_days: int = Field(default=90, ge=1, le=365)
+    max_highlights: int = Field(default=30, ge=2, le=100)
+
+
+class SourceArticle(BaseModel):
+    id: int
+    title: str
+    url: str
+
+
+class HighlightExportOut(BaseModel):
+    thesis_section: str
+    highlight_count: int
+    article_count: int
+    synthesis_text: str
+    source_articles: List[SourceArticle]
 
 
 # ---------------------------------------------------------------------------
@@ -433,3 +481,134 @@ class StatsOut(BaseModel):
     top_tags: List[TagFrequency]
     total_highlights: int
     articles_per_category: Dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Novelty Threat Monitor (Story 5.1)
+# ---------------------------------------------------------------------------
+
+class ThesisContributionOut(BaseModel):
+    statement: str
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ThesisContributionUpdate(BaseModel):
+    statement: str = Field(..., max_length=2000)
+
+
+class NoveltyAlertOut(BaseModel):
+    article_id: int
+    title: str
+    url: str
+    score: Optional[float] = None
+    overlap_score: float
+    positioning_note: str
+    checked_at: datetime
+
+
+class ThreatScanResponse(BaseModel):
+    scanned: int
+    alerts_created: int
+    skipped: int
+
+
+# ---------------------------------------------------------------------------
+# Author Radar (Story 5.2)
+# ---------------------------------------------------------------------------
+
+class TrackedAuthorOut(BaseModel):
+    ss_author_id: str
+    name: str
+    paper_count: int
+    avg_score: float
+    alert_count: int
+    last_checked: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AuthorScanResponse(BaseModel):
+    authors_checked: int
+    new_articles_queued: int
+    skipped: int
+
+
+# ---------------------------------------------------------------------------
+# Reading Debt Dashboard (Story 5.4)
+# ---------------------------------------------------------------------------
+
+class OldestUnreadItem(BaseModel):
+    id: int
+    title: str
+    score: Optional[float] = None
+    age_days: int
+
+
+class ScoreBucket(BaseModel):
+    bucket: str
+    unread_count: int
+
+
+class ReadingDebtOut(BaseModel):
+    unread_high: int
+    unread_critical: int
+    unread_high_minutes: int
+    weekly_goal: int
+    weekly_progress: int
+    backlog_clear_days: Optional[float] = None
+    oldest_unread_high: List[OldestUnreadItem]
+    score_distribution: List[ScoreBucket]
+
+
+class ReadingGoalUpdate(BaseModel):
+    weekly_goal: int = Field(..., ge=1, le=100)
+
+
+# ---------------------------------------------------------------------------
+# In-Corpus Citation Graph (Story 5.5)
+# ---------------------------------------------------------------------------
+
+class TopCitedItem(BaseModel):
+    id: int
+    title: str
+    score: Optional[float] = None
+    cited_by_corpus_count: int
+
+
+class CitationIndexResult(BaseModel):
+    indexed_papers: int
+    total_citation_links: int
+    last_indexed_at: Optional[datetime] = None
+
+
+class CitationStatsOut(BaseModel):
+    indexed_papers: int
+    total_citation_links: int
+    top_cited: List[TopCitedItem]
+    last_indexed_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Conference Radar (Story 5.6)
+# ---------------------------------------------------------------------------
+
+class ConferenceOut(BaseModel):
+    venue: str
+    track: str
+    abstract_deadline: Optional[str] = None
+    paper_deadline: str
+    notification_date: Optional[str] = None
+    conference_date: str
+    url: str
+    note: Optional[str] = None
+    days_to_abstract: Optional[int] = None
+    days_to_paper: int
+    is_past: bool
+    bookmarked: bool
+
+
+class ConferenceBookmark(BaseModel):
+    venue: str = Field(..., min_length=1)
+    bookmarked: bool

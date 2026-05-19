@@ -6,13 +6,16 @@ Responsibilities:
 - All operations are fault-tolerant: any failure logs a warning and returns.
 """
 import json
+import math
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
 import structlog
+from sqlalchemy import text
 
-from database import Article, SessionLocal
+from database import Article, SessionLocal, TrackedAuthor
 
 logger = structlog.get_logger().bind(service="embedder")
 
@@ -101,6 +104,34 @@ async def embed_article_async(article_id: int) -> None:
         )
 
         article.embedding_indexed = 1
+
+        # ── Author radar tracking (Story 5.2) ──────────────────────────────
+        if article.score is not None and article.score >= 7.0 and article.paper_meta_json:
+            try:
+                paper_meta = json.loads(article.paper_meta_json)
+                authors = paper_meta.get("authors") or []
+                for author_entry in authors:
+                    ss_id = author_entry.get("authorId")
+                    name = author_entry.get("name", "")
+                    if not ss_id or not name:
+                        continue
+                    db.execute(
+                        text("""
+                            INSERT OR IGNORE INTO tracked_authors
+                            (ss_author_id, name, paper_count, avg_score, alert_count, last_checked, created_at)
+                            VALUES (:ss_id, :name, 0, 0.0, 0, NULL, :now)
+                        """),
+                        {"ss_id": ss_id, "name": name, "now": datetime.now(timezone.utc)},
+                    )
+                    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_id).first()
+                    if author:
+                        new_count = author.paper_count + 1
+                        new_avg = (author.avg_score * author.paper_count + article.score) / new_count
+                        author.paper_count = new_count
+                        author.avg_score = round(new_avg, 3)
+            except Exception as au_e:
+                logger.warning("author_upsert_failed", article_id=article_id, error=str(au_e))
+
         db.commit()
         logger.info("article_embedded", article_id=article_id, model=OLLAMA_EMBED_MODEL)
 

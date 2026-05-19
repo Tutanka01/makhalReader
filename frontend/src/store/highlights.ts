@@ -11,7 +11,8 @@ interface HighlightCreate {
 
 interface HighlightUpdate {
   color?: string
-  note?: string
+  note?: string | null
+  thesis_section?: string | null
 }
 
 interface HighlightsState {
@@ -22,6 +23,7 @@ interface HighlightsState {
   createHighlight: (articleId: number, data: HighlightCreate) => Promise<Highlight>
   updateHighlight: (articleId: number, id: number, data: HighlightUpdate) => Promise<void>
   deleteHighlight: (articleId: number, id: number) => Promise<void>
+  patchHighlight: (id: number, data: HighlightUpdate) => Promise<void>
 }
 
 export const useHighlightsStore = create<HighlightsState>((set, get) => ({
@@ -83,5 +85,24 @@ export const useHighlightsStore = create<HighlightsState>((set, get) => ({
         [articleId]: (s.highlights[articleId] ?? []).filter((h) => h.id !== id),
       },
     }))
+  },
+
+  async patchHighlight(id, data) {
+    const res = await fetch(`/api/highlights/${id}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) return
+    const updated: Highlight = await res.json()
+    set((s) => {
+      const next = { ...s.highlights }
+      for (const aid of Object.keys(next)) {
+        const aidNum = Number(aid)
+        next[aidNum] = next[aidNum].map((h) => (h.id === id ? updated : h))
+      }
+      return { highlights: next }
+    })
   },
 }))

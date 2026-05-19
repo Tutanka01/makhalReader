@@ -16,7 +16,7 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DB_PATH = os.getenv("DB_PATH", "/data/basira.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -88,6 +88,11 @@ class Article(Base):
 
     # Embedding index — set to 1 once indexed in ChromaDB (Story 3.1).
     embedding_indexed = Column(Integer, default=0, nullable=True)
+    tracked_author_alert = Column(Boolean, default=False, nullable=False)
+
+    # Story 5.5 — citation graph
+    ss_paper_id = Column(String(64), nullable=True, index=True)
+    cited_by_corpus_count = Column(Integer, default=0, nullable=False)
 
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
@@ -104,6 +109,7 @@ class Highlight(Base):
     suffix_context = Column(Text, nullable=False, default="")
     color = Column(String(16), nullable=False, default="yellow")
     note = Column(Text, nullable=True)
+    thesis_section = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False)
 
     __table_args__ = (
@@ -151,6 +157,61 @@ class AuthSession(Base):
     remember_me = Column(Boolean, default=False, nullable=False)
 
 
+class ThesisContribution(Base):
+    """Singleton row storing the researcher's thesis contribution statement."""
+    __tablename__ = "thesis_contribution"
+
+    id = Column(Integer, primary_key=True, default=1)
+    statement = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class NoveltyAlert(Base):
+    """Per-article threat assessment against the thesis contribution."""
+    __tablename__ = "novelty_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False, index=True)
+    overlap_score = Column(Float, nullable=False)
+    positioning_note = Column(Text, nullable=False)
+    checked_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("article_id", name="ux_novelty_alert_article"),
+    )
+
+
+class TrackedAuthor(Base):
+    """Authors automatically tracked from high-scored papers (Story 5.2)."""
+    __tablename__ = "tracked_authors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ss_author_id = Column(String(32), unique=True, nullable=False, index=True)
+    name = Column(String(256), nullable=False)
+    paper_count = Column(Integer, default=0, nullable=False)
+    avg_score = Column(Float, default=0.0, nullable=False)
+    alert_count = Column(Integer, default=0, nullable=False)
+    last_checked = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+def get_setting(db: Session, key: str, default: str = "") -> str:
+    """Read a key from the settings table. Returns default if missing."""
+    from sqlalchemy import text as _text
+    row = db.execute(_text("SELECT value FROM settings WHERE key = :k"), {"k": key}).fetchone()
+    return row[0] if row else default
+
+
+def set_setting(db: Session, key: str, value: str) -> None:
+    """Upsert a key into the settings table."""
+    from sqlalchemy import text as _text
+    db.execute(
+        _text("INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)"),
+        {"k": key, "v": value},
+    )
+    db.commit()
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -180,6 +241,23 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_profile ON research_profile(kind, label)",
         # Story 3.4 — literature review persistence
         "CREATE TABLE IF NOT EXISTS literature_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, window_days INTEGER NOT NULL, min_rigor REAL NOT NULL DEFAULT 0.0, body_json TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        # Story 5.1 / 5.4 — settings key-value store (shared across Epic 5)
+        "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        # Story 5.1 — thesis contribution (singleton, id=1)
+        "CREATE TABLE IF NOT EXISTS thesis_contribution (id INTEGER PRIMARY KEY DEFAULT 1, statement TEXT NOT NULL, updated_at DATETIME NOT NULL)",
+        # Story 5.1 — novelty threat alerts
+        "CREATE TABLE IF NOT EXISTS novelty_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, overlap_score REAL NOT NULL, positioning_note TEXT NOT NULL, checked_at DATETIME NOT NULL)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_novelty_alert_article ON novelty_alerts(article_id)",
+        # Story 5.2 — author radar
+        "CREATE TABLE IF NOT EXISTS tracked_authors (id INTEGER PRIMARY KEY AUTOINCREMENT, ss_author_id TEXT UNIQUE NOT NULL, name TEXT NOT NULL, paper_count INTEGER NOT NULL DEFAULT 0, avg_score REAL NOT NULL DEFAULT 0.0, alert_count INTEGER NOT NULL DEFAULT 0, last_checked DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_tracked_authors_ss_author_id ON tracked_authors(ss_author_id)",
+        "ALTER TABLE articles ADD COLUMN tracked_author_alert BOOLEAN DEFAULT 0",
+        # Story 5.3 — thesis section on highlights
+        "ALTER TABLE highlights ADD COLUMN thesis_section TEXT",
+        # Story 5.5 — citation graph
+        "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
+        "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS ix_articles_ss_paper_id ON articles(ss_paper_id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

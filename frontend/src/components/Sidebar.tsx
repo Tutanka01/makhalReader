@@ -1,8 +1,10 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark } from 'lucide-react'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { Conference } from '../types'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 
-export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview'
+export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences'
 
 interface SidebarProps {
   currentView: AppView
@@ -22,6 +24,16 @@ export function Sidebar({
   onLogout
 }: SidebarProps) {
   const { filter, setFilter, articles } = useArticlesStore()
+  const [conferences, setConferences] = useState<Conference[]>([])
+
+  useEffect(() => {
+    fetch('/api/research/conferences', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setConferences(data))
+      .catch(() => {})
+  }, [])
+
+  const hasUrgent = conferences.some(c => !c.is_past && c.days_to_paper <= 14)
 
   const categories = ['All', ...Array.from(new Set(feeds.map(f => f.category))).sort()]
   const activeCategory = filter.bookmarked ? 'Bookmarks' : (filter.category ?? 'All')
@@ -48,7 +60,7 @@ export function Sidebar({
     }
   }
 
-  const NavItem = ({ icon: Icon, label, active, count, onClick }: any) => (
+  const NavItem = ({ icon: Icon, label, active, count, dot, onClick }: any) => (
     <div
       onClick={onClick}
       className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors text-[13.5px] select-none mb-[1px]
@@ -58,6 +70,9 @@ export function Sidebar({
         <Icon size={15} strokeWidth={2} />
       </div>
       <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{label}</span>
+      {dot && (
+        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+      )}
       {count !== undefined && count > 0 && (
         <span className="text-[11px] text-text-muted bg-bg-elevated rounded-full px-2 py-[1px] font-medium font-mono">
           {count > 99 ? '99+' : count}
@@ -98,6 +113,10 @@ export function Sidebar({
         <NavItem icon={Sparkles} label="Digest" active={currentView === 'digest'} onClick={() => onViewChange('digest')} />
         <NavItem icon={BookOpen} label="Lit Review" active={currentView === 'litreview'} onClick={() => onViewChange('litreview')} />
         <NavItem icon={Network} label="Clusters" active={currentView === 'research'} onClick={() => onViewChange('research')} />
+        <NavItem icon={Users} label="Authors" active={currentView === 'authors'} onClick={() => onViewChange('authors')} />
+        <NavItem icon={AlertTriangle} label="Threats" active={currentView === 'threats'} onClick={() => onViewChange('threats')} />
+        <NavItem icon={FileText} label="Writing" active={currentView === 'write'} onClick={() => onViewChange('write')} />
+        <NavItem icon={Calendar} label="Conferences" active={currentView === 'conferences'} onClick={() => onViewChange('conferences')} dot={hasUrgent} />
         <NavItem icon={BarChart2} label="Stats" active={currentView === 'stats'} onClick={() => onViewChange('stats')} />
       </div>
 

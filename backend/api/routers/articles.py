@@ -7,12 +7,12 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import or_, select as sa_select, text
 from sqlalchemy.orm import Session
 
 import structlog
 from auth import require_session
-from database import Article, Feed, ResearchProfile, get_db
+from database import Article, Feed, NoveltyAlert, ResearchProfile, get_db
 from models import ArticleListItem, ArticleOut, RelatedArticleOut
 
 _logger = structlog.get_logger().bind(service="articles")
@@ -54,7 +54,7 @@ def _normalize_url(url: str) -> str:
         return url
 
 
-def _row_to_list_item(row) -> ArticleListItem:
+def _row_to_list_item(row, threat_overlap: Optional[float] = None, threat_positioning_note: Optional[str] = None) -> ArticleListItem:
     article, feed_name = row
     return ArticleListItem(
         id=article.id,
@@ -74,6 +74,9 @@ def _row_to_list_item(row) -> ArticleListItem:
         user_feedback=article.user_feedback,
         contribution_type=article.contribution_type,
         re_document_type=article.re_document_type,
+        threat_overlap=threat_overlap,
+        threat_positioning_note=threat_positioning_note,
+        tracked_author_alert=article.tracked_author_alert or None,
     )
 
 
@@ -83,7 +86,7 @@ ARISE_RE_DOCUMENT_TYPES = ("elicitation", "extraction", "method")
 @router.get("/api/articles", response_model=List[ArticleListItem])
 async def list_articles(
     status: str = Query("unread", enum=["unread", "read", "all"]),
-    sort: str = Query("score", enum=["score", "date"]),
+    sort: str = Query("score", enum=["score", "date", "cited_by_corpus"]),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     category: Optional[str] = Query(None),
@@ -96,7 +99,23 @@ async def list_articles(
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
-    query = db.query(Article, Feed.name.label("feed_name")).join(
+    threat_overlap_subq = (
+        sa_select(NoveltyAlert.overlap_score)
+        .where(NoveltyAlert.article_id == Article.id)
+        .order_by(NoveltyAlert.checked_at.desc())
+        .limit(1)
+        .correlate(Article)
+        .scalar_subquery()
+    )
+    threat_note_subq = (
+        sa_select(NoveltyAlert.positioning_note)
+        .where(NoveltyAlert.article_id == Article.id)
+        .order_by(NoveltyAlert.checked_at.desc())
+        .limit(1)
+        .correlate(Article)
+        .scalar_subquery()
+    )
+    query = db.query(Article, Feed.name.label("feed_name"), threat_overlap_subq.label("threat_overlap"), threat_note_subq.label("threat_note")).join(
         Feed, Article.feed_id == Feed.id
     )
 
@@ -104,8 +123,8 @@ async def list_articles(
         query = query.filter(Article.url == url)
         results = query.all()
         if results:
-            row = results[0]
-            item = _row_to_list_item(row)
+            article, feed_name, threat_overlap, threat_note = results[0]
+            item = _row_to_list_item((article, feed_name), threat_overlap=threat_overlap, threat_positioning_note=threat_note)
             return [item]
         return []
 
@@ -145,12 +164,18 @@ async def list_articles(
     unread_first = Article.read_at.is_(None).desc()
     if sort == "score":
         query = query.order_by(unread_first, Article.score.desc().nullslast(), Article.created_at.desc())
+    elif sort == "cited_by_corpus":
+        query = query.order_by(unread_first, Article.cited_by_corpus_count.desc(), Article.created_at.desc())
     else:
         query = query.order_by(unread_first, Article.published_at.desc().nullslast(), Article.created_at.desc())
 
     query = query.offset(offset).limit(limit)
     results = query.all()
-    return [_row_to_list_item(row) for row in results]
+    items: List[ArticleListItem] = []
+    for row in results:
+        article, feed_name, threat_overlap, threat_note = row
+        items.append(_row_to_list_item((article, feed_name), threat_overlap=threat_overlap, threat_positioning_note=threat_note))
+    return items
 
 
 @router.get("/api/articles/{article_id}", response_model=ArticleOut)

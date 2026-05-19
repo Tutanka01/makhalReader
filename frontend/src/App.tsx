@@ -11,6 +11,10 @@ import { DigestView } from './components/DigestView'
 import { StatsView } from './components/StatsView'
 import ResearchDigestView from './components/ResearchDigestView'
 import LitReviewView from './components/LitReviewView'
+import ThreatView from './components/ThreatView'
+import AuthorRadarView from './components/AuthorRadarView'
+import WriteAssistPanel from './components/WriteAssistPanel'
+import ConferenceRadar from './components/ConferenceRadar'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -66,7 +70,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -248,7 +252,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               appView === 'feed' ? (showReader ? 'Article' : 'Feed') :
               appView === 'digest' ? 'Digest' :
               appView === 'stats' ? 'Stats' :
-              appView === 'research' ? 'Research Clusters' : 'Literature Review'
+              appView === 'research' ? 'Research Clusters' :
+              appView === 'threats' ? 'Threat Monitor' :
+              appView === 'authors' ? 'Author Radar' :
+              appView === 'write' ? 'Writing Assistant' :
+              appView === 'conferences' ? 'Conference Radar' : 'Literature Review'
             }
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
@@ -279,9 +287,17 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
             ) : appView === 'digest' ? (
               <DigestView onSelect={handleSelectArticle} />
             ) : appView === 'stats' ? (
-              <StatsView onClose={() => setAppView('feed')} />
+              <StatsView onClose={() => setAppView('feed')} onSelectArticle={handleSelectArticle} />
             ) : appView === 'research' ? (
               <ResearchDigestView onSelect={handleSelectArticle} />
+            ) : appView === 'threats' ? (
+              <ThreatView onSelectArticle={handleSelectArticle} />
+            ) : appView === 'authors' ? (
+              <AuthorRadarView />
+            ) : appView === 'write' ? (
+              <WriteAssistPanel />
+            ) : appView === 'conferences' ? (
+              <ConferenceRadar />
             ) : (
               <LitReviewView onSelectArticle={handleSelectArticle} />
             )}

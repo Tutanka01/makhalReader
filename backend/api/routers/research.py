@@ -3,32 +3,63 @@
 All heavy imports (hdbscan, numpy, chromadb) are deferred inside endpoint
 functions so the API service starts even if these packages are absent.
 """
+import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import Article, Feed, LiteratureReview, ResearchProfile, get_db
+from fastapi.responses import StreamingResponse
+
+from database import (
+    Article,
+    Feed,
+    Highlight,
+    LiteratureReview,
+    NoveltyAlert,
+    ResearchProfile,
+    ThesisContribution,
+    TrackedAuthor,
+    get_db,
+    get_setting,
+)
 from models import (
     AriseArticleOut,
     AriseExportRequest,
+    AuthorScanResponse,
+    CitationIndexResult,
+    CitationStatsOut,
     ClusterOut,
     ComparisonRow,
+    ConferenceBookmark,
+    ConferenceOut,
     ExternalPaper,
     ExternalReviewCreate,
     ExternalReviewOut,
+    HighlightExportOut,
+    HighlightExportRequest,
+    HighlightOut,
     LiteratureReviewCreate,
     LiteratureReviewOut,
     LiteratureReviewSummaryOut,
+    NoveltyAlertOut,
     ResearchProfileEntry,
     ResearchProfileUpsert,
     ReviewClusterOut,
+    SourceArticle,
+    ThesisContributionOut,
+    ThesisContributionUpdate,
+    TopCitedItem,
+    TrackedAuthorOut,
+    ThreatScanResponse,
+    _VALID_THESIS_SECTIONS,
     build_arise_row,
 )
 from routers.articles import ARISE_RE_DOCUMENT_TYPES
@@ -661,3 +692,617 @@ async def export_arise(
         out.append(build_arise_row(article, fname or ""))
     logger.info("arise_export", n_rows=len(out), since=since.isoformat())
     return out
+
+
+# ── Novelty Threat Monitor (Story 5.1) ────────────────────────────────────────
+
+_LLM_TIMEOUT = 45
+_THREAT_LLM_MODEL = os.getenv("QA_MODEL", os.getenv("SCORER_MODEL", "google/gemini-flash-1.5"))
+_UNI_OLLAMA_URL = os.getenv("UNI_OLLAMA_URL", "").rstrip("/")
+_OLLAMA_LLM_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434").rstrip("/")
+_OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
+_THREAT_SYSTEM_PROMPT = """\
+You are a research novelty analyst. You compare an academic paper's contribution against a PhD researcher's stated thesis contribution and assess overlap.
+
+Respond with valid JSON only:
+{
+  "overlap_score": <float 0.0–1.0>,
+  "positioning_note": "<2–3 sentences: what overlaps, and crucially how the researcher's contribution remains distinct>"
+}
+
+overlap_score guide:
+0.0–0.3: No meaningful overlap — different domain, method, or problem
+0.3–0.6: Partial overlap — similar topic but different approach or scope
+0.6–0.8: Significant overlap — same problem space, requires differentiation
+0.8–1.0: Critical — paper likely covers the researcher's core contribution"""
+
+
+async def _llm_assess_threat(statement: str, article: Any, db: Session) -> dict:
+    """Call LLM to assess overlap between thesis contribution and an article.
+
+    Uses the same 3-tier routing as ask.py: UNI_OLLAMA_URL → OLLAMA_URL → OPENROUTER_API_KEY.
+    Returns parsed JSON with overlap_score and positioning_note.
+    """
+    try:
+        tags = json.loads(article.tags_json or "[]")
+    except Exception:
+        tags = []
+    summary_bullets = []
+    try:
+        summary_bullets = json.loads(article.summary_bullets_json or "[]")
+    except Exception:
+        pass
+
+    user_prompt = (
+        f"RESEARCHER'S THESIS CONTRIBUTION:\n{statement}\n\n"
+        f"PAPER TO ASSESS:\n"
+        f"Title: {article.title}\n"
+        f"Summary: {'\n'.join(summary_bullets)}\n"
+        f"Tags: {', '.join(tags)}\n"
+        f"Scorer reason: {article.reason or ''}\n\n"
+        "Assess overlap."
+    )
+
+    messages = [
+        {"role": "system", "content": _THREAT_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    async with httpx.AsyncClient(timeout=_LLM_TIMEOUT) as client:
+        # Tier 1: UNI_OLLAMA_URL
+        if _UNI_OLLAMA_URL:
+            try:
+                resp = await client.post(
+                    f"{_UNI_OLLAMA_URL}/api/chat",
+                    json={"model": _THREAT_LLM_MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.1, "num_predict": 512}},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw = data.get("message", {}).get("content", "")
+                    return _parse_threat_json(raw)
+                logger.warning("threat_uni_ollama_failed", status=resp.status_code)
+            except Exception as e:
+                logger.warning("threat_uni_ollama_error", error=str(e))
+
+        # Tier 2: local OLLAMA_URL
+        try:
+            resp = await client.post(
+                f"{_OLLAMA_LLM_URL}/api/chat",
+                json={"model": _THREAT_LLM_MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.1, "num_predict": 512}},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                raw = data.get("message", {}).get("content", "")
+                return _parse_threat_json(raw)
+            logger.warning("threat_ollama_failed", status=resp.status_code)
+        except Exception as e:
+            logger.warning("threat_ollama_error", error=str(e))
+
+    # Tier 3: OpenRouter
+    if _OPENROUTER_KEY and _OPENROUTER_KEY.startswith("sk-"):
+        try:
+            async with httpx.AsyncClient(timeout=_LLM_TIMEOUT) as or_client:
+                resp = await or_client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {_OPENROUTER_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": _THREAT_LLM_MODEL,
+                        "messages": messages,
+                        "max_tokens": 512,
+                        "temperature": 0.1,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw = data["choices"][0]["message"]["content"]
+                    return _parse_threat_json(raw)
+                logger.warning("threat_openrouter_failed", status=resp.status_code)
+        except Exception as e:
+            logger.warning("threat_openrouter_error", error=str(e))
+
+    raise RuntimeError("All LLM tiers exhausted for threat assessment")
+
+
+def _parse_threat_json(raw: str) -> dict:
+    """Parse LLM JSON response, handling markdown fences."""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        cleaned = cleaned.rsplit("```", 1)[0]
+    cleaned = cleaned.strip()
+    return json.loads(cleaned)
+
+
+async def _run_threat_scan(db: Session, window_days: int = 14) -> ThreatScanResponse:
+    """Scan high-scored articles and assess novelty threat."""
+    contribution = db.query(ThesisContribution).first()
+    if not contribution:
+        raise HTTPException(
+            status_code=400,
+            detail="No thesis contribution statement configured. Use PUT /api/research/profile/contribution first.",
+        )
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    already_checked = {r.article_id for r in db.query(NoveltyAlert.article_id).all()}
+
+    query = db.query(Article).filter(Article.score >= 7.0, Article.created_at >= cutoff)
+    if already_checked:
+        query = query.filter(Article.id.notin_(already_checked))
+    candidates = query.all()
+
+    scanned = skipped = alerts_created = 0
+    for article in candidates:
+        scanned += 1
+        try:
+            result = await _llm_assess_threat(contribution.statement, article, db)
+            overlap = result.get("overlap_score", 0.0)
+            note = result.get("positioning_note", "")
+            db.add(NoveltyAlert(
+                article_id=article.id,
+                overlap_score=min(1.0, max(0.0, float(overlap))),
+                positioning_note=str(note)[:1000],
+                checked_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+            alerts_created += 1
+        except Exception as e:
+            logger.warning("threat_scan_llm_failed", article_id=article.id, error=str(e))
+            skipped += 1
+
+    return ThreatScanResponse(scanned=scanned, alerts_created=alerts_created, skipped=skipped)
+
+
+@router.get("/profile/contribution", response_model=Optional[ThesisContributionOut])
+async def get_contribution(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return the current thesis contribution statement, or null if not set."""
+    row = db.query(ThesisContribution).first()
+    if not row:
+        return None
+    return ThesisContributionOut.model_validate(row)
+
+
+@router.put("/profile/contribution", response_model=ThesisContributionOut)
+async def put_contribution(
+    body: ThesisContributionUpdate,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Upsert the thesis contribution statement (singleton — only one row ever exists)."""
+    now = datetime.now(timezone.utc)
+    existing = db.query(ThesisContribution).first()
+    if existing:
+        existing.statement = body.statement
+        existing.updated_at = now
+    else:
+        db.add(ThesisContribution(id=1, statement=body.statement, updated_at=now))
+    db.commit()
+    row = db.query(ThesisContribution).first()
+    return ThesisContributionOut.model_validate(row)
+
+
+@router.post("/threats/scan", response_model=ThreatScanResponse)
+async def scan_threats(
+    window_days: int = Query(default=14, ge=1, le=90),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Scan recent high-scored articles for novelty overlap with the thesis contribution.
+
+    Returns ThreatScanResponse with counts of scanned, alerted, and skipped articles.
+    Returns 400 if no thesis contribution is configured.
+    """
+    return await _run_threat_scan(db, window_days=window_days)
+
+
+@router.get("/threats", response_model=List[NoveltyAlertOut])
+async def list_threats(
+    since_days: int = Query(default=30, ge=1, le=365),
+    min_overlap: float = Query(default=0.0, ge=0.0, le=1.0),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return threat assessments, sorted by overlap_score descending."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    rows = (
+        db.query(NoveltyAlert, Article.title, Article.url, Article.score)
+        .join(Article, NoveltyAlert.article_id == Article.id)
+        .filter(NoveltyAlert.checked_at >= cutoff, NoveltyAlert.overlap_score >= min_overlap)
+        .order_by(NoveltyAlert.overlap_score.desc())
+        .all()
+    )
+    return [
+        NoveltyAlertOut(
+            article_id=alert.article_id,
+            title=article_title,
+            url=article_url,
+            score=article_score,
+            overlap_score=alert.overlap_score,
+            positioning_note=alert.positioning_note,
+            checked_at=alert.checked_at,
+        )
+        for alert, article_title, article_url, article_score in rows
+    ]
+
+
+# ── Author Radar (Story 5.2) ──────────────────────────────────────────────────
+
+import math as _math
+
+
+@router.get("/authors", response_model=List[TrackedAuthorOut])
+async def list_authors(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return tracked authors sorted by relevance (avg_score * log1p(paper_count))."""
+    rows = db.query(TrackedAuthor).all()
+    rows.sort(
+        key=lambda a: a.avg_score * _math.log1p(a.paper_count),
+        reverse=True,
+    )
+    return [TrackedAuthorOut.model_validate(r) for r in rows]
+
+
+@router.post("/authors/scan", response_model=AuthorScanResponse)
+async def scan_authors(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Trigger author radar scan for all tracked authors."""
+    from author_radar import run_author_radar_scan  # noqa: PLC0415
+
+    return await run_author_radar_scan(db)
+
+
+@router.delete("/authors/{ss_author_id}", status_code=204)
+async def delete_author(
+    ss_author_id: str,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Remove an author from tracking. Existing articles keep their tracked_author_alert flag."""
+    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_author_id).first()
+    if not author:
+        raise HTTPException(status_code=404, detail="Author not found")
+    db.delete(author)
+    db.commit()
+    logger.info("author_deleted", ss_author_id=ss_author_id)
+
+
+# ── Highlights → Writing Pipeline (Story 5.3) ─────────────────────────────────
+
+_LLM_SYNTHESIS_MODEL = os.getenv("QA_MODEL", os.getenv("SCORER_MODEL", "google/gemini-flash-1.5"))
+
+_SYNTHESIS_SYSTEM_PROMPT = """\
+You are a PhD thesis writing assistant. You help draft synthesis paragraphs from reading highlights.
+
+Write a cohesive academic synthesis paragraph of 180–250 words that:
+1. Synthesizes the key findings across these passages with proper academic hedging ("X et al. show...", "Several studies suggest...")
+2. Uses in-text citation placeholders like [Author Year] derived from the paper titles where possible
+3. Ends with a forward-looking gap sentence that sets up the researcher's own contribution
+4. Is ready to paste into the specified thesis section with minimal editing
+
+Output only the paragraph — no preamble, no explanation."""
+
+
+def _format_highlights_for_prompt(highlight_rows: list, max_chars: int = 6000) -> str:
+    """Format highlights into prompt block, truncating oldest/lowest-scored first."""
+    lines: list[str] = []
+    for h, article, article_score in highlight_rows:
+        pub_year = ""
+        if article.paper_meta_json:
+            try:
+                pm = json.loads(article.paper_meta_json)
+                if pm.get("year"):
+                    pub_year = str(pm["year"])
+            except Exception:
+                pass
+        note_line = f"Note: {h.note}" if h.note else ""
+        score_str = f"{article_score:.1f}" if article_score else "N/A"
+        lines.append(
+            f"[Score {score_str}] {article.title} ({pub_year})\n"
+            f"> \"{h.selected_text}\"\n"
+            f"{note_line}\n---"
+        )
+
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        # Truncate: remove from the end (oldest/lowest scored highlights)
+        text = text[:max_chars]
+        # Try to break at last --- boundary
+        last_break = text.rfind("\n---")
+        if last_break > max_chars * 0.7:
+            text = text[:last_break]
+    return text
+
+
+async def _llm_synthesize_highlights(thesis_section: str, formatted_highlights: str, article_count: int) -> AsyncGenerator[str, None]:
+    """Stream LLM synthesis via SSE (same pattern as ask.py)."""
+    user_prompt = (
+        f"THESIS SECTION: {thesis_section}\n"
+        f"RESEARCHER DOMAIN: AI-driven model-based engineering for cyber-physical systems.\n\n"
+        f"HIGHLIGHTED PASSAGES (from {article_count} papers, best scored first):\n"
+        f"{formatted_highlights}\n\n"
+        f"Write a cohesive academic synthesis paragraph of 180–250 words for the {thesis_section} section."
+    )
+
+    messages = [
+        {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # 3-tier LLM routing (same as threat scan and ask.py)
+    async with httpx.AsyncClient(timeout=60) as client:
+        # Tier 1: UNI_OLLAMA_URL
+        if _UNI_OLLAMA_URL:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{_UNI_OLLAMA_URL}/api/chat",
+                    json={"model": _LLM_SYNTHESIS_MODEL, "messages": messages, "stream": True, "options": {"temperature": 0.3, "num_predict": 1024}},
+                ) as resp:
+                    if resp.status_code == 200:
+                        async for line in resp.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                delta = chunk.get("message", {}).get("content", "")
+                                if delta:
+                                    yield f"data: {json.dumps({'text': delta})}\n\n"
+                                if chunk.get("done"):
+                                    return
+                            except Exception:
+                                pass
+                        return
+            except Exception as e:
+                logger.warning("synthesis_uni_ollama_error", error=str(e))
+
+        # Tier 2: local OLLAMA_URL
+        try:
+            async with client.stream(
+                "POST",
+                f"{_OLLAMA_LLM_URL}/api/chat",
+                json={"model": _LLM_SYNTHESIS_MODEL, "messages": messages, "stream": True, "options": {"temperature": 0.3, "num_predict": 1024}},
+            ) as resp:
+                if resp.status_code == 200:
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            delta = chunk.get("message", {}).get("content", "")
+                            if delta:
+                                yield f"data: {json.dumps({'text': delta})}\n\n"
+                            if chunk.get("done"):
+                                return
+                        except Exception:
+                            pass
+                    return
+        except Exception as e:
+            logger.warning("synthesis_ollama_error", error=str(e))
+
+    # Tier 3: OpenRouter (must reach here before yielding)
+    if _OPENROUTER_KEY and _OPENROUTER_KEY.startswith("sk-"):
+        try:
+            async with httpx.AsyncClient(timeout=60) as or_client:
+                async with or_client.stream(
+                    "POST",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {_OPENROUTER_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": _LLM_SYNTHESIS_MODEL,
+                        "messages": messages,
+                        "stream": True,
+                        "max_tokens": 1024,
+                        "temperature": 0.3,
+                    },
+                ) as resp:
+                    if resp.status_code == 200:
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data = line[6:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                                delta = chunk["choices"][0]["delta"].get("content", "")
+                                if delta:
+                                    yield f"data: {json.dumps({'text': delta})}\n\n"
+                            except Exception:
+                                pass
+        except Exception as e:
+            logger.warning("synthesis_openrouter_error", error=str(e))
+
+    yield f"data: {json.dumps({'error': 'All LLM tiers exhausted'})}\n\n"
+    yield "data: {\"done\": true}\n\n"
+
+
+@router.post("/export-highlights")
+async def export_highlights(
+    body: HighlightExportRequest,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Synthesize tagged highlights into a writing block via streaming LLM."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=body.window_days)
+
+    # Query highlights with article join, ordered by article score desc
+    results = (
+        db.query(Highlight, Article, Article.score)
+        .join(Article, Highlight.article_id == Article.id)
+        .filter(
+            Highlight.thesis_section == body.thesis_section,
+            Highlight.created_at >= cutoff,
+        )
+        .order_by(Article.score.desc().nullslast())
+        .all()
+    )
+
+    if len(results) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Not enough highlights for synthesis (found {len(results)}, minimum 2).",
+        )
+
+    # Limit to max_highlights
+    results = results[: body.max_highlights]
+    article_ids = list({r.article_id for r, _, _ in results})
+
+    formatted = _format_highlights_for_prompt(results)
+
+    async def generate():
+        async for event in _llm_synthesize_highlights(body.thesis_section, formatted, len(article_ids)):
+            yield event
+        yield "data: {\"done\": true}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/export-highlights/sections")
+async def list_highlight_sections(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return all thesis sections with their highlight counts (0 for untagged sections)."""
+    from sqlalchemy import func
+
+    counts_rows = (
+        db.query(Highlight.thesis_section, func.count(Highlight.id).label("count"))
+        .filter(Highlight.thesis_section.isnot(None))
+        .group_by(Highlight.thesis_section)
+        .all()
+    )
+    count_map = {row[0]: row[1] for row in counts_rows}
+    return [
+        {"thesis_section": section, "count": count_map.get(section, 0)}
+        for section in sorted(_VALID_THESIS_SECTIONS)
+    ]
+
+
+# ── In-Corpus Citation Graph (Story 5.5) ──────────────────────────────────────
+
+
+@router.post("/citations/index")
+async def trigger_citation_index(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Trigger a citation index run in the background."""
+    from citation_indexer import index_citations  # noqa: PLC0415
+
+    background_tasks.add_task(index_citations, db)
+    return {"status": "indexing started"}
+
+
+@router.get("/citations/stats", response_model=CitationStatsOut)
+async def citation_stats(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return citation graph statistics."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    # Papers with ss_paper_id
+    indexed_papers = (
+        db.query(func.count(Article.id))
+        .filter(Article.ss_paper_id.isnot(None))
+        .scalar()
+    ) or 0
+
+    # Sum of all citation links
+    total_citation_links = (
+        db.query(func.coalesce(func.sum(Article.cited_by_corpus_count), 0))
+        .scalar()
+    ) or 0
+
+    # Top 10 most cited
+    top_rows = (
+        db.query(Article.id, Article.title, Article.score, Article.cited_by_corpus_count)
+        .filter(Article.cited_by_corpus_count > 0)
+        .order_by(Article.cited_by_corpus_count.desc())
+        .limit(10)
+        .all()
+    )
+    top_cited = [
+        TopCitedItem(
+            id=r.id,
+            title=r.title,
+            score=r.score,
+            cited_by_corpus_count=r.cited_by_corpus_count,
+        )
+        for r in top_rows
+    ]
+
+    # Last indexed time
+    raw = get_setting(db, "citations_last_indexed_at", "")
+    last_indexed_at: datetime | None = None
+    if raw:
+        try:
+            last_indexed_at = datetime.fromisoformat(raw)
+        except Exception:
+            pass
+
+    return CitationStatsOut(
+        indexed_papers=indexed_papers,
+        total_citation_links=total_citation_links,
+        top_cited=top_cited,
+        last_indexed_at=last_indexed_at,
+    )
+
+
+# ── Conference Radar (Story 5.6) ──────────────────────────────────────────────
+
+
+@router.get("/conferences", response_model=List[ConferenceOut])
+async def list_conferences(
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Return all conferences with countdowns and bookmark state."""
+    from conferences import get_conferences_with_countdown  # noqa: PLC0415
+
+    raw = get_setting(db, "bookmarked_conferences", "")
+    bookmarked = set(v.strip() for v in raw.split(",") if v.strip())
+    return get_conferences_with_countdown(bookmarked)
+
+
+@router.post("/conferences/bookmark", response_model=List[ConferenceOut])
+async def toggle_conference_bookmark(
+    body: ConferenceBookmark,
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    """Toggle bookmark for a conference venue."""
+    from conferences import get_conferences_with_countdown  # noqa: PLC0415
+
+    raw = get_setting(db, "bookmarked_conferences", "")
+    bookmarked = set(v.strip() for v in raw.split(",") if v.strip())
+
+    if body.bookmarked:
+        bookmarked.add(body.venue)
+    else:
+        bookmarked.discard(body.venue)
+
+    set_setting(db, "bookmarked_conferences", ",".join(sorted(bookmarked)))
+    return get_conferences_with_countdown(bookmarked)
