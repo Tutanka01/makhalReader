@@ -9,3 +9,8 @@ frontend/dist/
 .claude/
 
 .ruff_cache/
+
+.cursor/
+
+_bmad-output/
+_bmad/
