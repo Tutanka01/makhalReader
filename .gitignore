@@ -6,6 +6,7 @@ __pycache__/
 node_modules/
 frontend/dist/
 
+
 .claude/
 
 .ruff_cache/
@@ -14,3 +15,8 @@ frontend/dist/
 
 _bmad-output/
 _bmad/
+
+.github/workflows
+
+CLOUDFLARE_DEPLOY.md
+DEPLOY.md

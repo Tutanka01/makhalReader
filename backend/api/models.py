@@ -140,6 +140,7 @@ class ClusterOut(BaseModel):
     centroid_title: str
     top_tags: List[str]
     article_ids: List[int]
+    article_titles: List[str] = []
 
 
 # ── Researcher Profile (Story 3.3) ────────────────────────────────────────────

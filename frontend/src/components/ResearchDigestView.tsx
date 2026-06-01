@@ -141,8 +141,9 @@ export default function ResearchDigestView({ onSelect }: ResearchDigestViewProps
                   {/* Expanded article list */}
                   {isExpanded && (
                     <div className="border-t border-border-subtle bg-bg-base divide-y divide-border-subtle/50">
-                      {cluster.article_ids.map(id => {
+                      {cluster.article_ids.map((id, index) => {
                         const article = articleMap.get(id)
+                        const title = article ? article.title : (cluster.article_titles?.[index] || `Article #${id}`)
                         return (
                           <button
                             key={id}
@@ -150,7 +151,7 @@ export default function ResearchDigestView({ onSelect }: ResearchDigestViewProps
                             className="w-full text-left px-4 py-2 hover:bg-bg-elevated transition-colors group/item"
                           >
                             <p className="text-xs text-text-secondary group-hover/item:text-text-primary line-clamp-2 leading-snug">
-                              {article ? article.title : `Article #${id}`}
+                              {title}
                             </p>
                             {article && (
                               <div className="flex items-center gap-1.5 mt-0.5">

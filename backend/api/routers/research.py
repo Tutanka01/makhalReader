@@ -223,21 +223,29 @@ async def get_clusters(
             return []
 
         # Heavy scientific imports — deferred to avoid startup cost + allow graceful fail
-        import hdbscan as _hdbscan  # noqa: PLC0415
+        from sklearn.cluster import AgglomerativeClustering  # noqa: PLC0415
         import numpy as np  # noqa: PLC0415
 
         vectors = [id_to_vector[a.id] for a in valid_articles]
         matrix = np.array(vectors, dtype=np.float32)
 
-        labels = _hdbscan.HDBSCAN(min_cluster_size=min_size).fit_predict(matrix)
+        labels = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=0.4,
+            metric='cosine',
+            linkage='average'
+        ).fit_predict(matrix)
 
         clusters: List[ClusterOut] = []
         for cluster_id in sorted(set(labels)):
-            if cluster_id == -1:  # noise — excluded per AC 2
+            if cluster_id == -1:  # noise (Agglomerative doesn't typically output -1, but just in case)
                 continue
 
             mask = labels == cluster_id
             cluster_articles = [a for a, m in zip(valid_articles, mask) if m]
+            if len(cluster_articles) < min_size:
+                continue
+                
             cluster_vectors = matrix[mask]
 
             # Centroid title = article whose embedding is nearest to cluster mean
@@ -254,12 +262,16 @@ async def get_clusters(
             top_tags = [t for t, _ in sorted(tag_counts.items(), key=lambda x: -x[1])[:5]]
 
             clusters.append(ClusterOut(
-                cluster_id=int(cluster_id),  # cast numpy.int64 → Python int for JSON
+                cluster_id=int(cluster_id),
                 size=len(cluster_articles),
                 centroid_title=centroid_title,
                 top_tags=top_tags,
                 article_ids=[a.id for a in cluster_articles],
+                article_titles=[a.title for a in cluster_articles],
             ))
+
+        # Sort clusters by size descending
+        clusters.sort(key=lambda c: c.size, reverse=True)
 
         logger.info("clusters_computed", n_clusters=len(clusters), window_days=window_days,
                     n_articles=len(valid_articles))

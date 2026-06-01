@@ -1,15 +1,21 @@
-# Stage 1: Build
-FROM node:20-alpine AS builder
-
+# Stage 1: Base
+FROM node:20-alpine AS base
 WORKDIR /app
-
-COPY package.json ./
+COPY package.json package-lock.json* ./
 RUN npm install
 
+# Stage 2: Dev
+FROM base AS dev
+COPY . .
+# Bind Vite to port 80 so Caddy can proxy to it seamlessly
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]
+
+# Stage 3: Builder
+FROM base AS builder
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve
+# Stage 4: Serve
 FROM nginx:alpine
 
 # Copy built assets

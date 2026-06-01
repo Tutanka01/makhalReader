@@ -27,6 +27,7 @@ _PAPER_PATTERNS = [
     "openreview.net/forum",
     "aclanthology.org/",
     "doi.org/",
+    "sci-hub.",
 ]
 
 _CLASSIFICATION_PROMPT = (

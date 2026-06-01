@@ -89,6 +89,7 @@ export interface Cluster {
   centroid_title: string
   top_tags: string[]
   article_ids: number[]
+  article_titles: string[]
 }
 
 // ── Researcher Profile (Story 3.3) ────────────────────────────────────────────

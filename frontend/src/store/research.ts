@@ -53,6 +53,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
     try {
       const r = await fetch(`/api/research/clusters?window_days=${windowDays}`, {
         credentials: 'include',
+        cache: 'no-store',
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data: Cluster[] = await r.json()
