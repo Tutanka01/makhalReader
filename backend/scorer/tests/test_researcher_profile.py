@@ -267,6 +267,63 @@ class TestProfileSectionsCRUD:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.6) — GET/PUT /api/profile/config (FR-MT-20)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestProfileConfigEndpoints:
+    def test_get_config_route_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "@router.get(\"/config\"" in src
+
+    def test_put_config_route_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "@router.put(\"/config\"" in src
+
+    def test_config_response_model_has_user_id(self):
+        src = _read(_PROFILE_PY)
+        assert "class UserConfigResponse" in src
+        assert "user_id: int" in src
+
+    def test_config_update_handles_partial(self):
+        src = _read(_PROFILE_PY)
+        assert "class ConfigUpdate" in src
+        assert "thesis_title: str | None = None" in src
+
+    def test_config_includes_prompt_profile(self):
+        src = _read(_PROFILE_PY)
+        assert "prompt_profile" in src
+
+    def test_config_includes_model_preference(self):
+        src = _read(_PROFILE_PY)
+        assert "model_preference" in src
+
+    def test_config_get_uses_current_user(self):
+        src = _read(_PROFILE_PY)
+        assert "current_user[\"id\"]" in src
+
+    def test_config_put_commits(self):
+        src = _read(_PROFILE_PY)
+        assert "db.commit()" in src
+
+    def test_config_put_updates_thesis_title(self):
+        src = _read(_PROFILE_PY)
+        assert "config.thesis_title = updates[\"thesis_title\"]" in src
+
+    def test_config_put_skips_empty_fields(self):
+        src = _read(_PROFILE_PY)
+        assert "exclude_none=True" in src or "exclude_none" in src
+
+    def test_config_helper_json_parses(self):
+        src = _read(_PROFILE_PY)
+        assert "json.loads" in src
+        assert "UserConfigResponse" in src
+
+    def test_config_shared_helper_for_sections(self):
+        src = _read(_PROFILE_PY)
+        assert "_get_user_config" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AC 4 — Feedback hook: tags → research_profile on 👍
 # ═══════════════════════════════════════════════════════════════════════════════
 
