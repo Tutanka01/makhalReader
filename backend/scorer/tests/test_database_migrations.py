@@ -39,7 +39,7 @@ if SQLALCHEMY_AVAILABLE:
     if str(SHARED_DIR) not in sys.path:
         sys.path.insert(0, str(SHARED_DIR))
 
-    from database import Article, Base, Feed, Organization, SessionLocal, User, init_db
+    from database import Article, ArticleScore, Base, Feed, Organization, SessionLocal, User, init_db
 
 
 @pytest.fixture()
@@ -268,3 +268,132 @@ class TestMultiTenantTables:
         articles = Session().query(db_module.Article).all()
         assert len(articles) == 1
         assert articles[0].title == "Existing Article"
+
+
+class TestArticleScoresTable:
+    """Story 2.1 — article_scores table + backfill (FR-MT-7, FR-MT-12)."""
+
+    def test_article_scores_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "article_scores" in tables
+
+    def test_article_scores_columns(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("article_scores")}
+        expected = {"user_id", "article_id", "score", "tags_json", "summary_bullets_json",
+                    "reason", "read_at", "bookmarked", "user_feedback", "contribution_type",
+                    "re_document_type", "score_meta_json", "created_at"}
+        assert expected.issubset(columns)
+
+    def _make_feed_and_article(self, session, db_module, url_slug, title, seed_user=True, **kwargs):
+        """Helper: create a feed + article, return the article id."""
+        feed = db_module.Feed(url=f"https://{url_slug}.com/rss", name=f"{title} Feed", category="Test")
+        session.add(feed)
+        session.commit()
+
+        from datetime import datetime
+        article_kwargs = dict(
+            feed_id=feed.id,
+            title=title,
+            url=f"https://{url_slug}.com/1",
+            created_at=datetime.utcnow(),
+            score=0.75,
+            tags_json='["nlp"]',
+            summary_bullets_json='["key finding"]',
+            reason="Important work",
+            read_at=datetime.utcnow(),
+            bookmarked=True,
+            contribution_type="method",
+            re_document_type="elicitation",
+        )
+        article_kwargs.update(kwargs)
+        article = db_module.Article(**article_kwargs)
+        session.add(article)
+        session.commit()
+        session.refresh(article)
+        aid = article.id
+        session.close()
+        return aid
+
+    def test_backfill_preserves_article_data(self, tmp_db):
+        import json
+        engine, db_module = tmp_db
+        db_module.init_db()
+
+        aid = self._make_feed_and_article(
+            sessionmaker(bind=engine)(), db_module,
+            "backfill-preserve", "Backfill Article",
+        )
+
+        db_module.init_db()
+
+        session = sessionmaker(bind=engine)()
+        row = session.execute(
+            text("SELECT * FROM article_scores WHERE user_id = 1 AND article_id = :aid"),
+            {"aid": aid},
+        ).fetchone()
+        session.close()
+
+        assert row is not None, "Backfill should have created article_scores row"
+        assert row.score == 0.75
+        assert row.tags_json == '["nlp"]'
+        assert row.summary_bullets_json == '["key finding"]'
+        assert row.reason == "Important work"
+        assert row.bookmarked == 1
+        assert row.contribution_type == "method"
+        assert row.re_document_type == "elicitation"
+
+    def test_backfill_idempotent(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+
+        aid = self._make_feed_and_article(
+            sessionmaker(bind=engine)(), db_module,
+            "idempotent-test", "ID Article", score=0.5,
+        )
+
+        db_module.init_db()  # creates article_scores + backfills
+        db_module.init_db()  # must not duplicate
+
+        session = sessionmaker(bind=engine)()
+        rows = session.execute(
+            text("SELECT COUNT(*) FROM article_scores WHERE user_id = 1 AND article_id = :aid"),
+            {"aid": aid},
+        ).scalar()
+        session.close()
+
+        assert rows == 1, "Backfill must be idempotent — no duplicate rows"
+
+    def test_no_data_loss_for_existing_articles(self, tmp_db):
+        from datetime import datetime
+        engine, db_module = tmp_db
+        db_module.init_db()
+
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(url="https://no-loss.com/rss", name="NL Feed", category="Test")
+        session.add(feed)
+        session.commit()
+        article = db_module.Article(
+            feed_id=feed.id,
+            title="No Loss Article",
+            url="https://no-loss.com/1",
+            created_at=datetime.utcnow(),
+        )
+        session.add(article)
+        session.commit()
+        session.close()
+
+        db_module.init_db()
+
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        articles = session.query(db_module.Article).all()
+        assert len(articles) == 1
+        assert articles[0].title == "No Loss Article"
+        session.close()

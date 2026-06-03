@@ -4,6 +4,8 @@ Static conference data with countdown computation.
 No DB table required — just Python data + settings table for bookmarks.
 Update this file each September when major venue deadlines are announced.
 """
+from __future__ import annotations
+
 from datetime import date
 
 CONFERENCES = [

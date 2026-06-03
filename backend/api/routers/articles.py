@@ -7,12 +7,12 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select as sa_select, text
+from sqlalchemy import and_, func, or_, select as sa_select, text
 from sqlalchemy.orm import Session
 
 import structlog
 from auth import require_session
-from database import Article, Feed, NoveltyAlert, ResearchProfile, get_db
+from database import Article, ArticleScore, Feed, NoveltyAlert, ResearchProfile, get_db
 from models import ArticleListItem, ArticleOut, RelatedArticleOut
 
 _logger = structlog.get_logger().bind(service="articles")
@@ -54,26 +54,33 @@ def _normalize_url(url: str) -> str:
         return url
 
 
-def _row_to_list_item(row, threat_overlap: Optional[float] = None, threat_positioning_note: Optional[str] = None) -> ArticleListItem:
-    article, feed_name = row
+def _pick(article_score: Optional[ArticleScore], article: Article, attr: str):
+    """Prefer article_score value, fall back to article (FR-MT-7)."""
+    aval = getattr(article_score, attr, None) if article_score is not None else None
+    if aval is not None:
+        return aval
+    return getattr(article, attr)
+
+
+def _row_to_list_item(article: Article, feed_name: str, article_score: Optional[ArticleScore] = None, threat_overlap: Optional[float] = None, threat_positioning_note: Optional[str] = None) -> ArticleListItem:
     return ArticleListItem(
         id=article.id,
         feed_id=article.feed_id,
         title=article.title,
         url=article.url,
         published_at=article.published_at,
-        score=article.score,
-        tags_json=article.tags_json or "[]",
-        summary_bullets_json=article.summary_bullets_json or "[]",
-        reason=article.reason,
-        read_at=article.read_at,
-        bookmarked=article.bookmarked,
+        score=_pick(article_score, article, "score"),
+        tags_json=_pick(article_score, article, "tags_json") or "[]",
+        summary_bullets_json=_pick(article_score, article, "summary_bullets_json") or "[]",
+        reason=_pick(article_score, article, "reason"),
+        read_at=_pick(article_score, article, "read_at"),
+        bookmarked=_pick(article_score, article, "bookmarked") or False,
         extraction_failed=article.extraction_failed,
         created_at=article.created_at,
         feed_name=feed_name or "",
-        user_feedback=article.user_feedback,
-        contribution_type=article.contribution_type,
-        re_document_type=article.re_document_type,
+        user_feedback=_pick(article_score, article, "user_feedback"),
+        contribution_type=_pick(article_score, article, "contribution_type"),
+        re_document_type=_pick(article_score, article, "re_document_type"),
         threat_overlap=threat_overlap,
         threat_positioning_note=threat_positioning_note,
         tracked_author_alert=article.tracked_author_alert or None,
@@ -97,8 +104,9 @@ async def list_articles(
     contribution_type: Optional[str] = Query(None, max_length=32),
     re_document_type: Optional[str] = Query(None, max_length=32),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = _auth,
 ):
+    user_id = current_user["id"]
     threat_overlap_subq = (
         sa_select(NoveltyAlert.overlap_score)
         .where(NoveltyAlert.article_id == Article.id)
@@ -115,16 +123,30 @@ async def list_articles(
         .correlate(Article)
         .scalar_subquery()
     )
-    query = db.query(Article, Feed.name.label("feed_name"), threat_overlap_subq.label("threat_overlap"), threat_note_subq.label("threat_note")).join(
+    query = db.query(
+        Article, Feed.name.label("feed_name"), ArticleScore,
+        threat_overlap_subq.label("threat_overlap"), threat_note_subq.label("threat_note"),
+    ).join(
         Feed, Article.feed_id == Feed.id
+    ).outerjoin(
+        ArticleScore,
+        and_(ArticleScore.article_id == Article.id, ArticleScore.user_id == user_id),
     )
+
+    # SQL-level COALESCE helpers for filtering / sorting (FR-MT-7, FR-MT-12)
+    _read_at = func.coalesce(ArticleScore.read_at, Article.read_at)
+    _bookmarked = func.coalesce(ArticleScore.bookmarked, Article.bookmarked, False)
+    _score = func.coalesce(ArticleScore.score, Article.score)
+    _ct = func.coalesce(ArticleScore.contribution_type, Article.contribution_type)
+    _rdt = func.coalesce(ArticleScore.re_document_type, Article.re_document_type)
+    _tags = func.coalesce(ArticleScore.tags_json, Article.tags_json)
 
     if url is not None:
         query = query.filter(Article.url == url)
         results = query.all()
         if results:
-            article, feed_name, threat_overlap, threat_note = results[0]
-            item = _row_to_list_item((article, feed_name), threat_overlap=threat_overlap, threat_positioning_note=threat_note)
+            article, feed_name, article_score, threat_overlap, threat_note = results[0]
+            item = _row_to_list_item(article, feed_name, article_score=article_score, threat_overlap=threat_overlap, threat_positioning_note=threat_note)
             return [item]
         return []
 
@@ -134,36 +156,36 @@ async def list_articles(
             or_(
                 Article.title.ilike(like),
                 Article.content_text.ilike(like),
-                Article.tags_json.ilike(like),
+                _tags.ilike(like),
             )
         )
     else:
         if status == "unread":
-            query = query.filter(Article.read_at.is_(None))
+            query = query.filter(_read_at.is_(None))
         elif status == "read":
-            query = query.filter(Article.read_at.isnot(None))
+            query = query.filter(_read_at.isnot(None))
 
     if category and category not in ("All", "all"):
         query = query.filter(Feed.category == category)
 
     if bookmarked is not None:
-        query = query.filter(Article.bookmarked == bookmarked)
+        query = query.filter(_bookmarked == bookmarked)
 
     if min_score is not None:
-        query = query.filter(Article.score >= min_score)
+        query = query.filter(_score >= min_score)
 
     if contribution_type is not None:
-        query = query.filter(Article.contribution_type == contribution_type)
+        query = query.filter(_ct == contribution_type)
 
     if re_document_type is not None:
         if re_document_type == "arise":
-            query = query.filter(Article.re_document_type.in_(ARISE_RE_DOCUMENT_TYPES))
+            query = query.filter(_rdt.in_(ARISE_RE_DOCUMENT_TYPES))
         else:
-            query = query.filter(Article.re_document_type == re_document_type)
+            query = query.filter(_rdt == re_document_type)
 
-    unread_first = Article.read_at.is_(None).desc()
+    unread_first = _read_at.is_(None).desc()
     if sort == "score":
-        query = query.order_by(unread_first, Article.score.desc().nullslast(), Article.created_at.desc())
+        query = query.order_by(unread_first, _score.desc().nullslast(), Article.created_at.desc())
     elif sort == "cited_by_corpus":
         query = query.order_by(unread_first, Article.cited_by_corpus_count.desc(), Article.created_at.desc())
     else:
@@ -173,17 +195,34 @@ async def list_articles(
     results = query.all()
     items: List[ArticleListItem] = []
     for row in results:
-        article, feed_name, threat_overlap, threat_note = row
-        items.append(_row_to_list_item((article, feed_name), threat_overlap=threat_overlap, threat_positioning_note=threat_note))
+        article, feed_name, article_score, threat_overlap, threat_note = row
+        items.append(_row_to_list_item(article, feed_name, article_score=article_score, threat_overlap=threat_overlap, threat_positioning_note=threat_note))
     return items
 
 
 @router.get("/api/articles/{article_id}", response_model=ArticleOut)
-async def get_article(article_id: int, db: Session = Depends(get_db), _: None = _auth):
-    article = db.query(Article).filter(Article.id == article_id).first()
-    if not article:
+async def get_article(article_id: int, db: Session = Depends(get_db), current_user: dict = _auth):
+    user_id = current_user["id"]
+    row = db.query(Article, ArticleScore).outerjoin(
+        ArticleScore,
+        and_(ArticleScore.article_id == Article.id, ArticleScore.user_id == user_id),
+    ).filter(Article.id == article_id).first()
+    if not row:
         raise HTTPException(status_code=404, detail="Article not found")
-    return ArticleOut.model_validate(article)
+    article, article_score = row
+    out = ArticleOut.model_validate(article)
+    s = article_score
+    if s is not None:
+        out.score = s.score if s.score is not None else out.score
+        out.tags_json = s.tags_json or out.tags_json
+        out.summary_bullets_json = s.summary_bullets_json or out.summary_bullets_json
+        out.reason = s.reason if s.reason is not None else out.reason
+        out.read_at = s.read_at if s.read_at is not None else out.read_at
+        out.bookmarked = s.bookmarked if s.bookmarked is not None else out.bookmarked
+        out.user_feedback = s.user_feedback if s.user_feedback is not None else out.user_feedback
+        out.contribution_type = s.contribution_type if s.contribution_type is not None else out.contribution_type
+        out.re_document_type = s.re_document_type if s.re_document_type is not None else out.re_document_type
+    return out
 
 
 @router.post("/api/articles/{article_id}/read")

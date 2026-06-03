@@ -3,6 +3,7 @@ BibTeX bibliography generator for Baṣīra.
 
 Generates `.bib` files from the article corpus for use in Overleaf / LaTeX.
 """
+from __future__ import annotations
 import json
 import re
 import unicodedata

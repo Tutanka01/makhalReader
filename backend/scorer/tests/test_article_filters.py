@@ -24,7 +24,7 @@ import pytest
 
 # ── env vars required by auth module before any API imports ──────────────
 os.environ.setdefault("AUTH_PASSWORD", "test-password-for-unit-tests")
-os.environ.setdefault("BASIRA_DB_PATH", "/tmp/test_basira_filters.db")
+os.environ.setdefault("DB_PATH", "/tmp/test_basira_filters.db")
 
 # ── dep check: all packages needed to run the API in-process ─────────────
 def _check_api_deps() -> bool:

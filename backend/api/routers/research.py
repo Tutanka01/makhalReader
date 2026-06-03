@@ -804,11 +804,12 @@ async def _llm_assess_threat(statement: str, article: Any, db: Session) -> dict:
     except Exception:
         pass
 
+    summary_text = '\n'.join(summary_bullets)
     user_prompt = (
         f"RESEARCHER'S THESIS CONTRIBUTION:\n{statement}\n\n"
         f"PAPER TO ASSESS:\n"
         f"Title: {article.title}\n"
-        f"Summary: {'\n'.join(summary_bullets)}\n"
+        f"Summary: {summary_text}\n"
         f"Tags: {', '.join(tags)}\n"
         f"Scorer reason: {article.reason or ''}\n\n"
         "Assess overlap."

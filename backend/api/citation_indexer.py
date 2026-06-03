@@ -3,9 +3,8 @@ In-Corpus Citation Graph indexer for Baṣīra.
 
 For each article with ss_paper_id, fetches references from Semantic Scholar API,
 cross-references against the corpus, and increments cited_by_corpus_count.
-
-Reset-and-recompute pattern: starts fresh each run to avoid accumulation drift.
 """
+from __future__ import annotations
 import asyncio
 import json
 import os

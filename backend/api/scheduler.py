@@ -9,6 +9,8 @@ Uses APScheduler to run periodic jobs:
 All jobs create their own DB session, run, log, and store last_run_at in settings.
 Manual triggers via POST endpoints continue to work independently.
 """
+from __future__ import annotations
+
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger

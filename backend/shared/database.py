@@ -149,6 +149,7 @@ class Article(Base):
     read_at = Column(DateTime, nullable=True)
     bookmarked = Column(Boolean, default=False, nullable=False)
     extraction_failed = Column(Boolean, default=False, nullable=False)
+    user_feedback = Column(Integer, nullable=True)  # 1=like, -1=dislike, NULL=no feedback
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     # Deduplication fingerprints — nullable for backwards compatibility with
     # articles ingested before this column was introduced.
@@ -165,6 +166,25 @@ class Article(Base):
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
     )
+
+
+class ArticleScore(Base):
+    """Per-user per-article scoring and engagement data (Story 2.1, FR-MT-7/12)."""
+    __tablename__ = "article_scores"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True)
+    score = Column(Float, nullable=True)
+    tags_json = Column(Text, default="[]", nullable=False)
+    summary_bullets_json = Column(Text, default="[]", nullable=False)
+    reason = Column(String, nullable=True)
+    read_at = Column(DateTime, nullable=True)
+    bookmarked = Column(Boolean, default=False, nullable=False)
+    user_feedback = Column(Integer, nullable=True)
+    contribution_type = Column(String(24), nullable=True)
+    re_document_type = Column(String(24), nullable=True)
+    score_meta_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 def get_db():
@@ -192,6 +212,8 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL DEFAULT 'member', org_id INTEGER REFERENCES organizations(id), onboarding_done BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "ALTER TABLE auth_sessions ADD COLUMN user_id INTEGER REFERENCES users(id)",
         "ALTER TABLE organizations ADD COLUMN code VARCHAR(64) UNIQUE",
+        # Story 2.1 — article_scores table + backfill from articles (FR-MT-7, FR-MT-12)
+        "CREATE TABLE IF NOT EXISTS article_scores (user_id INTEGER NOT NULL REFERENCES users(id), article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, score FLOAT, tags_json TEXT NOT NULL DEFAULT '[]', summary_bullets_json TEXT NOT NULL DEFAULT '[]', reason VARCHAR, read_at DATETIME, bookmarked BOOLEAN NOT NULL DEFAULT 0, user_feedback INTEGER, contribution_type VARCHAR(24), re_document_type VARCHAR(24), score_meta_json TEXT, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, article_id))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -201,7 +223,22 @@ def init_db():
             except Exception:
                 pass  # column already exists — idempotent
 
+        _backfill_article_scores(conn)
+
     _seed_default_user()
+
+
+def _backfill_article_scores(conn):
+    """Backfill existing per-article user data into article_scores for user_id=1 (single-tenant compat)."""
+    try:
+        conn.execute(text("""
+            INSERT OR IGNORE INTO article_scores (user_id, article_id, score, tags_json, summary_bullets_json, reason, read_at, bookmarked, user_feedback, contribution_type, re_document_type, score_meta_json, created_at)
+            SELECT 1, id, score, tags_json, summary_bullets_json, reason, read_at, bookmarked, user_feedback, contribution_type, re_document_type, score_meta_json, created_at
+            FROM articles
+        """))
+        conn.commit()
+    except Exception:
+        pass  # table may not exist yet on very first deploy
 
 
 def _seed_default_user():
