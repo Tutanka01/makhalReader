@@ -47,6 +47,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [catalog, setCatalog] = useState<CatalogFeed[]>([])
   const [toggling, setToggling] = useState<number | null>(null)
 
+  const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
+  const [scoredCount, setScoredCount] = useState(0)
+  const [previewArticles, setPreviewArticles] = useState<any[]>([])
+  const [pollTriggered, setPollTriggered] = useState(false)
+
   useEffect(() => {
     fetch('/api/onboarding/templates', { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
@@ -153,14 +158,73 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setCompleting(false)
         return
       }
-      // Fire-and-forget: trigger a first-run poll in the background
-      fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
       onComplete()
     } catch {
       setError('Network error')
       setCompleting(false)
     }
   }
+
+  // ── Step 4: trigger poll, stream via SSE, show top 3 ──────────────────
+
+  useEffect(() => {
+    if (step !== 4 || pollTriggered) return
+    setPollTriggered(true)
+
+    // Trigger poll
+    fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
+
+    // Connect SSE
+    const evtSource = new EventSource('/api/stream', { withCredentials: true })
+    const collected: any[] = []
+
+    evtSource.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'new_article' && msg.data?.score != null) {
+          collected.push(msg.data)
+          setScoredCount(collected.length)
+        }
+      } catch {}
+    }
+
+    // Poll preview endpoint every 5s
+    const previewTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/onboarding/preview', { credentials: 'include' })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.length >= 1) {
+            setPreviewArticles(data)
+          }
+        }
+      } catch {}
+    }, 5000)
+
+    // After 3 articles or 45s timeout, show preview
+    const articleCheck = setInterval(() => {
+      if (collected.length >= 3) {
+        setPollPhase('preview')
+        clearInterval(articleCheck)
+        clearInterval(previewTimer)
+        evtSource.close()
+      }
+    }, 1000)
+
+    const timeout = setTimeout(() => {
+      setPollPhase('preview')
+      clearInterval(articleCheck)
+      clearInterval(previewTimer)
+      evtSource.close()
+    }, 45000)
+
+    return () => {
+      evtSource.close()
+      clearInterval(articleCheck)
+      clearInterval(previewTimer)
+      clearTimeout(timeout)
+    }
+  }, [step, pollTriggered])
 
   const activeTemplate = templates.find(t => t.id === selectedTemplate)
 
@@ -333,19 +397,72 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     )
   }
 
-  // Step 4 — complete
+  // Step 4 — first run poll with SSE progress + top 3 preview
+  if (step === 4 && pollPhase === 'running') {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
+        <div className="w-full max-w-sm px-6 text-center">
+          <StepIndicator />
+          <div className="mt-8">
+            <div className="flex items-center justify-center gap-1.5 mb-5">
+              <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+            <h2 className="text-lg font-semibold text-text-primary mb-2">Running your first poll</h2>
+            <p className="text-sm text-text-muted leading-relaxed mb-4">
+              Baṣīra is scanning your feeds, extracting articles, and scoring them against your thesis.
+            </p>
+            <div className="text-xs text-text-muted font-mono">
+              Scored {scoredCount} article{scoredCount !== 1 ? 's' : ''} so far
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Step 4 — top 3 preview
+  const top3 = previewArticles.slice(0, 3)
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
-      <div className="w-full max-w-lg px-6">
+    <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
+      <div className="w-full max-w-lg px-6 pb-12">
         <StepIndicator />
         <div>
-          <h2 className="text-lg font-semibold text-text-primary mb-1">Almost there!</h2>
+          <h2 className="text-lg font-semibold text-text-primary mb-1">Your first results are in</h2>
           <p className="text-sm text-text-muted mb-7 leading-relaxed">
-            Your thesis, clusters, and feeds are ready. Hit <strong>Finish</strong> to enter the dashboard and see your first daily wrap.{' '}
-            <span className="text-[11px] font-mono text-text-muted">FR-MT-52</span>
+            These are the top-scoring articles so far, calibrated to <em>your</em> thesis. Scores will improve as Baṣīra learns your preferences.{' '}
+            <span className="text-[11px] font-mono text-text-muted">FR-MT-51 · Step 4</span>
           </p>
-          {error && <p className="text-danger text-xs mb-4">{error}</p>}
-          <div className="flex items-center justify-end">
+
+          {top3.length === 0 && (
+            <p className="text-sm text-text-muted mb-6">
+              No articles have been scored yet — the poll may still be running. You can check the dashboard shortly.
+            </p>
+          )}
+
+          {top3.map((a, i) => (
+            <div key={a.id} className="border border-border-subtle rounded-xl p-4 mb-3">
+              <div className="flex items-start gap-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-accent/10 text-accent text-[11px] font-bold flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-text-primary leading-snug mb-1">{a.title}</div>
+                  <div className="text-[11px] text-text-muted mb-2">{a.feed_name}</div>
+                  {a.reason && (
+                    <div className="text-[12px] text-text-secondary leading-relaxed line-clamp-2">{a.reason}</div>
+                  )}
+                </div>
+                <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-lg bg-accent/10 text-accent text-sm font-bold">
+                  {a.score?.toFixed(1)}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {error && <p className="text-danger text-xs mt-4">{error}</p>}
+          <div className="flex items-center justify-end mt-6">
             <button onClick={handleComplete} disabled={completing} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
               {completing ? 'Completing…' : 'Finish — start reading →'}
             </button>

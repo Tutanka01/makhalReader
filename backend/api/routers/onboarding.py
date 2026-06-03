@@ -1,14 +1,16 @@
 import json
 import structlog
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from auth import require_session
-from database import User, UserConfig, get_db
+from database import Article, ArticleScore, Feed, User, UserConfig, get_db
 
 logger = structlog.get_logger().bind(service="onboarding")
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
@@ -143,6 +145,43 @@ async def save_step2(
 
     logger.info("onboarding_step2_saved", user_id=current_user["id"], template=body.template_id)
     return {"status": "ok"}
+
+
+# ── Preview top scored articles (for Step 4) ──────────────────────────────
+
+
+@router.get("/preview")
+async def preview_top_articles(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+    results = (
+        db.query(Article, ArticleScore.score, ArticleScore.reason, Feed.name.label("feed_name"))
+        .join(ArticleScore, Article.id == ArticleScore.article_id)
+        .join(Feed, Article.feed_id == Feed.id)
+        .filter(
+            ArticleScore.user_id == current_user["id"],
+            ArticleScore.score.isnot(None),
+            Article.created_at >= cutoff,
+        )
+        .order_by(ArticleScore.score.desc())
+        .limit(3)
+        .all()
+    )
+    return [
+        {
+            "id": article.id,
+            "title": article.title,
+            "url": article.url,
+            "score": score,
+            "reason": reason,
+            "feed_name": feed_name,
+            "feed_id": article.feed_id,
+            "published_at": article.published_at.isoformat() if article.published_at else None,
+        }
+        for article, score, reason, feed_name in results
+    ]
 
 
 # ── Complete onboarding ────────────────────────────────────────────────────
