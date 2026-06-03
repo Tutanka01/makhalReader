@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 interface OnboardingWizardProps {
   onComplete: () => void
@@ -19,6 +19,14 @@ interface Template {
   clusters: Cluster[]
 }
 
+interface CatalogFeed {
+  id: number
+  name: string
+  url: string
+  category: string
+  subscribed: boolean
+}
+
 const REWARD_COLORS: Record<string, string> = {
   critical: 'bg-emerald-500/10 text-emerald-600',
   high: 'bg-blue-500/10 text-blue-600',
@@ -36,12 +44,24 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [completing, setCompleting] = useState(false)
   const [error, setError] = useState('')
 
+  const [catalog, setCatalog] = useState<CatalogFeed[]>([])
+  const [toggling, setToggling] = useState<number | null>(null)
+
   useEffect(() => {
     fetch('/api/onboarding/templates', { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
       .then(data => setTemplates(data))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (step === 3) {
+      fetch('/api/feeds/catalog', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setCatalog(data))
+        .catch(() => {})
+    }
+  }, [step])
 
   const handleStep1 = async () => {
     const title = thesisTitle.trim()
@@ -97,6 +117,25 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     } catch {
       setError('Network error')
       setSaving(false)
+    }
+  }
+
+  const handleToggleFeed = async (feed: CatalogFeed) => {
+    setToggling(feed.id)
+    setError('')
+    try {
+      const method = feed.subscribed ? 'DELETE' : 'POST'
+      const res = await fetch(`/api/feeds/${feed.id}/subscribe`, {
+        method,
+        credentials: 'include',
+      })
+      if (res.ok) {
+        setCatalog(prev => prev.map(f => f.id === feed.id ? { ...f, subscribed: !f.subscribed } : f))
+      }
+    } catch {
+      setError('Failed to toggle feed')
+    } finally {
+      setToggling(null)
     }
   }
 
@@ -232,7 +271,67 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     )
   }
 
-  // Step 3/4 — placeholder (feeds and first run come in 9.3/9.4)
+  if (step === 3) {
+    const grouped: Record<string, CatalogFeed[]> = {}
+    for (const feed of catalog) {
+      const cat = feed.category || 'General'
+      if (!grouped[cat]) grouped[cat] = []
+      grouped[cat].push(feed)
+    }
+
+    return (
+      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
+        <div className="w-full max-w-2xl px-6 pb-12">
+          <StepIndicator />
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary mb-1">Pick your feeds</h2>
+            <p className="text-sm text-text-muted mb-7 leading-relaxed">
+              Subscribe to research feeds relevant to your thesis. Toggle any feed on or off.{' '}
+              <span className="text-[11px] font-mono text-text-muted">FR-MT-51 · Step 3</span>
+            </p>
+            {catalog.length === 0 && (
+              <p className="text-sm text-text-muted">No feeds available in the catalog yet.</p>
+            )}
+            {Object.entries(grouped).map(([cat, feeds]) => (
+              <div key={cat} className="mb-6">
+                <h3 className="text-[11px] font-semibold uppercase tracking-widest text-text-muted mb-3">{cat}</h3>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {feeds.map(feed => (
+                    <div
+                      key={feed.id}
+                      className={`border rounded-xl px-4 py-3.5 flex items-center gap-3 transition-all ${feed.subscribed ? 'border-accent/40 bg-accent/[0.04]' : 'border-border-default bg-transparent'}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-text-primary truncate">{feed.name}</div>
+                      </div>
+                      <button
+                        onClick={() => handleToggleFeed(feed)}
+                        disabled={toggling === feed.id}
+                        className={`shrink-0 w-16 h-7 rounded-lg text-[11px] font-semibold transition-all ${feed.subscribed ? 'bg-accent text-white hover:bg-accent/90' : 'border border-border-default text-text-muted hover:border-border-hover'} disabled:opacity-50`}
+                      >
+                        {toggling === feed.id ? '…' : feed.subscribed ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {error && <p className="text-danger text-xs mt-4">{error}</p>}
+            <div className="flex items-center justify-between mt-6">
+              <button onClick={() => setStep(2)} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors">
+                ← Back
+              </button>
+              <button onClick={() => setStep(4)} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
+                Continue →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Step 4 — complete
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
       <div className="w-full max-w-lg px-6">
@@ -240,7 +339,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         <div>
           <h2 className="text-lg font-semibold text-text-primary mb-1">Almost there!</h2>
           <p className="text-sm text-text-muted mb-7 leading-relaxed">
-            Your thesis and scoring clusters are set. Feed selection and first-run scoring will be available soon.{' '}
+            Your thesis, clusters, and feeds are ready. Hit <strong>Finish</strong> to enter the dashboard and see your first daily wrap.{' '}
             <span className="text-[11px] font-mono text-text-muted">FR-MT-52</span>
           </p>
           {error && <p className="text-danger text-xs mb-4">{error}</p>}
