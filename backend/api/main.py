@@ -19,6 +19,7 @@ from routers import (
     stats,
     admin,
     internal,
+    profile,
     research,
 )
 from routers.internal import cleanup_old_articles
@@ -66,6 +67,7 @@ app.include_router(ask.router)
 app.include_router(stats.router)
 app.include_router(admin.router)
 app.include_router(internal.router)
+app.include_router(profile.router)
 app.include_router(research.router)
 
 # ---------------------------------------------------------------------------

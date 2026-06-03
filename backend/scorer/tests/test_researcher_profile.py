@@ -38,6 +38,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")
 _API_DIR = os.path.join(_REPO_ROOT, "backend", "api")
 _RESEARCH_PY = os.path.join(_API_DIR, "routers", "research.py")
 _HIGHLIGHTS_PY = os.path.join(_API_DIR, "routers", "highlights.py")
+_PROFILE_PY = os.path.join(_API_DIR, "routers", "profile.py")
 _DATABASE_PY = os.path.join(_API_DIR, "database.py")
 _ARTICLES_PY = os.path.join(_API_DIR, "routers", "articles.py")
 _INTERNAL_PY = os.path.join(_API_DIR, "routers", "internal.py")
@@ -208,6 +209,61 @@ class TestDynamicThesisSections:
         src = _read(_MODELS_PY)
         assert "validate_thesis_section" not in src
         assert "validate_section" not in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.5) — CRUD /api/profile/sections (FR-MT-22)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestProfileSectionsCRUD:
+    def test_router_file_exists(self):
+        assert os.path.exists(_PROFILE_PY)
+
+    def test_get_sections_route_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "@router.get(\"/sections\"" in src
+
+    def test_post_sections_route_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "@router.post(\"/sections\"" in src
+
+    def test_delete_sections_route_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "@router.delete(\"/sections\"" in src
+
+    def test_uses_current_user(self):
+        src = _read(_PROFILE_PY)
+        assert "current_user: dict = Depends(require_session)" in src
+
+    def test_imports_user_config(self):
+        src = _read(_PROFILE_PY)
+        assert "UserConfig" in src
+
+    def test_section_request_model_defined(self):
+        src = _read(_PROFILE_PY)
+        assert "class SectionRequest" in src
+        assert "section" in src
+
+    def test_router_registered_in_main(self):
+        src = _read(os.path.join(_API_DIR, "main.py"))
+        assert "profile" in src
+        assert "include_router(profile.router)" in src
+
+    def test_get_valid_thesis_sections_used(self):
+        src = _read(_PROFILE_PY)
+        assert "get_valid_thesis_sections" in src
+
+    def test_add_raises_409_on_duplicate(self):
+        src = _read(_PROFILE_PY)
+        assert "409" in src
+
+    def test_add_raises_422_on_empty(self):
+        src = _read(_PROFILE_PY)
+        assert "Section label cannot be empty" in src
+
+    def test_delete_raises_404_on_missing(self):
+        src = _read(_PROFILE_PY)
+        assert 'detail="Section not found"' in src or "'detail':'Section not found'" in src
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
