@@ -41,7 +41,7 @@ async def list_feeds(db: Session = Depends(get_db), current_user: dict = Depends
 
 
 @router.post("/api/feeds/opml")
-async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), _: None = _auth):
+async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
     content = await file.read()
     try:
         root = ET.fromstring(content.decode("utf-8", errors="replace"))
@@ -81,8 +81,14 @@ async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db
                 added += 1
             else:
                 skipped += 1
+            # Subscribe the import user even if feed existed
+            _ensure_subscription(db, current_user["id"], existing.id)
             continue
-        db.add(Feed(url=f["url"], name=f["name"], category=f["category"]))
+        feed = Feed(url=f["url"], name=f["name"], category=f["category"])
+        db.add(feed)
+        db.flush()
+        # Auto-subscribe the importing user
+        db.add(UserFeedSubscription(user_id=current_user["id"], feed_id=feed.id))
         added += 1
 
     db.commit()
@@ -114,7 +120,7 @@ async def get_digest(
 
 
 @router.post("/api/feeds", response_model=FeedOut)
-async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None = _auth):
+async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Basira/1.0",
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
@@ -135,6 +141,7 @@ async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None
     if existing:
         if not existing.active:
             existing.active = True
+            _ensure_subscription(db, current_user["id"], existing.id)
             db.commit()
             db.refresh(existing)
             return FeedOut.model_validate(existing)
@@ -142,6 +149,8 @@ async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), _: None
 
     feed = Feed(url=feed_data.url, name=feed_data.name, category=feed_data.category)
     db.add(feed)
+    db.flush()
+    db.add(UserFeedSubscription(user_id=current_user["id"], feed_id=feed.id))
     db.commit()
     db.refresh(feed)
     return FeedOut.model_validate(feed)
@@ -155,3 +164,45 @@ async def delete_feed(feed_id: int, db: Session = Depends(get_db), _: None = _au
     feed.active = False
     db.commit()
     return {"status": "ok"}
+
+
+@router.post("/api/feeds/{feed_id}/subscribe")
+async def subscribe_feed(feed_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    feed = db.query(Feed).filter(Feed.id == feed_id).first()
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    existing = (
+        db.query(UserFeedSubscription)
+        .filter_by(user_id=current_user["id"], feed_id=feed_id)
+        .first()
+    )
+    if existing:
+        return {"status": "already_subscribed"}
+    db.add(UserFeedSubscription(user_id=current_user["id"], feed_id=feed_id))
+    db.commit()
+    return {"status": "subscribed"}
+
+
+@router.delete("/api/feeds/{feed_id}/subscribe")
+async def unsubscribe_feed(feed_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    feed = db.query(Feed).filter(Feed.id == feed_id).first()
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    existing = (
+        db.query(UserFeedSubscription)
+        .filter_by(user_id=current_user["id"], feed_id=feed_id)
+        .first()
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not subscribed to this feed")
+    db.delete(existing)
+    db.commit()
+    return {"status": "unsubscribed"}
+
+
+def _ensure_subscription(db: Session, user_id: int, feed_id: int):
+    existing = db.query(UserFeedSubscription).filter_by(
+        user_id=user_id, feed_id=feed_id,
+    ).first()
+    if not existing:
+        db.add(UserFeedSubscription(user_id=user_id, feed_id=feed_id))

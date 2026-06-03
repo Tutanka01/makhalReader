@@ -897,3 +897,87 @@ class TestFeedSubscriptions:
         data = resp.json()
         assert len(data) == 1
         assert data[0]["name"] == "User A Feed"
+
+
+@SKIP_INTEGRATION
+class TestSubscribeUnsubscribe:
+    """Story 3.3 — POST/DELETE /api/feeds/{id}/subscribe (FR-MT-15)."""
+
+    def test_subscribe_to_feed(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+
+        resp = c.post(f"/api/feeds/{feed.id}/subscribe")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "subscribed"}
+
+        from database import UserFeedSubscription
+        sub = session.query(UserFeedSubscription).filter_by(
+            user_id=1, feed_id=feed.id,
+        ).first()
+        assert sub is not None
+
+    def test_subscribe_twice_is_idempotent(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+
+        c.post(f"/api/feeds/{feed.id}/subscribe")
+        resp = c.post(f"/api/feeds/{feed.id}/subscribe")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "already_subscribed"}
+
+    def test_unsubscribe_from_feed(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+
+        c.post(f"/api/feeds/{feed.id}/subscribe")
+
+        resp = c.delete(f"/api/feeds/{feed.id}/subscribe")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "unsubscribed"}
+
+        from database import UserFeedSubscription
+        sub = session.query(UserFeedSubscription).filter_by(
+            user_id=1, feed_id=feed.id,
+        ).first()
+        assert sub is None
+
+    def test_unsubscribe_when_not_subscribed(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+
+        resp = c.delete(f"/api/feeds/{feed.id}/subscribe")
+        assert resp.status_code == 404
+
+    def test_subscribe_nonexistent_feed(self, client):
+        c, _ = client
+        resp = c.post("/api/feeds/99999/subscribe")
+        assert resp.status_code == 404
+
+    def test_subscribe_then_feed_appears_in_list(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.json() == []
+
+        c.post(f"/api/feeds/{feed.id}/subscribe")
+
+        resp = c.get("/api/feeds")
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["id"] == feed.id
+
+    def test_unsubscribe_removes_from_list(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        session.commit()
+        c.post(f"/api/feeds/{feed.id}/subscribe")
+        c.delete(f"/api/feeds/{feed.id}/subscribe")
+
+        resp = c.get("/api/feeds")
+        assert resp.json() == []
