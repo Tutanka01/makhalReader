@@ -208,6 +208,16 @@ class UserConfig(Base):
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class UserSetting(Base):
+    """Per-user key-value settings (FR-MT-38 / Story 6.5)."""
+    __tablename__ = "user_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    key = Column(String(128), primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
 class Highlight(Base):
     __tablename__ = "highlights"
 
@@ -327,6 +337,23 @@ def set_setting(db: Session, key: str, value: str) -> None:
     db.commit()
 
 
+def get_user_setting(db: Session, user_id: int, key: str, default: str = "") -> str:
+    """Read a per-user setting. Returns default if missing."""
+    row = db.query(UserSetting).filter_by(user_id=user_id, key=key).first()
+    return row.value if row else default
+
+
+def set_user_setting(db: Session, user_id: int, key: str, value: str) -> None:
+    """Upsert a per-user setting."""
+    row = db.query(UserSetting).filter_by(user_id=user_id, key=key).first()
+    if row:
+        row.value = value
+        row.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(UserSetting(user_id=user_id, key=key, value=value))
+    db.commit()
+
+
 def _seed_default_user():
     """Auto-create seed user_id=1 when AUTH_PASSWORD is set and users table is empty."""
     raw = os.getenv("AUTH_PASSWORD", "")
@@ -429,6 +456,8 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS user_feed_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, feed_id))""",
         # Story 4.1 — user_config table (FR-MT-19)
         "CREATE TABLE IF NOT EXISTS user_config (user_id INTEGER PRIMARY KEY REFERENCES users(id), thesis_title TEXT NOT NULL DEFAULT '', thesis_question TEXT, thesis_contribution TEXT, thesis_sections_json TEXT NOT NULL DEFAULT '[]', scoring_clusters_json TEXT NOT NULL DEFAULT '[]', tracked_venues_json TEXT NOT NULL DEFAULT '[]', avoid_topics_json TEXT NOT NULL DEFAULT '[]', weekly_goal INTEGER NOT NULL DEFAULT 10, model_preference TEXT NOT NULL DEFAULT 'google/gemini-flash-1.5', prompt_profile TEXT NOT NULL DEFAULT 'unified', prompt_cache_text TEXT, prompt_cache_hash TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        # Story 6.5 — user_settings table (FR-MT-38)
+        "CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL REFERENCES users(id), key TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, key))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

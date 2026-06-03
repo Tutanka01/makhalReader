@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from auth import require_session
-from database import Article, Feed, Highlight, get_db, get_setting, set_setting
+from database import Article, Feed, Highlight, UserConfig, get_db, get_setting, set_setting
 from models import (
     DailyReadCount,
     OldestUnreadItem,
@@ -146,8 +146,12 @@ def _est_minutes(content_text: str | None) -> int:
 
 
 @router.get("/api/stats/reading-debt", response_model=ReadingDebtOut)
-async def reading_debt(db: Session = Depends(get_db), _: None = _auth):
+async def reading_debt(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
     """Return reading debt statistics."""
+    user_id = current_user["id"]
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
@@ -183,11 +187,9 @@ async def reading_debt(db: Session = Depends(get_db), _: None = _auth):
         articles_per_day = weekly_progress / 7.0
         backlog_clear_days = round(len(unread_high) / articles_per_day, 1)
 
-    # Weekly goal from settings
-    try:
-        weekly_goal = int(get_setting(db, "weekly_goal", "10"))
-    except (ValueError, TypeError):
-        weekly_goal = 10
+    # Weekly goal from per-user config
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    weekly_goal = config.weekly_goal if config else 10
 
     # Oldest unread high-value articles (top 5)
     oldest_sorted = sorted(unread_high, key=lambda a: a.created_at)[:5]
@@ -225,8 +227,12 @@ async def reading_debt(db: Session = Depends(get_db), _: None = _auth):
 async def update_reading_goal(
     body: ReadingGoalUpdate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Persist weekly reading goal."""
-    set_setting(db, "weekly_goal", str(body.weekly_goal))
+    user_id = current_user["id"]
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    if config:
+        config.weekly_goal = body.weekly_goal
+        db.commit()
     return {"status": "ok", "weekly_goal": body.weekly_goal}
