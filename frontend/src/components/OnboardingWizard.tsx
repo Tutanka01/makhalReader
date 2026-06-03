@@ -153,6 +153,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setCompleting(false)
         return
       }
+      // Fire-and-forget: trigger a first-run poll in the background
+      fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
       onComplete()
     } catch {
       setError('Network error')

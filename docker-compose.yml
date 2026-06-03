@@ -49,6 +49,8 @@ services:
     env_file: .env
     networks:
       - basira-net
+    expose:
+      - "8003"
     depends_on:
       - api
       - extractor

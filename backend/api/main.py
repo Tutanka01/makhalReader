@@ -22,6 +22,7 @@ from routers import (
     profile,
     research,
     onboarding,
+    poll,
 )
 from routers.internal import cleanup_old_articles
 from scheduler import start_scheduler, stop_scheduler
@@ -71,6 +72,7 @@ app.include_router(internal.router)
 app.include_router(profile.router)
 app.include_router(research.router)
 app.include_router(onboarding.router)
+app.include_router(poll.router)
 
 # ---------------------------------------------------------------------------
 # Default feeds seeded at startup

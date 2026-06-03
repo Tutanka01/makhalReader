@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -9,6 +10,8 @@ import feedparser
 import httpx
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from paper_enricher import enrich_paper_meta, is_paper_url
@@ -19,14 +22,12 @@ API_BASE = "http://api:8000"
 EXTRACTOR_BASE = "http://extractor:8001"
 SCORER_BASE = "http://scorer:8002"
 API_SECRET = os.getenv("API_SECRET", "changeme")
+TRIGGER_SECRET = os.getenv("TRIGGER_SECRET", "changeme")
 FETCH_INTERVAL_MINUTES = int(os.getenv("FETCH_INTERVAL_MINUTES", "720"))
 
 # --- Guardrails ---
-# Max new articles ingested per feed per poll cycle.
 MAX_NEW_PER_FEED = int(os.getenv("MAX_NEW_ARTICLES_PER_FEED", "5"))
-# Articles older than this are skipped entirely (not stored, not scored).
 MAX_ARTICLE_AGE_DAYS = int(os.getenv("MAX_ARTICLE_AGE_DAYS", "7"))
-# Minimum seconds between two consecutive LLM scoring calls (global, all feeds).
 SCORE_DELAY_SECONDS = float(os.getenv("SCORE_DELAY_SECONDS", "2.0"))
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
@@ -44,6 +45,7 @@ _TRACKING_PARAMS = frozenset({
 
 # Per-user scoring context cache (cleared each poll cycle).
 _user_context_cache: dict[int, dict] = {}
+_scheduler: Optional[AsyncIOScheduler] = None
 
 
 async def fetch_user_scoring_context(client: httpx.AsyncClient, user_id: int) -> dict:
@@ -61,8 +63,6 @@ async def fetch_user_scoring_context(client: httpx.AsyncClient, user_id: int) ->
 
 
 def normalize_url(url: str) -> str:
-    """Return a canonical URL: lowercase scheme+host, strip www., remove
-    tracking query params, sort remaining params, strip trailing slash."""
     try:
         p = urlparse(url.strip())
         scheme = p.scheme.lower()
@@ -82,8 +82,6 @@ _score_semaphores: dict[int, asyncio.Semaphore] = {}
 
 
 def _get_or_create_semaphore(user_id: int) -> asyncio.Semaphore:
-    """Return a per-user asyncio.Semaphore(1). One user's scoring never blocks
-    another user's scoring (NFR-MT-15)."""
     if user_id not in _score_semaphores:
         _score_semaphores[user_id] = asyncio.Semaphore(1)
     return _score_semaphores[user_id]
@@ -160,11 +158,6 @@ async def score_article_rate_limited(
     user_id: int = 1,
     user_context: Optional[dict] = None,
 ):
-    """Acquire the per-user semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS.
-
-    Per-user semaphores (NFR-T2) ensure one user's LLM calls are serialized,
-    but different users' scoring runs concurrently (NFR-MT-15).
-    """
     sem = _get_or_create_semaphore(user_id)
     async with sem:
         try:
@@ -185,7 +178,6 @@ async def score_article_rate_limited(
             )
             resp.raise_for_status()
         finally:
-            # Always wait, even on error, to avoid hammering the LLM on retries.
             await asyncio.sleep(SCORE_DELAY_SECONDS)
 
 
@@ -197,14 +189,11 @@ _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def parse_published_dt(entry) -> Optional[datetime]:
-    """Return a timezone-aware datetime or None."""
-    # Primary: standard published_parsed field
     if hasattr(entry, "published_parsed") and entry.published_parsed:
         try:
             return datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
         except Exception:
             pass
-    # Fallback: updated_parsed (used by some Atom feeds instead of published)
     if hasattr(entry, "updated_parsed") and entry.updated_parsed:
         try:
             return datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
@@ -214,22 +203,14 @@ def parse_published_dt(entry) -> Optional[datetime]:
 
 
 def entry_recency_key(entry) -> datetime:
-    """Sort key: dated entries by their date, undated entries last."""
     dt = parse_published_dt(entry)
     return dt if dt is not None else _EPOCH
 
 
 def is_too_old(entry) -> bool:
-    """Return True if the article is older than MAX_ARTICLE_AGE_DAYS.
-
-    Undated entries are kept only if the feed itself is mostly undated
-    (some aggregators never set dates). In practice, they are processed
-    last thanks to the sort, so the MAX_NEW_PER_FEED cap naturally
-    prioritises dated recent entries over undated ones.
-    """
     dt = parse_published_dt(entry)
     if dt is None:
-        return False  # Can't determine age — let sort order handle priority
+        return False
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=MAX_ARTICLE_AGE_DAYS)
     return dt < cutoff
 
@@ -238,7 +219,8 @@ def is_too_old(entry) -> bool:
 # Core polling logic
 # ---------------------------------------------------------------------------
 
-async def process_feed(client: httpx.AsyncClient, feed: dict):
+async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Optional[int] = None):
+    """Poll a single feed. If target_user_id is set, only score for that user."""
     feed_id = feed["id"]
     feed_url = feed["url"]
     feed_name = feed["name"]
@@ -254,13 +236,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
     all_entries = parsed.entries
     log.info(f"Feed has {len(all_entries)} entries in RSS")
 
-    # 1. Sort entries newest-first BEFORE any filtering.
-    #    This is critical: it ensures MAX_NEW_PER_FEED always captures the
-    #    most recent articles regardless of how the feed orders its entries.
-    #    Undated entries sort to the end and are processed last.
     all_entries = sorted(all_entries, key=entry_recency_key, reverse=True)
-
-    # 2. Drop entries that are too old.
     fresh_entries = [e for e in all_entries if not is_too_old(e)]
     skipped_old = len(all_entries) - len(fresh_entries)
     if skipped_old:
@@ -279,9 +255,6 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
         article_url = normalize_url(raw_url)
 
         try:
-            # Check both the canonical (normalized) URL and the original URL so that
-            # articles ingested before URL normalization was introduced are not
-            # re-extracted and re-scored on every poll cycle.
             exists = await check_article_exists(client, article_url)
             if not exists and raw_url != article_url:
                 exists = await check_article_exists(client, raw_url)
@@ -293,7 +266,6 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
         rss_title = getattr(entry, "title", "") or ""
         rss_summary = getattr(entry, "summary", "") or ""
-        # content:encoded — full article HTML, present in many newsletter/Ghost feeds
         rss_content = ""
         if hasattr(entry, "content") and entry.content:
             rss_content = entry.content[0].get("value", "") or ""
@@ -317,13 +289,10 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 "paper_meta": None,
             }
 
-        # Use the site's canonical URL if the extractor found one — it is the
-        # most reliable dedup key.  Normalize it the same way as other URLs.
         canonical_from_html = extracted.get("canonical_url")
         if canonical_from_html:
             storage_url = normalize_url(canonical_from_html)
             if storage_url != article_url:
-                # Guard: the canonical might already be in the DB
                 try:
                     if await check_article_exists(client, storage_url):
                         log.info("Skipped (canonical already exists)", canonical=storage_url)
@@ -333,10 +302,6 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                 log.info("Using canonical URL", original=article_url, canonical=storage_url)
                 article_url = storage_url
 
-        # ── Paper enrichment ─────────────────────────────────────────────
-        # Runs BEFORE create_article and BEFORE scoring (ARCH6).
-        # Makes a cheap Ollama call to classify the abstract.
-        # Failures are non-blocking — the article is never lost.
         paper_meta_json: Optional[str] = None
         enrichment_contribution_type: Optional[str] = None
         enrichment_re_document_type: Optional[str] = None
@@ -386,6 +351,12 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
         log.info("Article stored, sending to scorer", article_id=article_id, new_count=new_count)
 
         subscriber_ids = feed.get("subscriber_user_ids", [1]) or [1]
+        if target_user_id is not None:
+            if target_user_id not in subscriber_ids:
+                log.info("Skipping scoring — user not subscribed", user_id=target_user_id)
+                continue
+            subscriber_ids = [target_user_id]
+
         for uid in subscriber_ids:
             try:
                 user_context = await fetch_user_scoring_context(client, uid)
@@ -425,15 +396,71 @@ async def poll_all_feeds():
         except Exception as e:
             logger.error("Failed to fetch feeds", error=str(e))
             return
-
-        # Process feeds concurrently — scoring is serialised by _score_semaphore.
         await asyncio.gather(*[process_feed(client, feed) for feed in feeds], return_exceptions=True)
-
     logger.info("Poll cycle complete")
 
 
+async def poll_user_feeds(user_id: int):
+    """Poll all feeds but only score for the given user."""
+    logger.info("Starting user poll", user_id=user_id)
+    async with httpx.AsyncClient() as client:
+        try:
+            feeds = await fetch_feeds(client)
+        except Exception as e:
+            logger.error("Failed to fetch feeds", error=str(e))
+            return
+        await asyncio.gather(
+            *[process_feed(client, feed, target_user_id=user_id) for feed in feeds],
+            return_exceptions=True,
+        )
+    logger.info("User poll complete", user_id=user_id)
+
+
 # ---------------------------------------------------------------------------
-# Startup + scheduler
+# FastAPI app + trigger endpoint
+# ---------------------------------------------------------------------------
+
+class TriggerRequest(BaseModel):
+    user_id: int
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _scheduler
+    await wait_for_api()
+    _scheduler = AsyncIOScheduler()
+    _scheduler.add_job(
+        poll_all_feeds,
+        "interval",
+        minutes=FETCH_INTERVAL_MINUTES,
+        id="poll_feeds",
+        next_run_time=datetime.now(),
+    )
+    _scheduler.start()
+    logger.info(f"Scheduler running, interval={FETCH_INTERVAL_MINUTES}min")
+    yield
+    if _scheduler:
+        _scheduler.shutdown()
+
+
+app = FastAPI(title="Poller", lifespan=lifespan)
+
+
+@app.post("/trigger")
+async def trigger(body: TriggerRequest):
+    user_id = body.user_id
+    logger.info("Trigger received", user_id=user_id)
+    asyncio.create_task(poll_user_feeds(user_id))
+    return {"status": "accepted", "user_id": user_id}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Startup (also supports standalone CLI usage)
 # ---------------------------------------------------------------------------
 
 async def wait_for_api():
@@ -450,29 +477,13 @@ async def wait_for_api():
             pass
         logger.info(f"API not ready, retry {attempt + 1}/30...")
         await asyncio.sleep(5)
-    logger.error("API never became ready, starting scheduler anyway")
+    logger.error("API never became ready, starting anyway")
 
 
-async def main():
-    await wait_for_api()
-
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        poll_all_feeds,
-        "interval",
-        minutes=FETCH_INTERVAL_MINUTES,
-        id="poll_feeds",
-        next_run_time=datetime.now(),
-    )
-    scheduler.start()
-    logger.info(f"Scheduler running, interval={FETCH_INTERVAL_MINUTES}min")
-
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8003, log_level="info")
