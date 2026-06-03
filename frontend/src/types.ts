@@ -50,6 +50,53 @@ export interface UserInfo {
   role: string
   org_id: number | null
   onboarding_done: boolean
+  created_at: string | null
+}
+
+export interface OrgMember {
+  name: string
+  email: string
+  role: string
+  onboarded: boolean
+  thesis: string
+}
+
+export interface Organization {
+  id: number
+  name: string
+  members: OrgMember[]
+}
+
+export interface ScoringCluster {
+  name: string
+  reward: 'critical' | 'high' | 'tangential' | 'noise'
+  weight: number
+  desc: string
+  section?: string
+  id?: string
+}
+
+export interface TenantConfig {
+  user_id: number
+  thesis_title: string
+  thesis_question: string | null
+  thesis_contribution: string | null
+  thesis_sections: string[]
+  scoring_clusters: ScoringCluster[] | string[]
+  tracked_venues: string[]
+  avoid_topics: string[]
+  weekly_goal: number
+  model_preference: string
+  prompt_profile: string
+}
+
+export interface FeedCatalogItem {
+  id: number
+  name: string
+  url: string
+  category: string
+  color?: string
+  subscribed?: boolean
 }
 
 export interface Article {
