@@ -1,13 +1,17 @@
-"""Tests for Story 2.3 — contribution_type and re_document_type filter params.
+"""Tests for Story 2.3/2.4 — article filter params and engagement scoping.
 
 These tests verify:
 - contribution_type filter returns only articles with matching contribution_type
 - re_document_type=arise returns only articles where re_document_type IN (elicitation, extraction, method)
 - re_document_type=none returns articles with re_document_type='none'
 - Filters compose correctly with existing filters (min_score, category, etc.)
+- POST /read, /unread, /bookmark, /feedback write into article_scores (Story 2.3)
+- POST /read-all creates article_scores rows for all unread articles
+- User isolation: one user's engagement never affects another user
 - DEFAULT_FEEDS contains cs.SE and cs.RO (verified by reading source, no import needed)
 
-The TestContributionTypeFilter / TestREDocTypeFilter / TestFilterComposability classes
+The TestContributionTypeFilter / TestREDocTypeFilter / TestFilterComposability /
+TestArticleEngagement / TestArticleIsolation classes
 require the full Docker API environment and will be SKIPPED on the host:
 
     docker-compose exec api python -m pytest backend/scorer/tests/test_article_filters.py -v
@@ -63,7 +67,7 @@ def db_session(tmp_path):
 
     if str(API_DIR) not in sys.path:
         sys.path.insert(0, str(API_DIR))
-    from database import Article, Base, Feed  # noqa: F401 — side effect: registers models
+    from database import Article, ArticleScore, Base, Feed  # noqa: F401 — side effect: registers models
 
     db_file = tmp_path / "test_filters.db"
     engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
@@ -348,3 +352,281 @@ class TestDefaultFeedsSources:
         urls = _re.findall(r'"url":\s*"(https?://[^"]+)"', self._source())
         duplicates = [u for u in urls if urls.count(u) > 1]
         assert not duplicates, f"Duplicate feed URLs found in DEFAULT_FEEDS: {duplicates}"
+
+
+# ── Article engagement — Story 2.3 ──────────────────────────────────────────
+
+@SKIP_INTEGRATION
+class TestArticleEngagement:
+    """POST /read, /unread, /bookmark, /feedback, /read-all → article_scores."""
+
+    def test_mark_read_creates_article_score(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Readable")
+        session.commit()
+
+        resp = c.post(f"/api/articles/{art.id}/read")
+        assert resp.status_code == 200
+
+        from database import ArticleScore
+        score = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+            ArticleScore.article_id == art.id,
+        ).first()
+        assert score is not None
+        assert score.read_at is not None
+
+    def test_mark_read_twice_idempotent(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Read Twice")
+        session.commit()
+
+        resp1 = c.post(f"/api/articles/{art.id}/read")
+        assert resp1.status_code == 200
+        resp2 = c.post(f"/api/articles/{art.id}/read")
+        assert resp2.status_code == 200
+
+        from database import ArticleScore
+        scores = session.query(ArticleScore).filter(
+            ArticleScore.article_id == art.id,
+        ).all()
+        assert len(scores) == 1
+
+    def test_mark_unread_after_read(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Unreadable")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/read")
+        c.post(f"/api/articles/{art.id}/unread")
+
+        from database import ArticleScore
+        score = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+            ArticleScore.article_id == art.id,
+        ).first()
+        assert score is not None
+        assert score.read_at is None
+
+    def test_toggle_bookmark_on(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Bookmark Me")
+        session.commit()
+
+        resp = c.post(f"/api/articles/{art.id}/bookmark")
+        assert resp.status_code == 200
+        assert resp.json()["bookmarked"] is True
+
+        from database import ArticleScore
+        score = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+            ArticleScore.article_id == art.id,
+        ).first()
+        assert score is not None
+        assert score.bookmarked is True
+
+    def test_toggle_bookmark_off(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Bookmark Toggle")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/bookmark")
+        resp = c.post(f"/api/articles/{art.id}/bookmark")
+        assert resp.status_code == 200
+        assert resp.json()["bookmarked"] is False
+
+    def test_feedback_like(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Like Me")
+        session.commit()
+
+        resp = c.post(f"/api/articles/{art.id}/feedback", json={"value": 1})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["user_feedback"] == 1
+
+        from database import ArticleScore
+        score = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+            ArticleScore.article_id == art.id,
+        ).first()
+        assert score is not None
+        assert score.user_feedback == 1
+
+    def test_feedback_dislike(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Dislike Me")
+        session.commit()
+
+        resp = c.post(f"/api/articles/{art.id}/feedback", json={"value": -1})
+        assert resp.status_code == 200
+        assert resp.json()["user_feedback"] == -1
+
+    def test_feedback_remove(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Remove Feedback")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/feedback", json={"value": 1})
+        resp = c.post(f"/api/articles/{art.id}/feedback", json={"value": 0})
+        assert resp.status_code == 200
+        assert resp.json()["user_feedback"] is None
+
+    def test_feedback_invalid_value(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Bad Feedback")
+        session.commit()
+
+        resp = c.post(f"/api/articles/{art.id}/feedback", json={"value": 42})
+        assert resp.status_code == 422
+
+    def test_mark_all_read_creates_scores(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        a1 = _make_article(session, feed.id, "Alpha", score=7.0)
+        a2 = _make_article(session, feed.id, "Beta", score=8.0)
+        session.commit()
+
+        resp = c.post("/api/articles/read-all")
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] == 2
+
+        from database import ArticleScore
+        scores = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+        ).all()
+        assert len(scores) == 2
+        assert all(s.read_at is not None for s in scores)
+
+    def test_mark_all_read_with_category_filter(self, client):
+        c, session = client
+        papers_feed = _make_feed(session, "Papers Feed", category="Papers")
+        ai_feed = _make_feed(session, "AI Feed", category="AI")
+        _make_article(session, papers_feed.id, "Paper A", score=7.0)
+        ai_art = _make_article(session, ai_feed.id, "AI A", score=8.0)
+        session.commit()
+
+        resp = c.post("/api/articles/read-all?category=Papers")
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] == 1
+
+        from database import ArticleScore
+        ai_score = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+            ArticleScore.article_id == ai_art.id,
+        ).first()
+        assert ai_score is None, "AI article should not be marked read"
+
+    def test_mark_all_read_with_min_score_filter(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        _make_article(session, feed.id, "Low", score=3.0)
+        high = _make_article(session, feed.id, "High", score=9.0)
+        session.commit()
+
+        resp = c.post("/api/articles/read-all?min_score=5")
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] == 1
+
+        from database import ArticleScore
+        scores = session.query(ArticleScore).filter(
+            ArticleScore.user_id == 1,
+        ).all()
+        assert len(scores) == 1
+        assert scores[0].article_id == high.id
+
+    def test_mark_all_read_idempotent(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        _make_article(session, feed.id, "One")
+        session.commit()
+
+        c.post("/api/articles/read-all")
+        resp = c.post("/api/articles/read-all")
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] == 0
+
+    def test_mark_read_nonexistent_article(self, client):
+        c, _ = client
+        resp = c.post("/api/articles/99999/read")
+        assert resp.status_code == 404
+
+
+@SKIP_INTEGRATION
+class TestArticleIsolation:
+    """User A's engagement must never leak to User B (NFR-T1, FR-MT-7)."""
+
+    def _client_for_user(self, db_session, user_id: int):
+        from fastapi.testclient import TestClient
+        if str(API_DIR) not in sys.path:
+            sys.path.insert(0, str(API_DIR))
+        from auth import require_session
+        from database import get_db
+        from main import app
+        app.dependency_overrides[get_db] = lambda: db_session
+        app.dependency_overrides[require_session] = lambda: {"id": user_id, "email": f"user{user_id}@test.local"}
+        return TestClient(app, raise_server_exceptions=True)
+
+    def test_user_a_read_keeps_user_b_unread(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Isolation Read")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/read")
+
+        c2 = self._client_for_user(session, 2)
+        resp = c2.get("/api/articles?status=all&limit=50")
+        data = resp.json()
+        found = next(a for a in data if a["id"] == art.id)
+        assert found["read_at"] is None, "User B should see article as unread"
+
+    def test_user_a_bookmark_keeps_user_b_unbookmarked(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Isolation Bookmark")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/bookmark")
+
+        c2 = self._client_for_user(session, 2)
+        resp = c2.get("/api/articles?status=all&limit=50")
+        data = resp.json()
+        found = next(a for a in data if a["id"] == art.id)
+        assert found["bookmarked"] is False, "User B should see article as unbookmarked"
+
+    def test_user_a_feedback_keeps_user_b_neutral(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Isolation Feedback")
+        session.commit()
+
+        c.post(f"/api/articles/{art.id}/feedback", json={"value": 1})
+
+        c2 = self._client_for_user(session, 2)
+        resp = c2.get(f"/api/articles/{art.id}")
+        assert resp.status_code == 200
+        found = resp.json()
+        assert found["user_feedback"] is None, "User B should see no feedback"
+
+    def test_user_a_mark_all_read_does_not_affect_user_b(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Isolation Read-All")
+        session.commit()
+
+        c.post("/api/articles/read-all")
+
+        c2 = self._client_for_user(session, 2)
+        resp = c2.get("/api/articles?status=unread&limit=50")
+        data = resp.json()
+        assert any(a["id"] == art.id for a in data), "User B should still see article as unread"

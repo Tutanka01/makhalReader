@@ -62,6 +62,18 @@ def _pick(article_score: Optional[ArticleScore], article: Article, attr: str):
     return getattr(article, attr)
 
 
+def _get_or_create_article_score(db: Session, user_id: int, article_id: int) -> ArticleScore:
+    score = db.query(ArticleScore).filter(
+        ArticleScore.user_id == user_id,
+        ArticleScore.article_id == article_id,
+    ).first()
+    if score is None:
+        score = ArticleScore(user_id=user_id, article_id=article_id)
+        db.add(score)
+        db.flush()
+    return score
+
+
 def _row_to_list_item(article: Article, feed_name: str, article_score: Optional[ArticleScore] = None, threat_overlap: Optional[float] = None, threat_positioning_note: Optional[str] = None) -> ArticleListItem:
     return ArticleListItem(
         id=article.id,
@@ -226,21 +238,25 @@ async def get_article(article_id: int, db: Session = Depends(get_db), current_us
 
 
 @router.post("/api/articles/{article_id}/read")
-async def mark_read(article_id: int, db: Session = Depends(get_db), _: None = _auth):
+async def mark_read(article_id: int, db: Session = Depends(get_db), current_user: dict = _auth):
+    user_id = current_user["id"]
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    article.read_at = datetime.now(timezone.utc)
+    score = _get_or_create_article_score(db, user_id, article_id)
+    score.read_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "ok"}
 
 
 @router.post("/api/articles/{article_id}/unread")
-async def mark_unread(article_id: int, db: Session = Depends(get_db), _: None = _auth):
+async def mark_unread(article_id: int, db: Session = Depends(get_db), current_user: dict = _auth):
+    user_id = current_user["id"]
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    article.read_at = None
+    score = _get_or_create_article_score(db, user_id, article_id)
+    score.read_at = None
     db.commit()
     return {"status": "ok"}
 
@@ -250,26 +266,37 @@ async def mark_all_read(
     category: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = _auth,
 ):
-    query = db.query(Article).filter(Article.read_at.is_(None))
+    user_id = current_user["id"]
+    _read_at = func.coalesce(ArticleScore.read_at, Article.read_at)
+    query = db.query(Article).outerjoin(
+        ArticleScore,
+        and_(ArticleScore.article_id == Article.id, ArticleScore.user_id == user_id),
+    ).filter(_read_at.is_(None))
     if category and category not in ("All", "all"):
         query = query.join(Feed, Article.feed_id == Feed.id).filter(Feed.category == category)
     if min_score is not None:
-        query = query.filter(Article.score >= min_score)
-    count = query.update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
+        _score = func.coalesce(ArticleScore.score, Article.score)
+        query = query.filter(_score >= min_score)
+    articles = query.all()
+    for article in articles:
+        score = _get_or_create_article_score(db, user_id, article.id)
+        score.read_at = datetime.now(timezone.utc)
     db.commit()
-    return {"marked_read": count}
+    return {"marked_read": len(articles)}
 
 
 @router.post("/api/articles/{article_id}/bookmark")
-async def toggle_bookmark(article_id: int, db: Session = Depends(get_db), _: None = _auth):
+async def toggle_bookmark(article_id: int, db: Session = Depends(get_db), current_user: dict = _auth):
+    user_id = current_user["id"]
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    article.bookmarked = not article.bookmarked
+    score = _get_or_create_article_score(db, user_id, article_id)
+    score.bookmarked = not score.bookmarked
     db.commit()
-    return {"bookmarked": article.bookmarked}
+    return {"bookmarked": score.bookmarked}
 
 
 @router.get("/api/articles/{article_id}/related", response_model=List[RelatedArticleOut])
@@ -341,21 +368,23 @@ async def submit_feedback(
     article_id: int,
     body: FeedbackRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = _auth,
 ):
+    user_id = current_user["id"]
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     if body.value not in (-1, 0, 1):
         raise HTTPException(status_code=422, detail="value must be -1, 0, or 1")
-    article.user_feedback = None if body.value == 0 else body.value
+    score = _get_or_create_article_score(db, user_id, article_id)
+    score.user_feedback = None if body.value == 0 else body.value
     db.commit()
 
     # On 👍 feedback: upsert article tags into research_profile as topic entries
     if body.value == 1:
         _upsert_tags_from_feedback(db, article)
 
-    return {"user_feedback": article.user_feedback}
+    return {"user_feedback": score.user_feedback}
 
 
 def _upsert_tags_from_feedback(db: Session, article: Article) -> None:
