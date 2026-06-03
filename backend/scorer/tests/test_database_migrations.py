@@ -39,7 +39,7 @@ if SQLALCHEMY_AVAILABLE:
     if str(SHARED_DIR) not in sys.path:
         sys.path.insert(0, str(SHARED_DIR))
 
-    from database import Article, ArticleScore, Base, Feed, Organization, SessionLocal, User, UserFeedSubscription, init_db
+    from database import Article, ArticleScore, Base, Feed, Organization, SessionLocal, User, UserConfig, UserFeedSubscription, ResearchProfile, init_db
 
 
 @pytest.fixture()
@@ -470,3 +470,158 @@ class TestUserFeedSubscriptions:
         feeds = session.query(db_module.Feed).all()
         assert len(feeds) == 1
         assert feeds[0].name == "D"
+
+
+class TestUserConfig:
+    """Story 4.1 — user_config table + backfill (FR-MT-19)."""
+
+    def test_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "user_config" in tables
+
+    def test_columns(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("user_config")}
+        expected = {"user_id", "thesis_title", "thesis_question", "thesis_contribution",
+                    "thesis_sections_json", "scoring_clusters_json",
+                    "tracked_venues_json", "avoid_topics_json",
+                    "weekly_goal", "model_preference", "prompt_profile",
+                    "prompt_cache_text", "prompt_cache_hash",
+                    "created_at", "updated_at"}
+        assert expected.issubset(columns)
+
+    def test_backfill_populates_user_1(self, tmp_db):
+        import json
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        row = session.execute(
+            text("SELECT * FROM user_config WHERE user_id = 1")
+        ).fetchone()
+        session.close()
+        assert row is not None
+        assert "AI-driven model-based engineering" in row.thesis_title
+        sections = json.loads(row.thesis_sections_json)
+        assert "P1 Construction" in sections
+        assert len(sections) == 9
+        clusters = json.loads(row.scoring_clusters_json)
+        assert len(clusters) == 5
+        cluster_ids = {c["id"] for c in clusters}
+        assert cluster_ids == {"A", "B", "C", "D", "E"}
+
+    def test_backfill_idempotent(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        rows = session.execute(
+            text("SELECT COUNT(*) FROM user_config WHERE user_id = 1")
+        ).scalar()
+        session.close()
+        assert rows == 1, "Backfill must be idempotent"
+
+    def test_init_db_twice_no_error(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        db_module.init_db()
+
+    def test_no_data_loss_for_existing_data(self, tmp_db):
+        from datetime import datetime
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(url="https://e.com/rss", name="E", category="Test")
+        session.add(feed)
+        session.commit()
+        article = db_module.Article(
+            feed_id=feed.id, title="Existing", url="https://e.com/1",
+            created_at=datetime.utcnow(),
+        )
+        session.add(article)
+        session.commit()
+        session.close()
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        articles = Session().query(db_module.Article).all()
+        assert len(articles) == 1
+        assert articles[0].title == "Existing"
+
+
+class TestResearchProfileUserId:
+    """Story 4.2 — research_profile user_id column + backfill (FR-MT-20)."""
+
+    def test_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        assert "research_profile" in inspector.get_table_names()
+
+    def test_user_id_column_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        columns = {c["name"] for c in inspect(engine).get_columns("research_profile")}
+        assert "user_id" in columns
+
+    def test_backfill_populates_user_1(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        # Insert a row without user_id (simulating pre-migration data)
+        session.execute(
+            text("INSERT INTO research_profile (kind, label, weight, source, created_at) VALUES ('topic', 'Test Topic', 1.0, 'manual', datetime('now'))")
+        )
+        session.commit()
+        # Re-init triggers backfill
+        db_module.init_db()
+        row = session.execute(
+            text("SELECT user_id FROM research_profile WHERE label = 'Test Topic'")
+        ).fetchone()
+        assert row is not None
+        assert row[0] == 1
+
+    def test_backfill_idempotent(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        session.execute(
+            text("INSERT INTO research_profile (kind, label, weight, source, created_at) VALUES ('topic', 'Idempotent', 1.0, 'manual', datetime('now'))")
+        )
+        session.commit()
+        db_module.init_db()
+        db_module.init_db()
+        rows = session.execute(
+            text("SELECT COUNT(*) FROM research_profile WHERE label = 'Idempotent' AND user_id = 1")
+        ).scalar()
+        assert rows == 1
+
+    def test_no_data_loss_for_existing_data(self, tmp_db):
+        from datetime import datetime
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(url="https://4-2-loss.com/rss", name="Loss Test", category="Test")
+        session.add(feed)
+        session.commit()
+        article = db_module.Article(
+            feed_id=feed.id, title="Loss Test Article", url="https://4-2-loss.com/1",
+            created_at=datetime.utcnow(),
+        )
+        session.add(article)
+        session.commit()
+        session.close()
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        articles = Session().query(db_module.Article).all()
+        assert len(articles) == 1
+        assert articles[0].title == "Loss Test Article"

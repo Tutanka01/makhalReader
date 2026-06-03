@@ -6,6 +6,7 @@ shared across backend services. Each service can import from here.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from datetime import datetime
 
@@ -196,6 +197,40 @@ class UserFeedSubscription(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserConfig(Base):
+    """Per-user tenant configuration (Story 4.1, FR-MT-19)."""
+    __tablename__ = "user_config"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    thesis_title = Column(String, nullable=False, default="")
+    thesis_question = Column(String, nullable=True)
+    thesis_contribution = Column(String, nullable=True)
+    thesis_sections_json = Column(Text, nullable=False, default="[]")
+    scoring_clusters_json = Column(Text, nullable=False, default="[]")
+    tracked_venues_json = Column(Text, nullable=False, default="[]")
+    avoid_topics_json = Column(Text, nullable=False, default="[]")
+    weekly_goal = Column(Integer, nullable=False, default=10)
+    model_preference = Column(String, nullable=False, default="google/gemini-flash-1.5")
+    prompt_profile = Column(String, nullable=False, default="unified")
+    prompt_cache_text = Column(Text, nullable=True)
+    prompt_cache_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ResearchProfile(Base):
+    """Typed researcher profile entries — topics, methods, domains, avoidances."""
+    __tablename__ = "research_profile"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    kind = Column(String(24), nullable=False)
+    label = Column(String(256), nullable=False)
+    weight = Column(Float, default=1.0, nullable=False)
+    source = Column(String(24), default="manual", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -225,6 +260,14 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS article_scores (user_id INTEGER NOT NULL REFERENCES users(id), article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, score FLOAT, tags_json TEXT NOT NULL DEFAULT '[]', summary_bullets_json TEXT NOT NULL DEFAULT '[]', reason VARCHAR, read_at DATETIME, bookmarked BOOLEAN NOT NULL DEFAULT 0, user_feedback INTEGER, contribution_type VARCHAR(24), re_document_type VARCHAR(24), score_meta_json TEXT, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, article_id))",
         # Story 3.1 — user_feed_subscriptions table (FR-MT-13)
         "CREATE TABLE IF NOT EXISTS user_feed_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, feed_id))",
+        # Story 4.1 — user_config table (FR-MT-19)
+        "CREATE TABLE IF NOT EXISTS user_config (user_id INTEGER PRIMARY KEY REFERENCES users(id), thesis_title TEXT NOT NULL DEFAULT '', thesis_question TEXT, thesis_contribution TEXT, thesis_sections_json TEXT NOT NULL DEFAULT '[]', scoring_clusters_json TEXT NOT NULL DEFAULT '[]', tracked_venues_json TEXT NOT NULL DEFAULT '[]', avoid_topics_json TEXT NOT NULL DEFAULT '[]', weekly_goal INTEGER NOT NULL DEFAULT 10, model_preference TEXT NOT NULL DEFAULT 'google/gemini-flash-1.5', prompt_profile TEXT NOT NULL DEFAULT 'unified', prompt_cache_text TEXT, prompt_cache_hash TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        # Story 4.2 — research_profile table + user_id (FR-MT-20)
+        "CREATE TABLE IF NOT EXISTS research_profile (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, label TEXT NOT NULL, weight REAL NOT NULL DEFAULT 1.0, source TEXT NOT NULL DEFAULT 'manual', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_profile ON research_profile(kind, label)",
+        "ALTER TABLE research_profile ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        "DROP INDEX IF EXISTS ux_research_profile",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_profile ON research_profile(user_id, kind, label)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -236,6 +279,8 @@ def init_db():
 
         _backfill_article_scores(conn)
         _backfill_subscriptions(conn)
+        _backfill_user_config(conn)
+        _backfill_research_profile(conn)
 
     _seed_default_user()
 
@@ -260,6 +305,76 @@ def _backfill_subscriptions(conn):
             INSERT OR IGNORE INTO user_feed_subscriptions (user_id, feed_id, created_at)
             SELECT 1, id, datetime('now') FROM feeds
         """))
+        conn.commit()
+    except Exception:
+        pass
+
+
+_DEFAULT_THESIS_SECTIONS = [
+    "P1 Construction", "P2 Consistency", "P3 Model Drift",
+    "P4 Trust", "P5 Blueprint Query", "Lit Review / Gap",
+    "Motivation", "Related Work", "Counter-argument",
+]
+
+_DEFAULT_SCORING_CLUSTERS = [
+    {"id": "A", "name": "Intrinsic CPS Complexity", "description": "Cyber-physical systems taxonomies, digital twins, structural complexity, Industry 4.0/5.0, SoS, embedded and real-time systems.", "reward_level": "high", "weight": 1.0, "tags": ["CPS", "digital twin", "Industry 4.0", "SoS", "embedded systems"], "use_as_thesis_section": False, "thesis_section_label": None},
+    {"id": "B", "name": "Lifecycle & Traceability", "description": "SE standards, lifecycle-aware model management, requirements-to-model-to-code traceability, digital thread, co-evolution, change impact analysis.", "reward_level": "high", "weight": 1.0, "tags": ["ISO 15288", "digital thread", "traceability", "configuration management", "model co-evolution"], "use_as_thesis_section": False, "thesis_section_label": None},
+    {"id": "C", "name": "Human & Organizational Complexity", "description": "Socio-technical SE, organizational barriers to MBSE adoption, human-in-the-loop validation, collaborative multi-stakeholder modeling.", "reward_level": "high", "weight": 1.0, "tags": ["socio-technical", "MBSE adoption", "human-in-the-loop", "collaborative modeling", "SE education"], "use_as_thesis_section": False, "thesis_section_label": None},
+    {"id": "D", "name": "MBSE Adoption & Levers", "reward_level": "critical", "weight": 1.5, "description": "MBSE methodologies (SysML v1/v2, Arcadia/Capella), ROI analysis, adoption barriers, DevSecOps for SE, multi-view modeling, semantic interoperability.", "tags": ["SysML", "Capella", "MBSE methodologies", "DevSecOps", "multi-view modeling"], "use_as_thesis_section": False, "thesis_section_label": None},
+    {"id": "E", "name": "AI for Systems Engineering", "reward_level": "critical", "weight": 2.0, "description": "LLM multi-agent systems for SE, NLP4RE, generative AI for model generation, hallucination mitigation, explainability of AI-generated engineering artifacts.", "tags": ["LLM for SE", "NLP4RE", "model generation", "hallucination mitigation", "XAI for SE"], "use_as_thesis_section": False, "thesis_section_label": None},
+]
+
+_DEFAULT_TRACKED_VENUES = [
+    "ICSE", "RE", "MODELS", "CAiSE", "REFSQ", "ECMFA", "INCOSE", "SoSE",
+    "NeurIPS", "ICLR", "EMNLP", "ACL", "NAACL", "IJCAI",
+    "arXiv (cs.SE)", "arXiv (cs.AI)", "arXiv (cs.CL)", "arXiv (cs.RO)",
+    "arXiv (cs.SY)", "arXiv (eess.SY)", "arXiv (cs.FL)", "arXiv (cs.MA)",
+]
+
+_DEFAULT_AVOID_TOPICS = [
+    "DevOps", "Kubernetes", "Cloud infrastructure", "Cybersecurity (non-CPS)",
+    "Consumer AI chatbots", "Vibe coding and productivity tools",
+    "Generic Python or JS tutorials", "Marketing and startup announcements",
+    "Social and political news",
+]
+
+
+def _backfill_user_config(conn):
+    """Create user_config row for user_id=1 with hardcoded defaults."""
+    try:
+        conn.execute(text("""
+            INSERT OR IGNORE INTO user_config (
+                user_id, thesis_title, thesis_question, thesis_contribution,
+                thesis_sections_json, scoring_clusters_json,
+                tracked_venues_json, avoid_topics_json,
+                weekly_goal, model_preference, prompt_profile,
+                created_at, updated_at
+            ) VALUES (
+                1,
+                :title, :question, :contribution,
+                :sections, :clusters,
+                :venues, :avoids,
+                10, 'google/gemini-flash-1.5', 'unified',
+                datetime('now'), datetime('now')
+            )
+        """), {
+            "title": "AI-driven model-based engineering for cyber-physical systems in the industry of the future.",
+            "question": "How can AI agents be integrated into the Systems Engineering (SE) process to enable effective adoption of Model-Based Systems Engineering (MBSE) throughout the life cycle of industrial Cyber-Physical Systems (CPS)?",
+            "contribution": None,
+            "sections": json.dumps(_DEFAULT_THESIS_SECTIONS),
+            "clusters": json.dumps(_DEFAULT_SCORING_CLUSTERS),
+            "venues": json.dumps(_DEFAULT_TRACKED_VENUES),
+            "avoids": json.dumps(_DEFAULT_AVOID_TOPICS),
+        })
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_research_profile(conn):
+    """Backfill user_id=1 to existing research_profile rows."""
+    try:
+        conn.execute(text("UPDATE research_profile SET user_id = 1 WHERE user_id IS NULL"))
         conn.commit()
     except Exception:
         pass
