@@ -281,17 +281,22 @@ async def _sse_event_generator(request: Request, queue: asyncio.Queue) -> AsyncG
 
 
 @app.get("/api/stream")
-async def sse_stream(request: Request, _: None = _auth):
+async def sse_stream(request: Request, current_user: dict = _auth):
+    user_id = current_user["id"]
     client_id = str(id(request))
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _sse_queues[client_id] = queue
+    _sse_queues.setdefault(user_id, {})[client_id] = queue
 
     async def cleanup_generator():
         try:
             async for chunk in _sse_event_generator(request, queue):
                 yield chunk
         finally:
-            _sse_queues.pop(client_id, None)
+            user_queues = _sse_queues.get(user_id)
+            if user_queues:
+                user_queues.pop(client_id, None)
+                if not user_queues:
+                    _sse_queues.pop(user_id, None)
 
     return StreamingResponse(
         cleanup_generator(),

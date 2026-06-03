@@ -303,7 +303,7 @@ async def internal_score_article(
         "contribution_type": _pick(score, article, "contribution_type"),
         "re_document_type": _pick(score, article, "re_document_type"),
     }
-    await broadcast_new_article(article_dict)
+    await broadcast_new_article(article_dict, user_id=user_id)
 
     # Fire-and-forget embedding — must not block or raise
     asyncio.create_task(embed_article_async(article.id))

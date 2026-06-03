@@ -793,3 +793,35 @@ class TestInternalScore:
             headers={"X-Internal-Secret": "wrong-secret"},
         )
         assert resp.status_code == 403
+
+
+# ── SSE scoping — Story 2.6 ──────────────────────────────────────────────────
+
+@SKIP_INTEGRATION
+class TestSseScoping:
+    """SSE events are scoped per user_id (FR-MT-11)."""
+
+    def test_broadcast_scoped_to_user(self, client):
+        import asyncio
+        from sse import _sse_queues, broadcast_new_article
+
+        q1: asyncio.Queue = asyncio.Queue()
+        q2: asyncio.Queue = asyncio.Queue()
+        _sse_queues.setdefault(1, {})["c1"] = q1
+        _sse_queues.setdefault(2, {})["c2"] = q2
+
+        asyncio.run(broadcast_new_article({"id": 101}, user_id=1))
+
+        msg1 = q1.get_nowait()
+        assert msg1["type"] == "new_article"
+        assert msg1["data"]["id"] == 101
+
+        assert q2.qsize() == 0
+
+        _sse_queues.clear()
+
+    def test_broadcast_no_queues_no_error(self, client):
+        import asyncio
+        from sse import broadcast_new_article
+
+        asyncio.run(broadcast_new_article({"id": 99}, user_id=42))
