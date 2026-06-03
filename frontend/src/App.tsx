@@ -32,7 +32,7 @@ function useAuth(): [AuthState, () => void] {
   const [state, setState] = useState<AuthState>('loading')
 
   const check = useCallback(() => {
-    fetch('/auth/status', { credentials: 'include' })
+    fetch('/auth/me', { credentials: 'include' })
       .then(r => setState(r.ok ? 'authenticated' : 'unauthenticated'))
       .catch(() => setState('unauthenticated'))
   }, [])

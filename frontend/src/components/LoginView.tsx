@@ -4,45 +4,80 @@ interface Props {
   onLogin: () => void
 }
 
+type AuthMode = 'login' | 'register'
+
 export function LoginView({ onLogin }: Props) {
+  const [mode, setMode] = useState<AuthMode>('login')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [shake, setShake] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const emailRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { inputRef.current?.focus() }, [])
+  useEffect(() => { emailRef.current?.focus() }, [mode])
+
+  const switchMode = (m: AuthMode) => {
+    setMode(m)
+    setError(null)
+    setShake(false)
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!password || loading) return
+    if (!email || !password || loading) return
     setLoading(true)
     setError(null)
 
     try {
-      const resp = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ password, remember }),
-      })
+      if (mode === 'login') {
+        const resp = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password, remember }),
+        })
 
-      if (resp.ok) {
-        onLogin()
-        return
+        if (resp.ok) {
+          onLogin()
+          return
+        }
+
+        const data = await resp.json().catch(() => ({}))
+        setError(
+          resp.status === 429
+            ? (data.detail ?? 'Too many attempts. Please wait.')
+            : (data.detail ?? 'Invalid credentials.')
+        )
+        setPassword('')
+        setShake(true)
+        setTimeout(() => setShake(false), 500)
+      } else {
+        const body: Record<string, string> = { email, password }
+        if (displayName) body.display_name = displayName
+        if (inviteCode) body.invite_code = inviteCode
+
+        const resp = await fetch('/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body),
+        })
+
+        if (resp.ok) {
+          onLogin()
+          return
+        }
+
+        const data = await resp.json().catch(() => ({}))
+        setError(data.detail ?? 'Registration failed.')
+        setPassword('')
+        setShake(true)
+        setTimeout(() => setShake(false), 500)
       }
-
-      const data = await resp.json().catch(() => ({}))
-      setError(
-        resp.status === 429
-          ? (data.detail ?? 'Too many attempts. Please wait.')
-          : 'Incorrect password.'
-      )
-      setPassword('')
-      setShake(true)
-      setTimeout(() => setShake(false), 500)
-      setTimeout(() => inputRef.current?.focus(), 10)
     } catch {
       setError('Connection error.')
     } finally {
@@ -51,10 +86,7 @@ export function LoginView({ onLogin }: Props) {
   }
 
   return (
-    <div
-      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
-      className="min-h-screen w-full flex items-center justify-center bg-bg-base overflow-hidden relative"
-    >
+    <div className="min-h-screen w-full flex items-center justify-center bg-bg-base overflow-hidden relative">
       {/* Background glow */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div
@@ -84,10 +116,10 @@ export function LoginView({ onLogin }: Props) {
 
         {/* Logo */}
         <div className="text-center mb-10 select-none">
-          <img 
-            src="/logo.png" 
-            alt="Baṣīra Logo" 
-            className="inline-flex w-14 h-14 rounded-2xl mb-5 object-cover" 
+          <img
+            src="/logo.png"
+            alt="Baṣīra Logo"
+            className="inline-flex w-14 h-14 rounded-2xl mb-5 object-cover"
           />
           <h1 style={{ color: 'var(--text-primary)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.03em', margin: 0 }}>
             Baṣīra
@@ -119,18 +151,67 @@ export function LoginView({ onLogin }: Props) {
             }
           `}</style>
 
-          {/* Password field */}
+          {/* Tabs */}
+          <div style={{
+            display: 'flex',
+            gap: 4,
+            background: 'var(--bg-secondary)',
+            padding: 3,
+            borderRadius: 8,
+            marginBottom: 20,
+          }}>
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              style={{
+                flex: 1,
+                padding: '7px 0',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                background: mode === 'login' ? 'var(--bg)' : 'transparent',
+                color: mode === 'login' ? 'var(--text-primary)' : 'var(--text-muted)',
+                boxShadow: mode === 'login' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              style={{
+                flex: 1,
+                padding: '7px 0',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                background: mode === 'register' ? 'var(--bg)' : 'transparent',
+                color: mode === 'register' ? 'var(--text-primary)' : 'var(--text-muted)',
+                boxShadow: mode === 'register' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              Create account
+            </button>
+          </div>
+
+          {/* Email field */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
-              Password
+              Email
             </label>
             <input
-              ref={inputRef}
-              type="password"
-              value={password}
-              onChange={e => { setPassword(e.target.value); setError(null) }}
-              placeholder="••••••••••••••••"
-              autoComplete="current-password"
+              ref={emailRef}
+              type="email"
+              value={email}
+              onChange={e => { setEmail(e.target.value); setError(null) }}
+              placeholder="you@university.edu"
+              autoComplete="email"
               style={{
                 width: '100%',
                 padding: '11px 14px',
@@ -150,62 +231,154 @@ export function LoginView({ onLogin }: Props) {
                 if (!error) e.target.style.borderColor = 'var(--border-default)'
               }}
             />
-            {error && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-                <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
-              </div>
-            )}
           </div>
 
-          {/* Remember toggle */}
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22, cursor: 'pointer', userSelect: 'none' }}
-            onClick={() => setRemember(v => !v)}
-          >
-            {/* Toggle pill */}
-            <div style={{
-              position: 'relative',
-              width: 36,
-              height: 20,
-              borderRadius: 99,
-              background: remember ? 'var(--accent)' : 'var(--bg-hover)',
-              transition: 'background 0.2s',
-              flexShrink: 0,
-            }}>
-              <div style={{
-                position: 'absolute',
-                top: 3,
-                left: remember ? 19 : 3,
-                width: 14,
-                height: 14,
-                borderRadius: '50%',
-                background: 'white',
-                transition: 'left 0.2s',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
-              }}/>
-            </div>
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              Keep me signed in
-            </span>
+          {/* Password field */}
+          <div style={{ marginBottom: mode === 'register' ? 12 : 16 }}>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => { setPassword(e.target.value); setError(null) }}
+              placeholder="••••••••••••••••"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              style={{
+                width: '100%',
+                padding: '11px 14px',
+                borderRadius: 10,
+                border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border-default)'}`,
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
+                fontSize: 14,
+                outline: 'none',
+                boxSizing: 'border-box',
+                transition: 'border-color 0.15s',
+              }}
+              onFocus={e => {
+                if (!error) e.target.style.borderColor = 'var(--accent)'
+              }}
+              onBlur={e => {
+                if (!error) e.target.style.borderColor = 'var(--border-default)'
+              }}
+            />
           </div>
+
+          {/* Register-only fields */}
+          {mode === 'register' && (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
+                  Display name <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional</span>
+                </label>
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  placeholder="e.g. Rachid Fall"
+                  autoComplete="name"
+                  style={{
+                    width: '100%',
+                    padding: '11px 14px',
+                    borderRadius: 10,
+                    border: '1.5px solid var(--border-default)',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    transition: 'border-color 0.15s',
+                  }}
+                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--border-default)' }}
+                />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
+                  Invite code <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional, joins a lab</span>
+                </label>
+                <input
+                  type="text"
+                  value={inviteCode}
+                  onChange={e => setInviteCode(e.target.value)}
+                  placeholder="e.g. EVA-LAB-2026"
+                  style={{
+                    width: '100%',
+                    padding: '11px 14px',
+                    borderRadius: 10,
+                    border: '1.5px solid var(--border-default)',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    transition: 'border-color 0.15s',
+                  }}
+                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--border-default)' }}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
+            </div>
+          )}
+
+          {/* Remember toggle (login only) */}
+          {mode === 'login' && (
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22, cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setRemember(v => !v)}
+            >
+              <div style={{
+                position: 'relative',
+                width: 36,
+                height: 20,
+                borderRadius: 99,
+                background: remember ? 'var(--accent)' : 'var(--bg-hover)',
+                transition: 'background 0.2s',
+                flexShrink: 0,
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  top: 3,
+                  left: remember ? 19 : 3,
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  background: 'white',
+                  transition: 'left 0.2s',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                }}/>
+              </div>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                Keep me signed in
+              </span>
+            </div>
+          )}
 
           {/* Submit */}
           <button
             type="submit"
-            disabled={loading || !password}
+            disabled={loading || !email || !password}
             style={{
               width: '100%',
               padding: '11px',
               borderRadius: 10,
               border: 'none',
-              cursor: loading || !password ? 'not-allowed' : 'pointer',
-              background: loading || !password
+              cursor: loading || !email || !password ? 'not-allowed' : 'pointer',
+              background: loading || !email || !password
                 ? 'color-mix(in srgb, var(--accent) 35%, transparent)'
                 : 'linear-gradient(135deg, var(--accent), var(--purple))',
-              color: loading || !password ? 'rgba(255,255,255,0.4)' : 'white',
+              color: loading || !email || !password ? 'rgba(255,255,255,0.4)' : 'white',
               fontSize: 14,
               fontWeight: 600,
               transition: 'all 0.15s',
@@ -218,9 +391,9 @@ export function LoginView({ onLogin }: Props) {
                   <path d="M21 12a9 9 0 11-6.219-8.56"/>
                 </svg>
                 <style>{'@keyframes spin{to{transform:rotate(360deg)}}'}</style>
-                Signing in…
+                {mode === 'login' ? 'Signing in…' : 'Creating account…'}
               </span>
-            ) : 'Sign in →'}
+            ) : mode === 'login' ? 'Sign in →' : 'Create account →'}
           </button>
         </form>
 
