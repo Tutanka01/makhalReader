@@ -17,6 +17,7 @@ import WriteAssistPanel from './components/WriteAssistPanel'
 import ConferenceRadar from './components/ConferenceRadar'
 import HighlightManager from './components/HighlightManager'
 import BibliographyPanel from './components/BibliographyPanel'
+import SettingsModal from './components/SettingsModal'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -72,6 +73,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
@@ -178,6 +180,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         onClose={() => setProfileOpen(false)}
       />
 
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+
       {/* Keyboard shortcuts help overlay */}
       {showHelp && (
         <div
@@ -233,6 +240,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               }}
               feeds={feeds}
               onOpenProfile={() => { setProfileOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
+              onOpenSettings={() => { setSettingsOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
               onLogout={onLogout}
             />
           </div>

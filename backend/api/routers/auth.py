@@ -109,6 +109,42 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+class UpdateMeRequest(BaseModel):
+    display_name: Optional[str] = None
+    new_password: Optional[str] = None
+
+
 @router.get("/me")
 async def me(user: dict = Depends(require_session)):
     return user
+
+
+@router.put("/me")
+async def update_me(body: UpdateMeRequest, request: Request, user: dict = Depends(require_session)):
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.id == user["id"]).first()
+        if not db_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if body.display_name is not None:
+            if not body.display_name.strip():
+                raise HTTPException(status_code=422, detail="display_name cannot be empty")
+            db_user.display_name = body.display_name
+        if body.new_password:
+            import hashlib
+            import bcrypt
+            pwd_hash = bcrypt.hashpw(
+                hashlib.sha256(body.new_password.encode()).digest(),
+                bcrypt.gensalt(rounds=12),
+            )
+            db_user.password_hash = pwd_hash.decode()
+        db.commit()
+        db.refresh(db_user)
+        return {
+            "id": db_user.id,
+            "email": db_user.email,
+            "display_name": db_user.display_name,
+            "role": db_user.role,
+        }
+    finally:
+        db.close()

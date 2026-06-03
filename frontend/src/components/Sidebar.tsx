@@ -1,4 +1,4 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, RadioTower } from 'lucide-react'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, RadioTower, Settings } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
@@ -13,6 +13,7 @@ interface SidebarProps {
   onViewChange: (v: AppView) => void
   feeds: Feed[]
   onOpenProfile: () => void
+  onOpenSettings: () => void
   onLogout: () => void
 }
 
@@ -32,6 +33,7 @@ export function Sidebar({
   onViewChange,
   feeds,
   onOpenProfile,
+  onOpenSettings,
   onLogout
 }: SidebarProps) {
   const { filter, setFilter, articles } = useArticlesStore()
@@ -178,6 +180,9 @@ export function Sidebar({
           <div className="flex-1">
             <div className="text-[12.5px] font-medium text-text-primary leading-tight">{user?.display_name ?? 'User'}</div>
             <div className="text-[11px] text-text-muted leading-tight">{user?.role ?? 'User'}</div>
+          </div>
+          <div onClick={(e) => { e.stopPropagation(); onOpenSettings() }} className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-text-primary transition-colors" title="Settings">
+            <Settings size={14} />
           </div>
           <div onClick={(e) => { e.stopPropagation(); onLogout() }} className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-danger transition-colors" title="Logout">
             <LogOut size={14} />
