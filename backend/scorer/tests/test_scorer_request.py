@@ -291,3 +291,68 @@ class TestPollerDispatchIntegration:
         assert "High reward" in result or "high reward" in result
 
 
+class TestBuildPreferenceBlock:
+    """Story 5.6 (FR-MT-31) — user-scoped preference block."""
+
+    def test_passes_user_id_to_api(self):
+        from scorer import build_preference_block
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = Mock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {
+            "liked_tags": [{"tag": "LLM", "count": 5}],
+            "disliked_tags": [],
+            "liked_examples": [{"title": "Great paper", "tags": ["LLM"]}],
+            "disliked_examples": [],
+            "total_liked": 3,
+            "total_disliked": 0,
+            "profile_preference_block": {"topics": [], "methods": [], "domains": [], "avoid": []},
+        }
+        mock_client.get.return_value = mock_response
+
+        result = sync_await(build_preference_block(mock_client, user_id=42))
+
+        call_url = mock_client.get.await_args[0][0]
+        call_params = mock_client.get.await_args[1]["params"]
+        assert "feedback-examples" in call_url
+        assert call_params["user_id"] == 42
+        assert "Great paper" in result
+
+    def test_omits_block_when_insufficient_signal(self):
+        from scorer import build_preference_block
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = Mock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {
+            "liked_tags": [],
+            "disliked_tags": [],
+            "liked_examples": [],
+            "disliked_examples": [],
+            "total_liked": 1,
+            "total_disliked": 0,
+            "profile_preference_block": {"topics": [], "methods": [], "domains": [], "avoid": []},
+        }
+        mock_client.get.return_value = mock_response
+
+        result = sync_await(build_preference_block(mock_client, user_id=7))
+
+        assert result == ""
+
+    def test_default_user_id_is_1(self):
+        """Backward compat: build_preference_block with no user_id defaults to 1."""
+        from scorer import build_preference_block
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = Mock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {}
+        mock_client.get.return_value = mock_response
+
+        sync_await(build_preference_block(mock_client))
+
+        call_params = mock_client.get.await_args[1]["params"]
+        assert call_params["user_id"] == 1
+
+

@@ -337,7 +337,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str, system
     return None
 
 
-async def build_preference_block(client: httpx.AsyncClient) -> str:
+async def build_preference_block(client: httpx.AsyncClient, user_id: int = 1) -> str:
     """Build a compact, structured preference profile from the full feedback history.
 
     Strategy (backed by LLM-Rec / NAACL 2024 findings):
@@ -347,10 +347,12 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
       over-generalise and dilute the signal.
     - Hard budget: the returned block stays under ~220 tokens regardless of history size.
     - Cold-start guard: block is omitted until at least 3 interactions exist.
+    - User-scoped (FR-MT-31): passes user_id so the API filters by the user's own data.
     """
     try:
         resp = await client.get(
             f"{API_BASE}/api/internal/feedback-examples",
+            params={"user_id": user_id},
             headers=INTERNAL_HEADERS,
             timeout=5,
         )
@@ -422,7 +424,7 @@ async def score_article(req: ScoreRequest):
 
         # Build user message with optional preference profile for personalisation
         content_preview = (req.content_text or req.rss_summary or "")[:cap]
-        preference_block = await build_preference_block(client)
+        preference_block = await build_preference_block(client, user_id=req.user_id)
         user_message = f"Title: {req.title}\n\nContent:\n{content_preview}{preference_block}"
 
         # Tier 1: University GPU server (highest quality, free)

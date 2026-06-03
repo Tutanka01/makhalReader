@@ -116,24 +116,45 @@ async def internal_list_feeds(
 @router.get("/feedback-examples")
 async def internal_feedback_examples(
     x_internal_secret: Optional[str] = Header(None),
+    user_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Return an aggregated preference profile (tag frequencies + examples) for scorer personalisation."""
+    """Return an aggregated preference profile (tag frequencies + examples) for scorer personalisation.
+
+    When user_id is provided (FR-MT-31), scope queries to that user's article_scores and
+    research_profile.  When absent, fall back to corpus-level data (backward compat, NFR-T4).
+    """
     if x_internal_secret != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    liked_rows = (
-        db.query(Article.title, Article.tags_json)
-        .filter(Article.user_feedback == 1)
-        .order_by(Article.created_at.desc())
-        .all()
-    )
-    disliked_rows = (
-        db.query(Article.title, Article.tags_json)
-        .filter(Article.user_feedback == -1)
-        .order_by(Article.created_at.desc())
-        .all()
-    )
+    if user_id is not None:
+        liked_rows = (
+            db.query(Article.title, Article.tags_json)
+            .join(ArticleScore, ArticleScore.article_id == Article.id)
+            .filter(ArticleScore.user_id == user_id, ArticleScore.user_feedback == 1)
+            .order_by(Article.created_at.desc())
+            .all()
+        )
+        disliked_rows = (
+            db.query(Article.title, Article.tags_json)
+            .join(ArticleScore, ArticleScore.article_id == Article.id)
+            .filter(ArticleScore.user_id == user_id, ArticleScore.user_feedback == -1)
+            .order_by(Article.created_at.desc())
+            .all()
+        )
+    else:
+        liked_rows = (
+            db.query(Article.title, Article.tags_json)
+            .filter(Article.user_feedback == 1)
+            .order_by(Article.created_at.desc())
+            .all()
+        )
+        disliked_rows = (
+            db.query(Article.title, Article.tags_json)
+            .filter(Article.user_feedback == -1)
+            .order_by(Article.created_at.desc())
+            .all()
+        )
 
     def aggregate_tags(rows: list, top_n: int) -> list[dict]:
         counts: dict[str, int] = {}
@@ -153,11 +174,10 @@ async def internal_feedback_examples(
         return out
 
     # Build structured preference block from the researcher profile table
-    profile_rows = (
-        db.query(ResearchProfile)
-        .order_by(ResearchProfile.kind, ResearchProfile.weight.desc())
-        .all()
-    )
+    profile_query = db.query(ResearchProfile)
+    if user_id is not None:
+        profile_query = profile_query.filter(ResearchProfile.user_id == user_id)
+    profile_rows = profile_query.order_by(ResearchProfile.kind, ResearchProfile.weight.desc()).all()
 
     def _group_profile(rows, kind: str) -> list[dict]:
         return [
