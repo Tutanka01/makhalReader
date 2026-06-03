@@ -18,6 +18,7 @@ import ConferenceRadar from './components/ConferenceRadar'
 import HighlightManager from './components/HighlightManager'
 import BibliographyPanel from './components/BibliographyPanel'
 import SettingsModal from './components/SettingsModal'
+import AdminPage from './components/AdminPage'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -74,7 +75,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager' | 'admin'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -268,7 +269,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               appView === 'highlights' ? 'Highlight Manager' :
               appView === 'bibliography' ? 'BibTeX Export' :
               appView === 'conferences' ? 'Conference Radar' :
-              appView === 'feed-manager' ? 'Feed Manager' : 'Literature Review'
+              appView === 'feed-manager' ? 'Feed Manager' :
+              appView === 'admin' ? 'Lab Admin' : 'Literature Review'
             }
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
@@ -318,6 +320,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
                 currentUser={currentUser}
                 onFeedsChange={refreshFeeds}
               />
+            ) : appView === 'admin' ? (
+              <AdminPage />
             ) : (
               <LitReviewView onSelectArticle={handleSelectArticle} />
             )}

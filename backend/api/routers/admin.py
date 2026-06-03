@@ -1,11 +1,14 @@
+import json
 import structlog
+import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import Article, get_db
+from database import Article, Feed, Organization, User, UserConfig, UserFeedSubscription, get_db
 from routers.articles import _normalize_url
 
 logger = structlog.get_logger().bind(service="admin")
@@ -103,3 +106,80 @@ async def reindex_chroma(db: Session = Depends(get_db), _: None = _auth):
     if count > 0:
         logger.info("admin_reindex_complete", migrated=count)
     return {"status": "ok", "migrated": count}
+
+
+def _require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.get("/org")
+async def get_org(db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    _require_admin(current_user)
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    members = (
+        db.query(User, UserConfig.thesis_title)
+        .outerjoin(UserConfig, User.id == UserConfig.user_id)
+        .filter(User.org_id == org_id)
+        .all()
+    )
+    member_list = [
+        {
+            "id": u.id,
+            "email": u.email,
+            "display_name": u.display_name,
+            "role": u.role,
+            "onboarding_done": u.onboarding_done,
+            "thesis": uc or "",
+        }
+        for u, uc in members
+    ]
+
+    subscriber_counts = (
+        db.query(
+            Feed.id,
+            Feed.name,
+            Feed.category,
+            func.count(UserFeedSubscription.user_id).label("subscriber_count"),
+        )
+        .join(UserFeedSubscription, Feed.id == UserFeedSubscription.feed_id)
+        .filter(Feed.active == True)
+        .group_by(Feed.id)
+        .all()
+    )
+    catalog = [
+        {"id": f.id, "name": f.name, "category": f.category, "subscriber_count": cnt}
+        for f, cnt in subscriber_counts
+    ]
+
+    return {
+        "id": org.id,
+        "name": org.name,
+        "invite_code": org.code,
+        "members": member_list,
+        "feed_catalog": catalog,
+    }
+
+
+@router.post("/org/invite-code")
+async def regenerate_invite_code(db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    _require_admin(current_user)
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    new_code = f"BASIRA-{secrets.token_hex(4).upper()}"
+    org.code = new_code
+    db.commit()
+    return {"invite_code": new_code}

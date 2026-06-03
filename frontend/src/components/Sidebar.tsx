@@ -1,4 +1,4 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, RadioTower, Settings } from 'lucide-react'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, RadioTower, Settings, Shield } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
@@ -6,7 +6,7 @@ import type { Feed } from '../types'
 import { usePolling } from '../hooks/usePolling'
 import { useCurrentUser } from '../context/UserContext'
 
-export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'
+export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager' | 'admin'
 
 interface SidebarProps {
   currentView: AppView
@@ -151,6 +151,9 @@ export function Sidebar({
         <NavItem icon={BookMarked} label="Bibliography" active={currentView === 'bibliography'} onClick={() => onViewChange('bibliography')} />
         <NavItem icon={RadioTower} label="Feed Manager" active={currentView === 'feed-manager'} onClick={() => onViewChange('feed-manager')} />
         <NavItem icon={BarChart2} label="Stats" active={currentView === 'stats'} onClick={() => onViewChange('stats')} />
+        {user?.role === 'admin' && (
+          <NavItem icon={Shield} label="Lab Admin" active={currentView === 'admin'} onClick={() => onViewChange('admin')} />
+        )}
       </div>
 
       <div className="h-[1px] bg-border-subtle mx-4 my-2" />
