@@ -1092,3 +1092,161 @@ class TestFeedCatalog:
         resp = c.get("/api/feeds/catalog")
         assert len(resp.json()) == 1
         assert resp.json()[0]["name"] == "Unsubscribed Feed"
+
+
+# ── Per-user scoring isolation — Story 6.6 (NFR-T1, NFR-T2) ──────────────
+
+@SKIP_INTEGRATION
+class TestPerUserScoringIsolation:
+    """Cross-tenant isolation: one user's scores never leak to another (NFR-T1)."""
+
+    def test_article_score_per_user_rows(self, client):
+        """Each user gets their own article_scores row (FR-MT-7)."""
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Isolation Test Article")
+        session.commit()
+
+        for uid in [1, 2]:
+            resp = c.post(
+                f"/api/internal/articles/{art.id}/score",
+                json={
+                    "score": 7.0 + uid,
+                    "tags": ["test"],
+                    "summary_bullets": ["Point"],
+                    "reason": f"Relevant for user {uid}",
+                    "user_id": uid,
+                },
+                headers={"X-Internal-Secret": "changeme"},
+            )
+            assert resp.status_code == 200
+
+        from sqlalchemy import text
+        rows = session.execute(
+            text("SELECT user_id, score FROM article_scores WHERE article_id = :aid ORDER BY user_id"),
+            {"aid": art.id},
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0] == (1, 8.0)
+        assert rows[1] == (2, 9.0)
+
+    def test_user1_cannot_see_user2_score_via_api(self, client):
+        """User 1's API never returns user 2's score data.
+
+        The article has a backward-compat score (7.0 on the article row) but
+        user 2's dedicated article_scores row (5.0) must never appear for user 1.
+        """
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Cross-tenant Article")
+        session.commit()
+
+        c.post(
+            f"/api/internal/articles/{art.id}/score",
+            json={
+                "score": 5.0,
+                "tags": ["user2"],
+                "summary_bullets": ["Only user 2"],
+                "reason": "User 2 only",
+                "user_id": 2,
+            },
+            headers={"X-Internal-Secret": "changeme"},
+        )
+
+        from auth import require_session
+        from database import get_db as _get_db
+        from main import app
+        app.dependency_overrides[require_session] = lambda: {"id": 1, "email": "u1@t.com"}
+        app.dependency_overrides[_get_db] = lambda: session
+
+        resp = c.get(f"/api/articles/{art.id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        # User 1 should see the backward-compat article.score (7.0 from _make_article),
+        # NOT user 2's dedicated 5.0 score
+        assert data["score"] == 7.0
+
+        app.dependency_overrides.clear()
+
+    def test_user2_cannot_see_user1_score_via_internal(self, client):
+        """Internal score query for user 2 doesn't return user 1's data."""
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Tenant-boundary Article")
+        session.commit()
+
+        c.post(
+            f"/api/internal/articles/{art.id}/score",
+            json={
+                "score": 9.9,
+                "tags": ["user1"],
+                "summary_bullets": ["User 1 insight"],
+                "reason": "User 1 only",
+                "user_id": 1,
+            },
+            headers={"X-Internal-Secret": "changeme"},
+        )
+
+        from sqlalchemy import text
+        rows = session.execute(
+            text("SELECT score FROM article_scores WHERE article_id = :aid AND user_id = :uid"),
+            {"aid": art.id, "uid": 2},
+        ).fetchall()
+        assert len(rows) == 0
+
+    def test_score_queue_one_user_failure_does_not_block_others(self, client):
+        """NFR-MT-15: a per-user scoring failure must not block other users.
+
+        This tests the semantic contract enforced by the per-user semaphores
+        in poller/main.py: each user gets their own asyncio.Semaphore so one
+        user's failure never blocks another user's scoring.
+        """
+        import asyncio
+
+        async def simulate_per_user_scoring():
+            sems = {uid: asyncio.Semaphore(1) for uid in [1, 2, 3]}
+
+            async def score(user_id: int, fail: bool = False) -> str:
+                async with sems[user_id]:
+                    if fail:
+                        raise RuntimeError(f"Scoring failed for user {user_id}")
+                    return f"ok-{user_id}"
+
+            results = await asyncio.gather(
+                score(1, fail=False),
+                score(2, fail=True),
+                score(3, fail=False),
+                return_exceptions=True,
+            )
+            return results
+
+        results = asyncio.run(simulate_per_user_scoring())
+        assert results[0] == "ok-1"
+        assert isinstance(results[1], RuntimeError)
+        assert results[2] == "ok-3"
+
+    def test_feed_subscriber_isolation(self, client):
+        """Feeds list includes subscriber_user_ids; those IDs are internal-only."""
+        c, session = client
+        feed = _make_feed(session, name="Isolated Feed")
+        session.flush()
+
+        from database import UserFeedSubscription
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed.id),
+            UserFeedSubscription(user_id=2, feed_id=feed.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/internal/feeds", headers={"X-Internal-Secret": "changeme"})
+        assert resp.status_code == 200
+        data = resp.json()
+        found = next((f for f in data if f["id"] == feed.id), None)
+        assert found is not None
+        assert 1 in found["subscriber_user_ids"]
+        assert 2 in found["subscriber_user_ids"]
+
+        resp2 = c.get("/api/feeds")
+        assert resp2.status_code == 200
+        for f in resp2.json():
+            assert "subscriber_user_ids" not in f

@@ -77,8 +77,16 @@ def normalize_url(url: str) -> str:
     except Exception:
         return url
 
-# Global semaphore: only one LLM call at a time across all concurrent feed processing.
-_score_semaphore = asyncio.Semaphore(1)
+# Per-user semaphores: concurrent LLM calls across users, serialized per user (NFR-T2).
+_score_semaphores: dict[int, asyncio.Semaphore] = {}
+
+
+def _get_or_create_semaphore(user_id: int) -> asyncio.Semaphore:
+    """Return a per-user asyncio.Semaphore(1). One user's scoring never blocks
+    another user's scoring (NFR-MT-15)."""
+    if user_id not in _score_semaphores:
+        _score_semaphores[user_id] = asyncio.Semaphore(1)
+    return _score_semaphores[user_id]
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +160,13 @@ async def score_article_rate_limited(
     user_id: int = 1,
     user_context: Optional[dict] = None,
 ):
-    """Acquire the global semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS."""
-    async with _score_semaphore:
+    """Acquire the per-user semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS.
+
+    Per-user semaphores (NFR-T2) ensure one user's LLM calls are serialized,
+    but different users' scoring runs concurrently (NFR-MT-15).
+    """
+    sem = _get_or_create_semaphore(user_id)
+    async with sem:
         try:
             body = {
                 "article_id": article_id,
@@ -397,8 +410,9 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
 
 async def poll_all_feeds():
-    global _user_context_cache
+    global _user_context_cache, _score_semaphores
     _user_context_cache = {}
+    _score_semaphores = {}
     logger.info(
         "Starting poll cycle",
         max_new_per_feed=MAX_NEW_PER_FEED,
