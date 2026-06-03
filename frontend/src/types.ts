@@ -40,6 +40,16 @@ export interface Feed {
   active: boolean
   last_fetched: string | null
   article_count?: number
+  subscribed?: boolean
+}
+
+export interface UserInfo {
+  id: number
+  email: string
+  display_name: string
+  role: string
+  org_id: number | null
+  onboarding_done: boolean
 }
 
 export interface Article {

@@ -1,13 +1,11 @@
-import { useCallback, useRef, useState } from 'react'
-import { X, Plus, Upload, Download, Rss, Loader2, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Plus, Upload, Download, Rss, Loader2, Trash2, AlertCircle, CheckCircle2, Bell, BellOff } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import type { Feed } from '../types'
+import type { Feed, UserInfo } from '../types'
 
 interface FeedManagerPanelProps {
-  open: boolean
-  onClose: () => void
-  feeds: Feed[]
+  currentUser: UserInfo | null
   onFeedsChange: () => void
 }
 
@@ -39,7 +37,10 @@ function isHealthy(feed: Feed) {
   return Date.now() - new Date(feed.last_fetched).getTime() < 7 * 86_400_000
 }
 
-export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedManagerPanelProps) {
+export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPanelProps) {
+  const [catalog, setCatalog] = useState<Feed[]>([])
+  const [loading, setLoading] = useState(true)
+  const [togglingId, setTogglingId] = useState<number | null>(null)
   const [addUrl, setAddUrl] = useState('')
   const [addName, setAddName] = useState('')
   const [addCategory, setAddCategory] = useState('')
@@ -51,8 +52,45 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState('')
+  const [filterCat, setFilterCat] = useState('all')
 
-  const categories = [...new Set(feeds.map(f => f.category))].sort()
+  const isAdmin = currentUser?.role === 'admin'
+
+  const fetchCatalog = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/feeds/catalog', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setCatalog(Array.isArray(data) ? data : [])
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchCatalog() }, [fetchCatalog])
+
+  const handleSubscribe = async (feedId: number, currentlySubscribed: boolean) => {
+    setTogglingId(feedId)
+    try {
+      const method = currentlySubscribed ? 'DELETE' : 'POST'
+      const res = await fetch(`/api/feeds/${feedId}/subscribe`, {
+        method,
+        credentials: 'include',
+      })
+      if (res.ok) {
+        setCatalog(prev => prev.map(f => f.id === feedId ? { ...f, subscribed: !currentlySubscribed } : f))
+        onFeedsChange()
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setTogglingId(null)
+    }
+  }
 
   const handleAdd = async () => {
     if (!addUrl.trim()) return
@@ -77,6 +115,7 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
         setAddUrl('')
         setAddName('')
         setAddCategory('')
+        fetchCatalog()
         onFeedsChange()
       }
     } catch {
@@ -97,11 +136,11 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
       confirmTimers.current.delete(id)
       setConfirmDeleteId(null)
       setDeletingId(id)
-      fetch(`/api/feeds/${id}`, { method: 'DELETE' })
-        .then(() => onFeedsChange())
+      fetch(`/api/feeds/${id}`, { method: 'DELETE', credentials: 'include' })
+        .then(() => { fetchCatalog(); onFeedsChange() })
         .finally(() => setDeletingId(null))
     }
-  }, [confirmDeleteId, onFeedsChange])
+  }, [confirmDeleteId, fetchCatalog, onFeedsChange])
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -111,10 +150,11 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await fetch('/api/feeds/opml', { method: 'POST', body: formData })
+      const res = await fetch('/api/feeds/opml', { method: 'POST', credentials: 'include', body: formData })
       if (res.ok) {
         const data = await res.json()
         setImportMsg(`${data.added} ajoutés, ${data.skipped} déjà présents`)
+        fetchCatalog()
         onFeedsChange()
       } else {
         setImportMsg('Erreur lors de l\'import.')
@@ -127,135 +167,157 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
     }
   }
 
+  const categories = ['all', ...new Set(catalog.map(f => f.category))].sort()
+  const filtered = filterCat === 'all' ? catalog : catalog.filter(f => f.category === filterCat)
+  const subscribedCount = catalog.filter(f => f.subscribed).length
+
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className={`fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <div
-        className={`
-          fixed right-0 top-0 h-full w-full max-w-sm z-50
-          bg-bg-surface border-l border-border-default shadow-2xl
-          flex flex-col
-          transition-transform duration-300 ease-out
-          ${open ? 'translate-x-0' : 'translate-x-full'}
-        `}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 border-b border-border-subtle flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Rss className="w-4 h-4 text-accent" />
-            <span className="text-sm font-semibold text-text-primary">Feeds</span>
-            <span className="text-xs text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded-full">
-              {feeds.length}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {/* Import OPML */}
-            <label
-              className="flex items-center gap-1 p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary cursor-pointer"
-              title="Importer OPML"
-            >
-              {importing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Upload className="w-3.5 h-3.5" />
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".opml,.xml"
-                className="hidden"
-                onChange={handleImport}
-              />
-            </label>
-            {/* Export OPML */}
-            <button
-              onClick={() => exportOPML(feeds)}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Exporter OPML"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-3.5 border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <Rss className="w-4 h-4 text-accent" />
+          <span className="text-sm font-semibold text-text-primary">Feed Manager</span>
+          <span className="text-xs text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded-full">
+            {subscribedCount}/{catalog.length}
+          </span>
         </div>
+        <div className="flex items-center gap-1">
+          <label
+            className="flex items-center gap-1 p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary cursor-pointer"
+            title="Importer OPML"
+          >
+            {importing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Upload className="w-3.5 h-3.5" />
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".opml,.xml"
+              className="hidden"
+              onChange={handleImport}
+            />
+          </label>
+          <button
+            onClick={() => exportOPML(catalog)}
+            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
+            title="Exporter OPML"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
 
-        {/* Import message */}
-        {importMsg && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-accent/10 border-b border-accent/20">
-            <CheckCircle2 className="w-3.5 h-3.5 text-accent flex-shrink-0" />
-            <span className="text-xs text-accent">{importMsg}</span>
+      {importMsg && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-accent/10 border-b border-accent/20">
+          <CheckCircle2 className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+          <span className="text-xs text-accent">{importMsg}</span>
+        </div>
+      )}
+
+      {/* Category filter */}
+      <div className="flex gap-1.5 px-6 py-3 border-b border-border-subtle overflow-x-auto flex-shrink-0">
+        {categories.map(cat => (
+          <button
+            key={cat}
+            onClick={() => setFilterCat(cat)}
+            className={`text-xs whitespace-nowrap px-2.5 py-1 rounded-full transition-colors ${
+              filterCat === cat
+                ? 'bg-accent text-white'
+                : 'bg-bg-elevated text-text-muted hover:text-text-primary hover:bg-bg-hover'
+            }`}
+          >
+            {cat === 'all' ? 'Tous' : cat}
+          </button>
+        ))}
+      </div>
+
+      {/* Feed list */}
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
           </div>
-        )}
-
-        {/* Feed list */}
-        <div className="flex-1 overflow-y-auto">
-          {categories.map(category => (
-            <div key={category}>
-              <div className="px-4 py-1.5 bg-bg-elevated border-b border-border-subtle">
-                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
-                  {category}
-                </span>
-              </div>
-              {feeds.filter(f => f.category === category).map(feed => {
-                const healthy = isHealthy(feed)
-                const isConfirming = confirmDeleteId === feed.id
-                const isDeleting = deletingId === feed.id
-                return (
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-20 text-text-muted text-xs">
+            Aucun feed dans cette catégorie.
+          </div>
+        ) : (
+          <div className="divide-y divide-border-subtle">
+            {filtered.map(feed => {
+              const healthy = isHealthy(feed)
+              const isToggling = togglingId === feed.id
+              const isConfirming = confirmDeleteId === feed.id
+              const isDeleting = deletingId === feed.id
+              return (
+                <div
+                  key={feed.id}
+                  className="flex items-center gap-3 px-6 py-3 hover:bg-bg-hover transition-colors group"
+                >
+                  {/* Health dot */}
                   <div
-                    key={feed.id}
-                    className="flex items-center gap-3 px-4 py-2.5 border-b border-border-subtle hover:bg-bg-hover transition-colors group"
-                  >
-                    {/* Health dot */}
-                    <div
-                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${healthy ? 'bg-success' : 'bg-danger/60'}`}
-                      title={healthy ? 'Actif' : 'Aucun article récent'}
-                    />
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${healthy ? 'bg-success' : 'bg-danger/60'}`}
+                    title={healthy ? 'Actif' : 'Aucun article récent'}
+                  />
 
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-text-primary truncate">{feed.name}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {feed.article_count !== undefined && (
-                          <span className="text-[10px] text-text-muted">
-                            {feed.article_count} articles
-                          </span>
-                        )}
-                        {feed.last_fetched && (
-                          <span className="text-[10px] text-text-muted">
-                            · {formatDistanceToNow(new Date(feed.last_fetched), { addSuffix: true, locale: fr })}
-                          </span>
-                        )}
-                        {!healthy && !feed.last_fetched && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-danger/70">
-                            <AlertCircle className="w-2.5 h-2.5" />
-                            Jamais lu
-                          </span>
-                        )}
-                      </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-text-primary truncate">{feed.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded">
+                        {feed.category}
+                      </span>
+                      {feed.article_count !== undefined && (
+                        <span className="text-[10px] text-text-muted">
+                          {feed.article_count} articles
+                        </span>
+                      )}
+                      {feed.last_fetched && (
+                        <span className="text-[10px] text-text-muted">
+                          · {formatDistanceToNow(new Date(feed.last_fetched), { addSuffix: true, locale: fr })}
+                        </span>
+                      )}
+                      {!healthy && !feed.last_fetched && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-danger/70">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          Jamais lu
+                        </span>
+                      )}
                     </div>
+                  </div>
 
-                    {/* Delete button */}
+                  {/* Subscribe/Unsubscribe button */}
+                  <button
+                    onClick={() => handleSubscribe(feed.id, !!feed.subscribed)}
+                    disabled={isToggling}
+                    className={`flex items-center gap-1 rounded-md transition-all text-[11px] font-medium px-2.5 py-1.5 flex-shrink-0 ${
+                      feed.subscribed
+                        ? 'bg-accent/10 text-accent hover:bg-accent/20'
+                        : 'bg-bg-elevated text-text-muted hover:text-text-primary hover:bg-bg-hover'
+                    }`}
+                    title={feed.subscribed ? 'Se désabonner' : "S'abonner"}
+                  >
+                    {isToggling ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : feed.subscribed ? (
+                      <BellOff className="w-3 h-3" />
+                    ) : (
+                      <Bell className="w-3 h-3" />
+                    )}
+                    {feed.subscribed ? 'Abonné' : "S'abonner"}
+                  </button>
+
+                  {/* Admin delete button */}
+                  {isAdmin && (
                     <button
                       onClick={() => handleDelete(feed.id)}
                       disabled={isDeleting}
-                      className={`
-                        flex items-center gap-1 rounded-md transition-all duration-150 text-[11px] font-medium flex-shrink-0
-                        opacity-0 group-hover:opacity-100
-                        ${isConfirming
+                      className={`flex items-center gap-1 rounded-md transition-all duration-150 text-[11px] font-medium flex-shrink-0 opacity-0 group-hover:opacity-100 ${
+                        isConfirming
                           ? 'px-2 py-1 bg-red-500/15 text-red-400 hover:bg-red-500/25 ring-1 ring-red-500/40 opacity-100'
                           : 'p-1.5 text-text-muted hover:text-danger hover:bg-bg-elevated'
-                        }
-                      `}
+                      }`}
                       title={isConfirming ? 'Confirmer la suppression' : 'Supprimer'}
                     >
                       {isDeleting ? (
@@ -265,68 +327,68 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
                       )}
                       {isConfirming && <span>Confirmer?</span>}
                     </button>
-                  </div>
-                )
-              })}
-            </div>
-          ))}
-        </div>
-
-        {/* Add feed form */}
-        <div className="border-t border-border-default bg-bg-surface px-4 py-4 flex-shrink-0">
-          <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-            Ajouter un feed
-          </p>
-          <div className="space-y-2">
-            <input
-              type="url"
-              value={addUrl}
-              onChange={e => setAddUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAdd()}
-              placeholder="https://example.com/feed.xml"
-              className="w-full bg-bg-elevated border border-border-default rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
-            />
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={addName}
-                onChange={e => setAddName(e.target.value)}
-                placeholder="Nom (optionnel)"
-                className="flex-1 bg-bg-elevated border border-border-default rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
-              />
-              <select
-                value={addCategory}
-                onChange={e => setAddCategory(e.target.value)}
-                className="flex-1 bg-bg-elevated border border-border-default rounded-lg px-2 py-2 text-xs text-text-primary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
-              >
-                <option value="">Catégorie</option>
-                {categories.map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-                <option value="General">General</option>
-              </select>
-            </div>
-            {addError && (
-              <p className="text-[11px] text-danger flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                {addError}
-              </p>
-            )}
-            <button
-              onClick={handleAdd}
-              disabled={adding || !addUrl.trim()}
-              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-accent text-white text-xs font-medium transition-all hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {adding ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Plus className="w-3.5 h-3.5" />
-              )}
-              Ajouter
-            </button>
+                  )}
+                </div>
+              )
+            })}
           </div>
+        )}
+      </div>
+
+      {/* Add feed form */}
+      <div className="border-t border-border-default bg-bg-surface px-6 py-4 flex-shrink-0">
+        <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2.5">
+          Ajouter un feed
+        </p>
+        <div className="space-y-2">
+          <input
+            type="url"
+            value={addUrl}
+            onChange={e => setAddUrl(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAdd()}
+            placeholder="https://example.com/feed.xml"
+            className="w-full bg-bg-elevated border border-border-default rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
+          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={addName}
+              onChange={e => setAddName(e.target.value)}
+              placeholder="Nom (optionnel)"
+              className="flex-1 bg-bg-elevated border border-border-default rounded-lg px-3 py-2 text-xs text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
+            />
+            <select
+              value={addCategory}
+              onChange={e => setAddCategory(e.target.value)}
+              className="flex-1 bg-bg-elevated border border-border-default rounded-lg px-2 py-2 text-xs text-text-primary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
+            >
+              <option value="">Catégorie</option>
+              {categories.filter(c => c !== 'all').map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              <option value="General">General</option>
+            </select>
+          </div>
+          {addError && (
+            <p className="text-[11px] text-danger flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {addError}
+            </p>
+          )}
+          <button
+            onClick={handleAdd}
+            disabled={adding || !addUrl.trim()}
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-accent text-white text-xs font-medium transition-all hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {adding ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Plus className="w-3.5 h-3.5" />
+            )}
+            Ajouter
+          </button>
         </div>
       </div>
-    </>
+    </div>
   )
 }

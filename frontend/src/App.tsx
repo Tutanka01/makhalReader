@@ -20,7 +20,7 @@ import BibliographyPanel from './components/BibliographyPanel'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
-import type { Feed } from './types'
+import type { Feed, UserInfo } from './types'
 
 // ---------------------------------------------------------------------------
 // Auth gate — checks session on load, shows LoginView if unauthenticated
@@ -67,16 +67,23 @@ export default function App() {
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [feeds, setFeeds] = useState<Feed[]>([])
+  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
-  const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
   const isOnline = useOnlineStatus()
+
+  useEffect(() => {
+    fetch('/auth/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setCurrentUser(u))
+      .catch(() => {})
+  }, [])
 
   const refreshFeeds = useCallback(() => {
     fetch('/api/feeds', { credentials: 'include' })
@@ -166,13 +173,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
     <div className="flex h-screen bg-bg-base text-text-primary overflow-hidden">
       <OfflineBanner show={!isOnline} />
 
-      <FeedManagerPanel
-        open={feedManagerOpen}
-        onClose={() => setFeedManagerOpen(false)}
-        feeds={feeds}
-        onFeedsChange={refreshFeeds}
-      />
-
       <ResearchProfileEditor
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
@@ -232,7 +232,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
                 if (window.innerWidth < 1024) setSidebarOpen(false)
               }}
               feeds={feeds}
-              onOpenFeedManager={() => { setFeedManagerOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
               onOpenProfile={() => { setProfileOpen(true); if (window.innerWidth < 1024) setSidebarOpen(false) }}
               onLogout={onLogout}
             />
@@ -260,7 +259,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               appView === 'write' ? 'Writing Assistant' :
               appView === 'highlights' ? 'Highlight Manager' :
               appView === 'bibliography' ? 'BibTeX Export' :
-              appView === 'conferences' ? 'Conference Radar' : 'Literature Review'
+              appView === 'conferences' ? 'Conference Radar' :
+              appView === 'feed-manager' ? 'Feed Manager' : 'Literature Review'
             }
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
@@ -282,7 +282,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
                 feeds={feeds}
                 onSelect={handleSelectArticle}
                 selectedId={selectedId}
-                onOpenFeedManager={() => setFeedManagerOpen(true)}
                 onOpenProfile={() => setProfileOpen(true)}
                 currentView={appView}
                 onViewChange={setAppView}
@@ -306,6 +305,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               <BibliographyPanel />
             ) : appView === 'conferences' ? (
               <ConferenceRadar />
+            ) : appView === 'feed-manager' ? (
+              <FeedManagerPanel
+                currentUser={currentUser}
+                onFeedsChange={refreshFeeds}
+              />
             ) : (
               <LitReviewView onSelectArticle={handleSelectArticle} />
             )}

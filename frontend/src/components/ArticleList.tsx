@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut, Network, UserCircle2, BookOpen } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Sparkles, LogOut, Network, UserCircle2, BookOpen } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { DigestView } from './DigestView'
@@ -14,14 +14,13 @@ interface ArticleListProps {
   feeds: Feed[]
   onSelect: (id: number) => void
   selectedId: number | null
-  onOpenFeedManager: () => void
   onOpenProfile: () => void
   currentView: 'feed' | 'digest' | 'stats' | 'research' | 'litreview'
   onViewChange: (v: 'feed' | 'digest' | 'stats' | 'research' | 'litreview') => void
   onLogout: () => void
 }
 
-export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, onOpenProfile, currentView, onViewChange, onLogout }: ArticleListProps) {
+export function ArticleList({ feeds, onSelect, selectedId, onOpenProfile, currentView, onViewChange, onLogout }: ArticleListProps) {
   const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchArticles, clearSearch, searchResults, isSearching } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)

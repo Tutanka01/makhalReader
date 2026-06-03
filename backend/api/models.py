@@ -315,6 +315,7 @@ def build_arise_row(article: Any, feed_name: str) -> AriseArticleOut:
 
 class FeedWithCount(FeedOut):
     article_count: int = 0
+    subscribed: bool = False
 
 
 class InternalArticleCreate(BaseModel):

@@ -1,17 +1,16 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked } from 'lucide-react'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, RadioTower } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 import { usePolling } from '../hooks/usePolling'
 
-export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'
+export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'
 
 interface SidebarProps {
   currentView: AppView
   onViewChange: (v: AppView) => void
   feeds: Feed[]
-  onOpenFeedManager: () => void
   onOpenProfile: () => void
   onLogout: () => void
 }
@@ -31,7 +30,6 @@ export function Sidebar({
   currentView,
   onViewChange,
   feeds,
-  onOpenFeedManager,
   onOpenProfile,
   onLogout
 }: SidebarProps) {
@@ -144,6 +142,7 @@ export function Sidebar({
         <NavItem icon={FileText} label="Writing" active={currentView === 'write'} onClick={() => onViewChange('write')} />
         <NavItem icon={Calendar} label="Conferences" active={currentView === 'conferences'} count={notifications.urgent_deadlines} onClick={() => handleNavClick('conferences', 'conferences')} />
         <NavItem icon={BookMarked} label="Bibliography" active={currentView === 'bibliography'} onClick={() => onViewChange('bibliography')} />
+        <NavItem icon={RadioTower} label="Feed Manager" active={currentView === 'feed-manager'} onClick={() => onViewChange('feed-manager')} />
         <NavItem icon={BarChart2} label="Stats" active={currentView === 'stats'} onClick={() => onViewChange('stats')} />
       </div>
 
@@ -179,15 +178,7 @@ export function Sidebar({
             <LogOut size={14} />
           </div>
         </div>
-        <div onClick={onOpenFeedManager} className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors hover:bg-bg-hover mt-0.5">
-          <div className="w-7 h-7 rounded-full bg-[#6B4FBB] text-white flex items-center justify-center text-[10px] font-semibold flex-shrink-0 tracking-wide">
-            <Settings size={14} />
-          </div>
-          <div>
-            <div className="text-[12.5px] font-medium text-text-primary leading-tight">Feed Manager</div>
-            <div className="text-[11px] text-text-muted leading-tight">Manage sources</div>
-          </div>
-        </div>
+
       </div>
     </aside>
   )

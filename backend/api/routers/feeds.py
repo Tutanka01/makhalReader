@@ -41,7 +41,12 @@ async def list_feeds(db: Session = Depends(get_db), current_user: dict = Depends
 
 
 @router.get("/api/feeds/catalog", response_model=List[FeedWithCount])
-async def list_catalog(db: Session = Depends(get_db), _: None = _auth):
+async def list_catalog(db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    subscribed_subq = (
+        db.query(UserFeedSubscription.feed_id)
+        .filter(UserFeedSubscription.user_id == current_user["id"])
+        .subquery()
+    )
     results = (
         db.query(Feed, func.count(Article.id).label("article_count"))
         .outerjoin(Article, Feed.id == Article.feed_id)
@@ -49,11 +54,13 @@ async def list_catalog(db: Session = Depends(get_db), _: None = _auth):
         .group_by(Feed.id)
         .all()
     )
+    subscribed_ids = {row[0] for row in db.query(subscribed_subq.c.feed_id).all()}
     return [
         FeedWithCount(
             id=feed.id, url=feed.url, name=feed.name,
             category=feed.category, active=feed.active,
             last_fetched=feed.last_fetched, article_count=count,
+            subscribed=feed.id in subscribed_ids,
         )
         for feed, count in results
     ]
