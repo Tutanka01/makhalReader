@@ -187,6 +187,15 @@ class ArticleScore(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserFeedSubscription(Base):
+    """User-to-feed subscription (Story 3.1, FR-MT-13)."""
+    __tablename__ = "user_feed_subscriptions"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    feed_id = Column(Integer, ForeignKey("feeds.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -214,6 +223,8 @@ def init_db():
         "ALTER TABLE organizations ADD COLUMN code VARCHAR(64) UNIQUE",
         # Story 2.1 — article_scores table + backfill from articles (FR-MT-7, FR-MT-12)
         "CREATE TABLE IF NOT EXISTS article_scores (user_id INTEGER NOT NULL REFERENCES users(id), article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, score FLOAT, tags_json TEXT NOT NULL DEFAULT '[]', summary_bullets_json TEXT NOT NULL DEFAULT '[]', reason VARCHAR, read_at DATETIME, bookmarked BOOLEAN NOT NULL DEFAULT 0, user_feedback INTEGER, contribution_type VARCHAR(24), re_document_type VARCHAR(24), score_meta_json TEXT, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, article_id))",
+        # Story 3.1 — user_feed_subscriptions table (FR-MT-13)
+        "CREATE TABLE IF NOT EXISTS user_feed_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, feed_id))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -224,6 +235,7 @@ def init_db():
                 pass  # column already exists — idempotent
 
         _backfill_article_scores(conn)
+        _backfill_subscriptions(conn)
 
     _seed_default_user()
 
@@ -239,6 +251,18 @@ def _backfill_article_scores(conn):
         conn.commit()
     except Exception:
         pass  # table may not exist yet on very first deploy
+
+
+def _backfill_subscriptions(conn):
+    """Subscribe user_id=1 to all existing feeds (single-tenant compat)."""
+    try:
+        conn.execute(text("""
+            INSERT OR IGNORE INTO user_feed_subscriptions (user_id, feed_id, created_at)
+            SELECT 1, id, datetime('now') FROM feeds
+        """))
+        conn.commit()
+    except Exception:
+        pass
 
 
 def _seed_default_user():

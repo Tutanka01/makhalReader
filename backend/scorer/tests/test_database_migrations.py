@@ -39,7 +39,7 @@ if SQLALCHEMY_AVAILABLE:
     if str(SHARED_DIR) not in sys.path:
         sys.path.insert(0, str(SHARED_DIR))
 
-    from database import Article, ArticleScore, Base, Feed, Organization, SessionLocal, User, init_db
+    from database import Article, ArticleScore, Base, Feed, Organization, SessionLocal, User, UserFeedSubscription, init_db
 
 
 @pytest.fixture()
@@ -397,3 +397,76 @@ class TestArticleScoresTable:
         assert len(articles) == 1
         assert articles[0].title == "No Loss Article"
         session.close()
+
+
+class TestUserFeedSubscriptions:
+    """Story 3.1 — user_feed_subscriptions table + backfill (FR-MT-13)."""
+
+    def test_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "user_feed_subscriptions" in tables
+
+    def test_columns(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("user_feed_subscriptions")}
+        assert {"user_id", "feed_id", "created_at"}.issubset(columns)
+
+    def test_backfill_subscribes_user_1_to_all_feeds(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed1 = db_module.Feed(url="https://a.com/rss", name="A", category="Test")
+        feed2 = db_module.Feed(url="https://b.com/rss", name="B", category="Test")
+        session.add_all([feed1, feed2])
+        session.commit()
+
+        db_module.init_db()
+
+        rows = session.execute(
+            text("SELECT feed_id FROM user_feed_subscriptions WHERE user_id = 1 ORDER BY feed_id"),
+        ).fetchall()
+        feed_ids = [r[0] for r in rows]
+        assert feed_ids == [feed1.id, feed2.id]
+
+    def test_backfill_idempotent(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(url="https://c.com/rss", name="C", category="Test")
+        session.add(feed)
+        session.commit()
+
+        db_module.init_db()
+        db_module.init_db()
+
+        rows = session.execute(
+            text("SELECT COUNT(*) FROM user_feed_subscriptions WHERE user_id = 1"),
+        ).scalar()
+        assert rows == 1, "Backfill must be idempotent — no duplicate rows"
+
+    def test_init_db_twice_no_error(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        db_module.init_db()  # must not raise
+
+    def test_backfill_no_data_loss_for_existing_feeds(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(url="https://d.com/rss", name="D", category="Test")
+        session.add(feed)
+        session.commit()
+
+        db_module.init_db()
+
+        feeds = session.query(db_module.Feed).all()
+        assert len(feeds) == 1
+        assert feeds[0].name == "D"
