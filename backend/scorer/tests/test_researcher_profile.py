@@ -351,6 +351,33 @@ class TestProfileConfigEndpoints:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.8) — Prompt cache invalidation on config change (FR-MT-25)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPromptCacheInvalidation:
+    def test_put_config_clears_cache(self):
+        src = _read(_PROFILE_PY)
+        assert "config.prompt_cache_text = None" in src
+        assert "config.prompt_cache_hash = None" in src
+
+    def test_add_section_clears_cache(self):
+        src = _read(_PROFILE_PY)
+        # count occurrences of the pair in the file
+        count = src.count("config.prompt_cache_text = None")
+        # should appear at least 3 times (add_section, delete_section, update_config)
+        assert count >= 3, f"expected >=3, got {count}"
+
+    def test_cache_columns_exist_in_schema(self):
+        src = _read(_DATABASE_PY)
+        assert "prompt_cache_text" in src
+        assert "prompt_cache_hash" in src
+
+    def test_cache_cleared_on_section_change(self):
+        src = _read(_PROFILE_PY)
+        assert "config.prompt_cache_text = None" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AC 4 — Feedback hook: tags → research_profile on 👍
 # ═══════════════════════════════════════════════════════════════════════════════
 

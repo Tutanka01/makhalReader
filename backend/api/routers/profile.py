@@ -97,6 +97,8 @@ async def add_section(
         raise HTTPException(status_code=409, detail="Section already exists")
     sections.append(label)
     config.thesis_sections_json = json.dumps(sections)
+    config.prompt_cache_text = None
+    config.prompt_cache_hash = None
     db.commit()
     logger.info("section_added", user_id=user_id, section=label)
     return sorted(sections)
@@ -118,6 +120,8 @@ async def delete_section(
         raise HTTPException(status_code=404, detail="Section not found")
     sections.remove(label)
     config.thesis_sections_json = json.dumps(sections)
+    config.prompt_cache_text = None
+    config.prompt_cache_hash = None
     db.commit()
     logger.info("section_deleted", user_id=user_id, section=label)
     return sorted(sections)
@@ -178,6 +182,8 @@ async def update_config(
         dirty = True
 
     if dirty:
+        config.prompt_cache_text = None
+        config.prompt_cache_hash = None
         db.commit()
         logger.info("config_updated", user_id=user_id)
 
