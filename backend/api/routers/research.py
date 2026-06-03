@@ -27,6 +27,7 @@ from database import (
     ResearchProfile,
     ThesisContribution,
     TrackedAuthor,
+    UserConfig,
     get_db,
     get_setting,
     get_valid_thesis_sections,
@@ -893,13 +894,14 @@ def _parse_threat_json(raw: str) -> dict:
     return json.loads(cleaned)
 
 
-async def _run_threat_scan(db: Session, window_days: int = 14) -> ThreatScanResponse:
-    """Scan high-scored articles and assess novelty threat."""
-    contribution = db.query(ThesisContribution).first()
+async def _run_threat_scan(db: Session, user_id: int = 1, window_days: int = 14) -> ThreatScanResponse:
+    """Scan high-scored articles and assess novelty threat for a given user."""
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    contribution = config.thesis_contribution if config and config.thesis_contribution else None
     if not contribution:
         raise HTTPException(
             status_code=400,
-            detail="No thesis contribution statement configured. Use PUT /api/research/profile/contribution first.",
+            detail="No thesis contribution statement configured. Use PUT /api/profile/config to set it.",
         )
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -914,7 +916,7 @@ async def _run_threat_scan(db: Session, window_days: int = 14) -> ThreatScanResp
     for article in candidates:
         scanned += 1
         try:
-            result = await _llm_assess_threat(contribution.statement, article, db)
+            result = await _llm_assess_threat(str(contribution), article, db)
             overlap = result.get("overlap_score", 0.0)
             note = result.get("positioning_note", "")
             db.add(NoveltyAlert(
@@ -967,14 +969,14 @@ async def put_contribution(
 async def scan_threats(
     window_days: int = Query(default=14, ge=1, le=90),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Scan recent high-scored articles for novelty overlap with the thesis contribution.
 
     Returns ThreatScanResponse with counts of scanned, alerted, and skipped articles.
     Returns 400 if no thesis contribution is configured.
     """
-    return await _run_threat_scan(db, window_days=window_days)
+    return await _run_threat_scan(db, user_id=current_user["id"], window_days=window_days)
 
 
 @router.get("/threats", response_model=List[NoveltyAlertOut])
