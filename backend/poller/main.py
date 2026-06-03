@@ -351,18 +351,24 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
         new_count += 1
         log.info("Article stored, sending to scorer", article_id=article_id, new_count=new_count)
 
-        try:
-            await score_article_rate_limited(
-                client,
-                article_id,
-                extracted.get("title") or rss_title,
-                extracted.get("content_text") or rss_summary,
-                rss_summary,
-                paper_meta_json=paper_meta_json,
-            )
-            log.info("Article scored", article_id=article_id)
-        except Exception as e:
-            log.error("Scoring failed", article_id=article_id, error=str(e))
+        subscriber_ids = feed.get("subscriber_user_ids", [1]) or [1]
+        for uid in subscriber_ids:
+            try:
+                await score_article_rate_limited(
+                    client,
+                    article_id,
+                    extracted.get("title") or rss_title,
+                    extracted.get("content_text") or rss_summary,
+                    rss_summary,
+                    paper_meta_json=paper_meta_json,
+                    user_id=uid,
+                )
+                log.info("Article scored for user", article_id=article_id, user_id=uid)
+            except Exception as e:
+                log.error(
+                    "Scoring failed for user",
+                    article_id=article_id, user_id=uid, error=str(e),
+                )
 
     log.info(f"Feed done: {new_count} new articles ingested")
 

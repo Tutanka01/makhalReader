@@ -794,6 +794,34 @@ class TestInternalScore:
         )
         assert resp.status_code == 403
 
+    def test_fan_out_produces_separate_rows(self, client):
+        c, session = client
+        feed = _make_feed(session)
+        art = _make_article(session, feed.id, "Fan-out Article")
+        session.commit()
+
+        for uid in [1, 2, 3]:
+            resp = c.post(
+                f"/api/internal/articles/{art.id}/score",
+                json={
+                    "score": 7.0,
+                    "tags": ["nlp"],
+                    "summary_bullets": ["Key insight"],
+                    "reason": "Relevant",
+                    "user_id": uid,
+                },
+                headers={"X-Internal-Secret": "changeme"},
+            )
+            assert resp.status_code == 200
+
+        from sqlalchemy import text
+        rows = session.execute(
+            text("SELECT user_id, score FROM article_scores WHERE article_id = :aid ORDER BY user_id"),
+            {"aid": art.id},
+        ).fetchall()
+        assert len(rows) == 3
+        assert [(r[0], r[1]) for r in rows] == [(1, 7.0), (2, 7.0), (3, 7.0)]
+
 
 # ── SSE scoping — Story 2.6 ──────────────────────────────────────────────────
 
