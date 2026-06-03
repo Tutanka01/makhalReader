@@ -1,32 +1,18 @@
 import asyncio
 import json
 import os
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from auth import (
-    COOKIE_NAME,
-    _check_rate_limit,
-    _clear_failure,
-    _client_ip,
-    _record_failure,
-    clear_session_cookie,
-    create_session,
-    delete_session,
-    purge_expired_sessions,
-    require_session,
-    set_session_cookie,
-    validate_session,
-    verify_password,
-)
+from auth import purge_expired_sessions, require_session
 from database import Feed, ResearchProfile, SessionLocal, init_db
 from routers import (
     articles,
+    auth,
     feeds,
     highlights,
     ask,
@@ -72,6 +58,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Internal-Secret"],
 )
 
+app.include_router(auth.router)
 app.include_router(articles.router)
 app.include_router(feeds.router)
 app.include_router(highlights.router)
@@ -260,50 +247,6 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     stop_scheduler()
-
-
-# ---------------------------------------------------------------------------
-# Auth routes — public (no session required)
-# ---------------------------------------------------------------------------
-
-class LoginRequest(BaseModel):
-    password: str
-    remember: bool = False
-
-
-@app.post("/auth/login")
-async def login(body: LoginRequest, request: Request, response: Response):
-    ip = _client_ip(request)
-    _check_rate_limit(ip)
-
-    if not verify_password(body.password):
-        _record_failure(ip)
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    _clear_failure(ip)
-    token = create_session(
-        remember=body.remember,
-        user_agent=request.headers.get("User-Agent"),
-    )
-    set_session_cookie(response, token, body.remember)
-    return {"ok": True}
-
-
-@app.post("/auth/logout")
-async def logout(request: Request, response: Response):
-    token = request.cookies.get(COOKIE_NAME)
-    if token:
-        delete_session(token)
-    clear_session_cookie(response)
-    return {"ok": True}
-
-
-@app.get("/auth/status")
-async def auth_status(request: Request):
-    token = request.cookies.get(COOKIE_NAME)
-    if not token or not validate_session(token):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

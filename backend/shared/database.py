@@ -3,6 +3,8 @@ Shared database initialization module for Baṣīra.
 This module provides the SQLAlchemy engine, session factory, and ORM models
 shared across backend services. Each service can import from here.
 """
+from __future__ import annotations
+
 import hashlib
 import os
 from datetime import datetime
@@ -22,7 +24,7 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DB_PATH = os.getenv("DB_PATH", "/data/basira.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -49,6 +51,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class AuthSession(Base):
+    """Persistent login sessions. One row per active login."""
+    __tablename__ = "auth_sessions"
+
+    id = Column(String(64), primary_key=True)
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_seen = Column(DateTime, nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    remember_me = Column(Boolean, default=False, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -68,6 +83,35 @@ class User(Base):
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     onboarding_done = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    @classmethod
+    def register(cls, db: Session, email: str, password: str, display_name: str | None = None, org_id: int | None = None):
+        existing = db.query(cls).filter(cls.email == email).first()
+        if existing:
+            return None
+        pwd_hash = bcrypt.hashpw(
+            hashlib.sha256(password.encode()).digest(),
+            bcrypt.gensalt(rounds=12),
+        )
+        user = cls(
+            email=email,
+            password_hash=pwd_hash.decode(),
+            display_name=display_name,
+            org_id=org_id,
+        )
+        db.add(user)
+        db.commit()
+        return user
+
+    @classmethod
+    def authenticate(cls, db: Session, email: str, password: str):
+        user = db.query(cls).filter(cls.email == email).first()
+        if not user:
+            return None
+        digest = hashlib.sha256(password.encode()).digest()
+        if bcrypt.checkpw(digest, user.password_hash.encode()):
+            return user
+        return None
 
 
 class Feed(Base):
@@ -135,9 +179,13 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN re_document_type VARCHAR(24)",
         "ALTER TABLE articles ADD COLUMN contribution_type VARCHAR(24)",
         "ALTER TABLE articles ADD COLUMN paper_meta_json TEXT",
+        # Auth sessions table + user_id column
+        "CREATE TABLE IF NOT EXISTS auth_sessions (id VARCHAR(64) PRIMARY KEY, created_at DATETIME NOT NULL, expires_at DATETIME NOT NULL, last_seen DATETIME, user_agent VARCHAR(500), remember_me BOOLEAN NOT NULL DEFAULT 0, user_id INTEGER REFERENCES users(id))",
+        "CREATE INDEX IF NOT EXISTS ix_auth_sessions_expires_at ON auth_sessions(expires_at)",
         # Multi-tenant: organizations & users
         "CREATE TABLE IF NOT EXISTS organizations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL DEFAULT 'member', org_id INTEGER REFERENCES organizations(id), onboarding_done BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "ALTER TABLE auth_sessions ADD COLUMN user_id INTEGER REFERENCES users(id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

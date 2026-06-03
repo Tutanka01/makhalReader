@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import os
 from datetime import datetime, timezone
@@ -64,6 +66,35 @@ class User(Base):
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     onboarding_done = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    @classmethod
+    def register(cls, db: Session, email: str, password: str, display_name: str | None = None, org_id: int | None = None):
+        existing = db.query(cls).filter(cls.email == email).first()
+        if existing:
+            return None
+        pwd_hash = bcrypt.hashpw(
+            hashlib.sha256(password.encode()).digest(),
+            bcrypt.gensalt(rounds=12),
+        )
+        user = cls(
+            email=email,
+            password_hash=pwd_hash.decode(),
+            display_name=display_name,
+            org_id=org_id,
+        )
+        db.add(user)
+        db.commit()
+        return user
+
+    @classmethod
+    def authenticate(cls, db: Session, email: str, password: str):
+        user = db.query(cls).filter(cls.email == email).first()
+        if not user:
+            return None
+        digest = hashlib.sha256(password.encode()).digest()
+        if bcrypt.checkpw(digest, user.password_hash.encode()):
+            return user
+        return None
 
 
 class Feed(Base):
