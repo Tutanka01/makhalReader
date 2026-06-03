@@ -13,13 +13,17 @@ _auth = Depends(require_session)
 
 
 @router.get("/api/articles/{article_id}/highlights", response_model=List[HighlightOut])
-async def list_highlights(article_id: int, db: Session = Depends(get_db), _: None = _auth):
+async def list_highlights(
+    article_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     highlights = (
         db.query(Highlight)
-        .filter(Highlight.article_id == article_id)
+        .filter(Highlight.article_id == article_id, Highlight.user_id == current_user["id"])
         .order_by(Highlight.created_at)
         .all()
     )
@@ -31,13 +35,14 @@ async def create_highlight(
     article_id: int,
     body: HighlightCreate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     highlight = Highlight(
         article_id=article_id,
+        user_id=current_user["id"],
         selected_text=body.selected_text,
         prefix_context=body.prefix_context,
         suffix_context=body.suffix_context,
@@ -61,7 +66,11 @@ async def update_highlight(
 ):
     highlight = (
         db.query(Highlight)
-        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
+        .filter(
+            Highlight.id == highlight_id,
+            Highlight.article_id == article_id,
+            Highlight.user_id == current_user["id"],
+        )
         .first()
     )
     if not highlight:
@@ -91,7 +100,11 @@ async def patch_highlight(
     current_user: dict = Depends(require_session),
 ):
     """Partial update of a highlight — only the fields present in the body are updated."""
-    h = db.query(Highlight).filter(Highlight.id == highlight_id).first()
+    h = (
+        db.query(Highlight)
+        .filter(Highlight.id == highlight_id, Highlight.user_id == current_user["id"])
+        .first()
+    )
     if not h:
         raise HTTPException(status_code=404, detail="Highlight not found")
     if body.color is not None:
@@ -125,7 +138,10 @@ async def bulk_update_highlights(
         )
     updated = (
         db.query(Highlight)
-        .filter(Highlight.id.in_(body.highlight_ids))
+        .filter(
+            Highlight.id.in_(body.highlight_ids),
+            Highlight.user_id == current_user["id"],
+        )
         .update({Highlight.thesis_section: body.thesis_section}, synchronize_session=False)
     )
     db.commit()
@@ -137,11 +153,15 @@ async def delete_highlight(
     article_id: int,
     highlight_id: int,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     highlight = (
         db.query(Highlight)
-        .filter(Highlight.id == highlight_id, Highlight.article_id == article_id)
+        .filter(
+            Highlight.id == highlight_id,
+            Highlight.article_id == article_id,
+            Highlight.user_id == current_user["id"],
+        )
         .first()
     )
     if not highlight:

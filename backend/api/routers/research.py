@@ -1229,6 +1229,7 @@ async def export_highlights(
         .filter(
             Highlight.thesis_section == body.thesis_section,
             Highlight.created_at >= cutoff,
+            Highlight.user_id == current_user["id"],
         )
         .order_by(Article.score.desc().nullslast())
         .all()
@@ -1273,7 +1274,10 @@ async def list_highlight_sections(
     valid_sections = get_valid_thesis_sections(db, current_user["id"])
     counts_rows = (
         db.query(Highlight.thesis_section, func.count(Highlight.id).label("count"))
-        .filter(Highlight.thesis_section.isnot(None))
+        .filter(
+            Highlight.thesis_section.isnot(None),
+            Highlight.user_id == current_user["id"],
+        )
         .group_by(Highlight.thesis_section)
         .all()
     )
@@ -1284,7 +1288,7 @@ async def list_highlight_sections(
     ]
 
 
-async def _synthesize_section_text(thesis_section: str, db: Session, window_days: int = 90, max_highlights: int = 30) -> str:
+async def _synthesize_section_text(thesis_section: str, db: Session, user_id: int = 1, window_days: int = 90, max_highlights: int = 30) -> str:
     """Run synthesis for a section and return the plain text result."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
@@ -1294,6 +1298,7 @@ async def _synthesize_section_text(thesis_section: str, db: Session, window_days
         .filter(
             Highlight.thesis_section == thesis_section,
             Highlight.created_at >= cutoff,
+            Highlight.user_id == user_id,
         )
         .order_by(Article.score.desc().nullslast())
         .all()
@@ -1328,21 +1333,22 @@ async def _synthesize_section_text(thesis_section: str, db: Session, window_days
 async def export_highlights_multi(
     body: MultiSectionExportRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Export multiple thesis sections as a single Markdown or LaTeX document."""
     parts: list[str] = []
+    user_id = current_user["id"]
 
     if body.format == "markdown":
         for section in body.sections:
-            text = await _synthesize_section_text(section, db, body.window_days, body.max_highlights_per_section)
+            text = await _synthesize_section_text(section, db, user_id=user_id, window_days=body.window_days, max_highlights=body.max_highlights_per_section)
             parts.append(f"## {section}\n\n{text}\n")
         content = "\n".join(parts)
         media_type = "text/markdown"
         filename = "writing-export.md"
     else:
         for section in body.sections:
-            text = await _synthesize_section_text(section, db, body.window_days, body.max_highlights_per_section)
+            text = await _synthesize_section_text(section, db, user_id=user_id, window_days=body.window_days, max_highlights=body.max_highlights_per_section)
             safe = section.replace("&", "\\&").replace("%", "\\%")
             parts.append(f"\\section{{{safe}}}\n\n{text}\n")
         content = "\\documentclass{article}\n\\begin{document}\n" + "\n".join(parts) + "\n\\end{document}"

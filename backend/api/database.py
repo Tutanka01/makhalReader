@@ -213,6 +213,7 @@ class Highlight(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     selected_text = Column(Text, nullable=False)
     prefix_context = Column(Text, nullable=False, default="")
     suffix_context = Column(Text, nullable=False, default="")
@@ -400,6 +401,8 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN tracked_author_alert BOOLEAN DEFAULT 0",
         # Story 5.3 — thesis section on highlights
         "ALTER TABLE highlights ADD COLUMN thesis_section TEXT",
+        # Story 6.1 — highlights user_id (FR-MT-34)
+        "ALTER TABLE highlights ADD COLUMN user_id INTEGER REFERENCES users(id)",
         # Story 5.5 — citation graph
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
@@ -428,6 +431,7 @@ def init_db():
         _backfill_subscriptions(conn)
         _backfill_user_config(conn)
         _backfill_research_profile(conn)
+        _backfill_highlights(conn)
 
     _seed_default_user()
 
@@ -522,6 +526,15 @@ def _backfill_research_profile(conn):
     """Backfill user_id=1 to existing research_profile rows."""
     try:
         conn.execute(text("UPDATE research_profile SET user_id = 1 WHERE user_id IS NULL"))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_highlights(conn):
+    """Backfill user_id=1 to existing highlights."""
+    try:
+        conn.execute(text("UPDATE highlights SET user_id = 1 WHERE user_id IS NULL"))
         conn.commit()
     except Exception:
         pass

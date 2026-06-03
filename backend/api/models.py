@@ -413,6 +413,7 @@ class HighlightUpdate(BaseModel):
 class HighlightOut(BaseModel):
     id: int
     article_id: int
+    user_id: Optional[int] = None
     selected_text: str
     prefix_context: str
     suffix_context: str
