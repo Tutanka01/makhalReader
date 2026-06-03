@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from collections import defaultdict
 
-from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, UserFeedSubscription, get_db
-from models import InternalArticleCreate, InternalScoreUpdate
+from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, UserConfig, UserFeedSubscription, get_db
+from models import InternalArticleCreate, InternalScoreUpdate, PromptCacheUpdate
 from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
 from sse import broadcast_new_article
@@ -321,6 +321,77 @@ async def internal_score_article(
     asyncio.create_task(embed_article_async(article.id))
 
     return {"status": "ok"}
+
+
+@router.get("/users/{user_id}/prompt-cache")
+async def internal_get_prompt_cache(
+    user_id: int,
+    db: Session = Depends(get_db),
+    x_internal_secret: str = Header(...),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    if not config:
+        return {"hash": None, "text": None}
+    return {"hash": config.prompt_cache_hash, "text": config.prompt_cache_text}
+
+
+@router.put("/users/{user_id}/prompt-cache")
+async def internal_put_prompt_cache(
+    user_id: int,
+    body: PromptCacheUpdate,
+    db: Session = Depends(get_db),
+    x_internal_secret: str = Header(...),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    if not config:
+        return {"status": "skipped", "reason": "no config"}
+    config.prompt_cache_hash = body.hash
+    config.prompt_cache_text = body.text
+    config.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "ok"}
+
+
+def _safe_json_loads(val: Optional[str]) -> list:
+    """Parse a JSON string to list, returning [] on any failure."""
+    try:
+        parsed = json.loads(val) if val else []
+        return parsed if isinstance(parsed, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@router.get("/users/{user_id}/scoring-context")
+async def internal_get_scoring_context(
+    user_id: int,
+    db: Session = Depends(get_db),
+    x_internal_secret: str = Header(...),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    if not config:
+        return {}
+    thesis_title = config.thesis_title or ""
+    thesis_question = config.thesis_question or ""
+    thesis_contribution = config.thesis_contribution
+    tracked_venues = _safe_json_loads(str(config.tracked_venues_json))
+    scoring_clusters = _safe_json_loads(str(config.scoring_clusters_json))
+    avoid_topics = _safe_json_loads(str(config.avoid_topics_json))
+    prompt_profile = config.prompt_profile or "unified"
+    return {
+        "thesis_title": thesis_title,
+        "thesis_question": thesis_question,
+        "thesis_contribution": thesis_contribution,
+        "tracked_venues": tracked_venues,
+        "scoring_clusters": scoring_clusters,
+        "avoid_topics": avoid_topics,
+        "prompt_profile": prompt_profile,
+    }
 
 
 def _get_or_create_article_score(db: Session, user_id: int, article_id: int) -> ArticleScore:

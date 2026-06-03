@@ -42,6 +42,23 @@ _TRACKING_PARAMS = frozenset({
     "_ga", "_gl", "mc_cid", "mc_eid", "ref", "source",
 })
 
+# Per-user scoring context cache (cleared each poll cycle).
+_user_context_cache: dict[int, dict] = {}
+
+
+async def fetch_user_scoring_context(client: httpx.AsyncClient, user_id: int) -> dict:
+    if user_id in _user_context_cache:
+        return _user_context_cache[user_id]
+    resp = await client.get(
+        f"{API_BASE}/api/internal/users/{user_id}/scoring-context",
+        headers=INTERNAL_HEADERS,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    ctx = resp.json()
+    _user_context_cache[user_id] = ctx
+    return ctx
+
 
 def normalize_url(url: str) -> str:
     """Return a canonical URL: lowercase scheme+host, strip www., remove
@@ -133,20 +150,24 @@ async def score_article_rate_limited(
     rss_summary: str,
     paper_meta_json: Optional[str] = None,
     user_id: int = 1,
+    user_context: Optional[dict] = None,
 ):
     """Acquire the global semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS."""
     async with _score_semaphore:
         try:
+            body = {
+                "article_id": article_id,
+                "title": title,
+                "content_text": content_text or "",
+                "rss_summary": rss_summary or "",
+                "paper_meta_json": paper_meta_json,
+                "user_id": user_id,
+            }
+            if user_context:
+                body["user_context"] = user_context
             resp = await client.post(
                 f"{SCORER_BASE}/score",
-                json={
-                    "article_id": article_id,
-                    "title": title,
-                    "content_text": content_text or "",
-                    "rss_summary": rss_summary or "",
-                    "paper_meta_json": paper_meta_json,
-                    "user_id": user_id,
-                },
+                json=body,
                 timeout=120,
             )
             resp.raise_for_status()
@@ -162,7 +183,7 @@ async def score_article_rate_limited(
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
-def parse_published_dt(entry) -> datetime | None:
+def parse_published_dt(entry) -> Optional[datetime]:
     """Return a timezone-aware datetime or None."""
     # Primary: standard published_parsed field
     if hasattr(entry, "published_parsed") and entry.published_parsed:
@@ -354,6 +375,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
         subscriber_ids = feed.get("subscriber_user_ids", [1]) or [1]
         for uid in subscriber_ids:
             try:
+                user_context = await fetch_user_scoring_context(client, uid)
                 await score_article_rate_limited(
                     client,
                     article_id,
@@ -362,6 +384,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
                     rss_summary,
                     paper_meta_json=paper_meta_json,
                     user_id=uid,
+                    user_context=user_context,
                 )
                 log.info("Article scored for user", article_id=article_id, user_id=uid)
             except Exception as e:
@@ -374,6 +397,8 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
 
 async def poll_all_feeds():
+    global _user_context_cache
+    _user_context_cache = {}
     logger.info(
         "Starting poll cycle",
         max_new_per_feed=MAX_NEW_PER_FEED,

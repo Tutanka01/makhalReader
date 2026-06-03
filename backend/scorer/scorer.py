@@ -1,13 +1,15 @@
+import hashlib
 import json
 import os
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from prompt import SYSTEM_PROMPT
+from prompt_builder import PromptBuilder, UserScoringContext
 from scorer_logic import (
     _VALID_CONTRIBUTION_TYPES,
     _VALID_RE_DOC_TYPES,
@@ -38,6 +40,7 @@ class ScoreRequest(BaseModel):
     rss_summary: str = ""
     paper_meta_json: Optional[str] = None
     user_id: int  # Story 2.7, FR-MT-9 — mandatory
+    user_context: Optional[Dict] = None  # Story 5.2, FR-MT-27
 
 
 class ScoreResult(BaseModel):
@@ -50,6 +53,60 @@ class ScoreResult(BaseModel):
     novelty: Optional[float] = None
     rigor: Optional[float] = None
     relevance_to_topics: Optional[float] = None
+
+
+def _resolve_system_prompt(req: ScoreRequest) -> str:
+    """Return the appropriate system prompt for this request.
+
+    When user_context is provided, build a dynamic prompt via PromptBuilder.
+    Otherwise, return the static SYSTEM_PROMPT (backward compat, NFR-T4).
+    """
+    if not req.user_context:
+        return SYSTEM_PROMPT
+    ctx = UserScoringContext(**req.user_context)
+    return PromptBuilder.build(ctx)
+
+
+async def _resolve_cached_prompt(
+    client: httpx.AsyncClient, user_context: Dict, user_id: int
+) -> str:
+    """Resolve system prompt with API-backed cache (FR-MT-29).
+
+    1. Hash user_context → compare with stored prompt_cache_hash.
+    2. Hit → return cached prompt_cache_text.
+    3. Miss → build via PromptBuilder, store via PUT.
+    4. API failure → build anyway (graceful degradation, NFR-T6).
+    """
+    raw = json.dumps(user_context, sort_keys=True)
+    current_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    try:
+        resp = await client.get(
+            f"{API_BASE}/api/internal/users/{user_id}/prompt-cache",
+            headers=INTERNAL_HEADERS,
+            timeout=5,
+        )
+        if resp.is_success:
+            data = resp.json()
+            if data.get("hash") == current_hash and data.get("text"):
+                return data["text"]
+    except Exception:
+        pass
+
+    ctx = UserScoringContext(**user_context)
+    prompt = PromptBuilder.build(ctx)
+
+    try:
+        await client.put(
+            f"{API_BASE}/api/internal/users/{user_id}/prompt-cache",
+            json={"hash": current_hash, "text": prompt},
+            headers=INTERNAL_HEADERS,
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+    return prompt
 
 
 def _extract_balanced_json(text: str, start: int) -> Optional[str]:
@@ -166,7 +223,7 @@ def validate_score_result(data: dict) -> ScoreResult:
     )
 
 
-async def score_with_uni_server(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+async def score_with_uni_server(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
     """Tier 1: University GPU server (OpenAI-compatible API)."""
     if not UNI_OLLAMA_URL or not UNI_OLLAMA_MODEL or not UNI_OLLAMA_API_KEY:
         return None
@@ -181,7 +238,7 @@ async def score_with_uni_server(client: httpx.AsyncClient, user_message: str) ->
             json={
                 "model": UNI_OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
@@ -204,7 +261,7 @@ async def score_with_uni_server(client: httpx.AsyncClient, user_message: str) ->
     return None
 
 
-async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+async def score_with_openrouter(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
     if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.startswith("sk-"):
         return None
 
@@ -220,7 +277,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
             json={
                 "model": SCORER_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
@@ -244,7 +301,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str) ->
     return None
 
 
-async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Optional[ScoreResult]:
+async def score_with_ollama(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
     if not OLLAMA_URL:
         return None
 
@@ -254,7 +311,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str) -> Opt
             json={
                 "model": OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
@@ -357,6 +414,12 @@ async def score_article(req: ScoreRequest):
         # Determine content cap — paper-aware if paper_meta_json provided
         cap = compute_content_cap(SCORER_MAX_CHARS, req.paper_meta_json)
 
+        # Resolve system prompt — static or dynamic with API-backed cache (FR-MT-29)
+        if req.user_context:
+            system_prompt = await _resolve_cached_prompt(client, req.user_context, req.user_id)
+        else:
+            system_prompt = SYSTEM_PROMPT
+
         # Build user message with optional preference profile for personalisation
         content_preview = (req.content_text or req.rss_summary or "")[:cap]
         preference_block = await build_preference_block(client)
@@ -364,15 +427,15 @@ async def score_article(req: ScoreRequest):
 
         # Tier 1: University GPU server (highest quality, free)
         if UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:
-            result = await score_with_uni_server(client, user_message)
+            result = await score_with_uni_server(client, user_message, system_prompt)
 
         # Tier 2: OpenRouter (cloud fallback)
         if result is None and OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
-            result = await score_with_openrouter(client, user_message)
+            result = await score_with_openrouter(client, user_message, system_prompt)
 
         # Tier 3: Local Ollama
         if result is None:
-            result = await score_with_ollama(client, user_message)
+            result = await score_with_ollama(client, user_message, system_prompt)
 
         # Default fallback
         if result is None:

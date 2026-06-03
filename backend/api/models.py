@@ -348,6 +348,11 @@ class InternalScoreUpdate(BaseModel):
     user_id: int  # Story 2.7, FR-MT-9 — mandatory
 
 
+class PromptCacheUpdate(BaseModel):
+    hash: str
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # Highlights
 # ---------------------------------------------------------------------------
