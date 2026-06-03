@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from database import Article, Feed, ResearchProfile, SessionLocal, get_db
+from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, get_db
 from models import InternalArticleCreate, InternalScoreUpdate
-from routers.articles import _title_fingerprint
+from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
 from sse import broadcast_new_article
 
@@ -247,12 +247,16 @@ async def internal_score_article(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
 
-    article.score = score_data.score
-    article.tags_json = json.dumps(score_data.tags)
-    article.summary_bullets_json = json.dumps(score_data.summary_bullets)
-    article.reason = score_data.reason
-    article.contribution_type = score_data.contribution_type
-    article.re_document_type = score_data.re_document_type
+    user_id = score_data.user_id or 1
+
+    # Write to article_scores (FR-MT-9)
+    score = _get_or_create_article_score(db, user_id, article_id)
+    score.score = score_data.score
+    score.tags_json = json.dumps(score_data.tags)
+    score.summary_bullets_json = json.dumps(score_data.summary_bullets)
+    score.reason = score_data.reason
+    score.contribution_type = score_data.contribution_type
+    score.re_document_type = score_data.re_document_type
     score_meta = {
         "contribution_type": score_data.contribution_type,
         "re_document_type": score_data.re_document_type,
@@ -260,9 +264,22 @@ async def internal_score_article(
         "rigor": score_data.rigor,
         "relevance_to_topics": score_data.relevance_to_topics,
     }
-    article.score_meta_json = json.dumps(
+    score.score_meta_json = json.dumps(
         {k: v for k, v in score_meta.items() if v is not None}
     )
+
+    # Backward compat: also write corpus-level defaults for user_id=1 (NFR-T4)
+    if user_id == 1:
+        article.score = score_data.score
+        article.tags_json = json.dumps(score_data.tags)
+        article.summary_bullets_json = json.dumps(score_data.summary_bullets)
+        article.reason = score_data.reason
+        article.contribution_type = score_data.contribution_type
+        article.re_document_type = score_data.re_document_type
+        article.score_meta_json = json.dumps(
+            {k: v for k, v in score_meta.items() if v is not None}
+        )
+
     db.commit()
     db.refresh(article)
 
@@ -273,18 +290,18 @@ async def internal_score_article(
         "title": article.title,
         "url": article.url,
         "published_at": article.published_at.isoformat() if article.published_at else None,
-        "score": article.score,
-        "tags": json.loads(article.tags_json or "[]"),
-        "summary_bullets": json.loads(article.summary_bullets_json or "[]"),
-        "reason": article.reason,
-        "read_at": article.read_at.isoformat() if article.read_at else None,
-        "bookmarked": article.bookmarked,
+        "score": _pick(score, article, "score"),
+        "tags": json.loads(_pick(score, article, "tags_json") or "[]"),
+        "summary_bullets": json.loads(_pick(score, article, "summary_bullets_json") or "[]"),
+        "reason": _pick(score, article, "reason"),
+        "read_at": _pick(score, article, "read_at"),
+        "bookmarked": _pick(score, article, "bookmarked") or False,
         "extraction_failed": article.extraction_failed,
         "created_at": article.created_at.isoformat(),
         "feed_name": feed.name if feed else "",
-        "user_feedback": article.user_feedback,
-        "contribution_type": article.contribution_type,
-        "re_document_type": article.re_document_type,
+        "user_feedback": _pick(score, article, "user_feedback"),
+        "contribution_type": _pick(score, article, "contribution_type"),
+        "re_document_type": _pick(score, article, "re_document_type"),
     }
     await broadcast_new_article(article_dict)
 
@@ -292,3 +309,15 @@ async def internal_score_article(
     asyncio.create_task(embed_article_async(article.id))
 
     return {"status": "ok"}
+
+
+def _get_or_create_article_score(db: Session, user_id: int, article_id: int) -> ArticleScore:
+    score = db.query(ArticleScore).filter(
+        ArticleScore.user_id == user_id,
+        ArticleScore.article_id == article_id,
+    ).first()
+    if score is None:
+        score = ArticleScore(user_id=user_id, article_id=article_id)
+        db.add(score)
+        db.flush()
+    return score

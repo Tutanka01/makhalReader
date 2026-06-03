@@ -37,6 +37,7 @@ class ScoreRequest(BaseModel):
     content_text: str
     rss_summary: str = ""
     paper_meta_json: Optional[str] = None
+    user_id: Optional[int] = None  # Story 2.4, FR-MT-9 — defaults to 1 in internal handler
 
 
 class ScoreResult(BaseModel):
@@ -384,19 +385,22 @@ async def score_article(req: ScoreRequest):
 
         # Post result back to API
         try:
+            payload = {
+                "score": result.score,
+                "tags": result.tags,
+                "summary_bullets": result.summary_bullets,
+                "reason": result.reason,
+                "contribution_type": result.contribution_type,
+                "re_document_type": result.re_document_type,
+                "novelty": result.novelty,
+                "rigor": result.rigor,
+                "relevance_to_topics": result.relevance_to_topics,
+            }
+            if req.user_id is not None:
+                payload["user_id"] = req.user_id
             resp = await client.post(
                 f"{API_BASE}/api/internal/articles/{req.article_id}/score",
-                json={
-                    "score": result.score,
-                    "tags": result.tags,
-                    "summary_bullets": result.summary_bullets,
-                    "reason": result.reason,
-                    "contribution_type": result.contribution_type,
-                    "re_document_type": result.re_document_type,
-                    "novelty": result.novelty,
-                    "rigor": result.rigor,
-                    "relevance_to_topics": result.relevance_to_topics,
-                },
+                json=payload,
                 headers=INTERNAL_HEADERS,
                 timeout=30,
             )
