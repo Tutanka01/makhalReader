@@ -228,6 +228,9 @@ DEFAULT_FEEDS = [
 @app.on_event("startup")
 async def startup():
     init_db()
+    # ChromaDB per-user migration (Story 7.4) — no-op if already migrated
+    from embedder import _migrate_chroma_articles_to_per_user  # noqa: PLC0415
+    _migrate_chroma_articles_to_per_user()
     purge_expired_sessions()
     asyncio.create_task(cleanup_old_articles())
     db = SessionLocal()

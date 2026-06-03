@@ -1,3 +1,4 @@
+import structlog
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,7 @@ from auth import require_session
 from database import Article, get_db
 from routers.articles import _normalize_url
 
+logger = structlog.get_logger().bind(service="admin")
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 _auth = Depends(require_session)
 
@@ -86,3 +88,18 @@ async def normalize_article_urls(db: Session = Depends(get_db), _: None = _auth)
         raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
 
     return {"updated": updated, "merged": merged, "skipped": skipped}
+
+
+@router.post("/reindex")
+async def reindex_chroma(db: Session = Depends(get_db), _: None = _auth):
+    """Copy old 'articles' Chroma collection to 'articles_u1' (Story 7.4).
+
+    One-time migration for existing deployments. Idempotent — safe to call
+    multiple times. Returns how many vectors were migrated (0 if already done).
+    Also called automatically at startup.
+    """
+    from embedder import _migrate_chroma_articles_to_per_user  # noqa: PLC0415
+    count = _migrate_chroma_articles_to_per_user()
+    if count > 0:
+        logger.info("admin_reindex_complete", migrated=count)
+    return {"status": "ok", "migrated": count}

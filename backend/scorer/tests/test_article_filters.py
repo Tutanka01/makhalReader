@@ -1319,3 +1319,73 @@ class TestChromaIsolation:
         col_a = _get_chroma(1)
         col_b = _get_chroma(1)
         assert col_a is col_b
+
+    # ── Story 7.4 — reindex migration ──────────────────────────────────────
+
+    def test_migration_noop_when_no_old_collection(self, client):
+        """Migration returns 0 when old 'articles' collection doesn't exist."""
+        from embedder import _migrate_chroma_articles_to_per_user
+        count = _migrate_chroma_articles_to_per_user()
+        assert count == 0
+
+    def test_migration_copies_old_to_u1(self, client):
+        """Migration copies vectors from old 'articles' to 'articles_u1'."""
+        import chromadb
+        from embedder import _migrate_chroma_articles_to_per_user, CHROMA_PATH
+
+        cl = chromadb.PersistentClient(path=CHROMA_PATH)
+        old = cl.get_or_create_collection(
+            name="articles",
+            metadata={"hnsw:space": "cosine"},
+        )
+        old.upsert(
+            ids=["501", "502"],
+            embeddings=[[0.5] * 64, [0.6] * 64],
+            metadatas=[{"article_id": 501}, {"article_id": 502}],
+        )
+
+        count = _migrate_chroma_articles_to_per_user()
+        assert count == 2
+
+        u1_col = cl.get_collection("articles_u1")
+        got = u1_col.get(ids=["501", "502"])
+        assert len(got["ids"]) == 2
+
+        with pytest.raises(ValueError):
+            cl.get_collection("articles")
+
+    def test_migration_idempotent(self, client):
+        """Running migration twice is safe — second call returns 0."""
+        import chromadb
+        from embedder import _migrate_chroma_articles_to_per_user, CHROMA_PATH
+
+        cl = chromadb.PersistentClient(path=CHROMA_PATH)
+        old = cl.get_or_create_collection(
+            name="articles",
+            metadata={"hnsw:space": "cosine"},
+        )
+        old.upsert(
+            ids=["601"],
+            embeddings=[[0.7] * 64],
+            metadatas=[{"article_id": 601}],
+        )
+
+        count1 = _migrate_chroma_articles_to_per_user()
+        assert count1 == 1
+
+        old2 = cl.get_or_create_collection(
+            name="articles",
+            metadata={"hnsw:space": "cosine"},
+        )
+        old2.upsert(
+            ids=["602"],
+            embeddings=[[0.8] * 64],
+            metadatas=[{"article_id": 602}],
+        )
+
+        count2 = _migrate_chroma_articles_to_per_user()
+        assert count2 == 1
+
+        u1_col = cl.get_collection("articles_u1")
+        got = u1_col.get(ids=["601", "602"])
+        assert len(got["ids"]) == 2

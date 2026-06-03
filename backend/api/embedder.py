@@ -146,3 +146,62 @@ async def embed_article_async(article_id: int, user_id: int = 1) -> None:
             pass
     finally:
         db.close()
+
+
+def _migrate_chroma_articles_to_per_user() -> int:
+    """One-time migration: copy old global 'articles' collection to 'articles_u1'.
+
+    Idempotent — safe to run multiple times. Returns the count of vectors
+    migrated, or 0 if nothing was done (no old collection found, or already
+    migrated). Never raises; logs warnings on failure.
+
+    Called from main.py startup and exposed as POST /api/admin/reindex.
+    """
+    try:
+        import chromadb  # deferred import
+        client = chromadb.PersistentClient(path=CHROMA_PATH)
+        try:
+            old_collection = client.get_collection(name="articles")
+        except ValueError:
+            logger.info("chroma_migration_skipped_no_old_collection")
+            return 0
+
+        old_data = old_collection.get(include=["embeddings", "metadatas"])
+        if not old_data["ids"]:
+            client.delete_collection("articles")
+            logger.info("chroma_migration_skipped_empty_collection")
+            return 0
+
+        u1_collection = client.get_or_create_collection(
+            name="articles_u1",
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        existing = u1_collection.get(ids=old_data["ids"])
+        existing_ids = set(existing["ids"])
+
+        new_ids: list[str] = []
+        new_embeddings: list[list[float]] = []
+        new_metadatas: list[dict] = []
+        for i, aid in enumerate(old_data["ids"]):
+            if aid not in existing_ids:
+                new_ids.append(aid)
+                if old_data["embeddings"] is not None:
+                    new_embeddings.append(old_data["embeddings"][i])
+                if old_data["metadatas"] is not None:
+                    new_metadatas.append(old_data["metadatas"][i])
+
+        if new_ids:
+            u1_collection.upsert(
+                ids=new_ids,
+                embeddings=new_embeddings,
+                metadatas=new_metadatas,
+            )
+
+        client.delete_collection("articles")
+        logger.info("chroma_migration_complete", migrated=len(new_ids))
+        return len(new_ids)
+
+    except Exception as e:
+        logger.warning("chroma_migration_failed", error=str(e))
+        return 0
