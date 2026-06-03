@@ -533,6 +533,7 @@ class TrackedAuthorOut(BaseModel):
     avg_score: float
     alert_count: int
     last_checked: Optional[datetime] = None
+    user_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

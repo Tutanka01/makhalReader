@@ -165,9 +165,9 @@ async def scan_author(db: Session, ss_author_id: str, name: str) -> int:
     return new_count
 
 
-async def run_author_radar_scan(db: Session) -> AuthorScanResponse:
-    """Iterate all tracked authors and scan for new papers."""
-    authors = db.query(TrackedAuthor).all()
+async def run_author_radar_scan(db: Session, user_id: int = 1) -> AuthorScanResponse:
+    """Iterate tracked authors (scoped to user_id) and scan for new papers."""
+    authors = db.query(TrackedAuthor).filter_by(user_id=user_id).all()
     authors_checked = 0
     new_articles_queued = 0
     skipped = 0

@@ -307,6 +307,7 @@ class TrackedAuthor(Base):
     alert_count = Column(Integer, default=0, nullable=False)
     last_checked = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    user_id = Column(Integer, nullable=True)
 
 
 def get_setting(db: Session, key: str, default: str = "") -> str:
@@ -411,6 +412,8 @@ def init_db():
         "ALTER TABLE novelty_alerts ADD COLUMN user_id INTEGER REFERENCES users(id)",
         "DROP INDEX IF EXISTS ux_novelty_alert_article",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_novelty_alert_article_user ON novelty_alerts(article_id, user_id)",
+        # Story 6.4 — tracked authors user_id (FR-MT-37)
+        "ALTER TABLE tracked_authors ADD COLUMN user_id INTEGER REFERENCES users(id)",
         # Story 5.5 — citation graph
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
@@ -442,6 +445,7 @@ def init_db():
         _backfill_highlights(conn)
         _backfill_literature_reviews(conn)
         _backfill_novelty_alerts(conn)
+        _backfill_tracked_authors(conn)
 
     _seed_default_user()
 
@@ -563,6 +567,15 @@ def _backfill_novelty_alerts(conn):
     """Backfill user_id=1 to existing novelty alerts."""
     try:
         conn.execute(text("UPDATE novelty_alerts SET user_id = 1 WHERE user_id IS NULL"))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_tracked_authors(conn):
+    """Backfill user_id=1 to existing tracked authors."""
+    try:
+        conn.execute(text("UPDATE tracked_authors SET user_id = 1 WHERE user_id IS NULL"))
         conn.commit()
     except Exception:
         pass

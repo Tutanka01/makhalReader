@@ -118,8 +118,8 @@ async def embed_article_async(article_id: int) -> None:
                     db.execute(
                         text("""
                             INSERT OR IGNORE INTO tracked_authors
-                            (ss_author_id, name, paper_count, avg_score, alert_count, last_checked, created_at)
-                            VALUES (:ss_id, :name, 0, 0.0, 0, NULL, :now)
+                            (ss_author_id, name, paper_count, avg_score, alert_count, last_checked, created_at, user_id)
+                            VALUES (:ss_id, :name, 0, 0.0, 0, NULL, :now, 1)
                         """),
                         {"ss_id": ss_id, "name": name, "now": datetime.now(timezone.utc)},
                     )

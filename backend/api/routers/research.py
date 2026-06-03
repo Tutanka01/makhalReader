@@ -1045,10 +1045,11 @@ import math as _math
 @router.get("/authors", response_model=List[TrackedAuthorOut])
 async def list_authors(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Return tracked authors sorted by relevance (avg_score * log1p(paper_count))."""
-    rows = db.query(TrackedAuthor).all()
+    user_id = current_user["id"]
+    rows = db.query(TrackedAuthor).filter_by(user_id=user_id).all()
     rows.sort(
         key=lambda a: a.avg_score * _math.log1p(a.paper_count),
         reverse=True,
@@ -1059,22 +1060,23 @@ async def list_authors(
 @router.post("/authors/scan", response_model=AuthorScanResponse)
 async def scan_authors(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Trigger author radar scan for all tracked authors."""
+    """Trigger author radar scan for current user's tracked authors."""
     from author_radar import run_author_radar_scan  # noqa: PLC0415
 
-    return await run_author_radar_scan(db)
+    return await run_author_radar_scan(db, user_id=current_user["id"])
 
 
 @router.delete("/authors/{ss_author_id}", status_code=204)
 async def delete_author(
     ss_author_id: str,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Remove an author from tracking. Existing articles keep their tracked_author_alert flag."""
-    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_author_id).first()
+    user_id = current_user["id"]
+    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_author_id, user_id=user_id).first()
     if not author:
         raise HTTPException(status_code=404, detail="Author not found")
     db.delete(author)
