@@ -19,6 +19,7 @@ import HighlightManager from './components/HighlightManager'
 import BibliographyPanel from './components/BibliographyPanel'
 import SettingsModal from './components/SettingsModal'
 import AdminPage from './components/AdminPage'
+import OnboardingWizard from './components/OnboardingWizard'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -87,6 +88,18 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       .then(u => setCurrentUser(u))
       .catch(() => {})
   }, [])
+
+  // ── Onboarding gate ──────────────────────────────────────────────────
+  const handleOnboardingComplete = useCallback(() => {
+    fetch('/auth/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setCurrentUser(u))
+      .catch(() => {})
+  }, [])
+
+  if (currentUser && !currentUser.onboarding_done) {
+    return <OnboardingWizard onComplete={handleOnboardingComplete} />
+  }
 
   const refreshFeeds = useCallback(() => {
     fetch('/api/feeds', { credentials: 'include' })
