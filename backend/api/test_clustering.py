@@ -16,7 +16,7 @@ def test_clustering():
     articles = db.query(Article).filter(Article.embedding_indexed == 1, Article.created_at >= cutoff).all()
     print(f"Found {len(articles)} indexed articles.")
 
-    collection = _get_chroma()
+    collection = _get_chroma(1)
     if collection.count() == 0:
         print("Chroma is empty")
         return

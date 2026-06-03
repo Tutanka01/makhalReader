@@ -304,9 +304,10 @@ async def get_related_articles(
     article_id: int,
     n: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Return up to `n` semantically similar articles via ChromaDB cosine similarity."""
+    user_id = current_user["id"]
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -314,7 +315,7 @@ async def get_related_articles(
     try:
         from embedder import _get_chroma  # deferred import
 
-        collection = _get_chroma()
+        collection = _get_chroma(user_id)
         if collection.count() == 0:
             return []
 

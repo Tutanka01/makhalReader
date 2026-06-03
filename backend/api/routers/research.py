@@ -187,7 +187,7 @@ async def get_clusters(
     window_days: int = Query(default=14, ge=1, le=90),
     min_size: int = Query(default=3, ge=2, le=20),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Return HDBSCAN cluster summaries for embedded articles in the last window_days.
 
@@ -197,6 +197,7 @@ async def get_clusters(
     - ChromaDB is unavailable
     - Any other exception (logged as warning)
     """
+    user_id = current_user["id"]
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
         articles = (
@@ -210,7 +211,7 @@ async def get_clusters(
         # Deferred import — must never be at module top-level
         from embedder import _get_chroma  # noqa: PLC0415
 
-        collection = _get_chroma()
+        collection = _get_chroma(user_id)
         if collection.count() == 0:
             return []
 
@@ -373,6 +374,7 @@ async def post_literature_review(
     current_user: dict = Depends(require_session),
 ):
     """Embed topic → Chroma top-50 → rigor/window filter → HDBSCAN → per-cluster LLM → persist."""
+    user_id = current_user["id"]
     topic = payload.topic.strip()
     window_days = payload.window_days
     min_rigor = payload.min_rigor
@@ -390,7 +392,7 @@ async def post_literature_review(
     try:
         from embedder import _get_chroma  # noqa: PLC0415
 
-        collection = _get_chroma()
+        collection = _get_chroma(user_id)
         n_coll = collection.count()
         if n_coll == 0:
             raise HTTPException(status_code=422, detail=_NOT_ENOUGH_ARTICLES)
@@ -442,7 +444,7 @@ async def post_literature_review(
     try:
         from embedder import _get_chroma  # noqa: PLC0415
 
-        collection = _get_chroma()
+        collection = _get_chroma(user_id)
         ids_str = [str(a.id) for a in ordered]
         got = collection.get(ids=ids_str, include=["embeddings"])
         id_to_emb: Dict[int, List[float]] = {}

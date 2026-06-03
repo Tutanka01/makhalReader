@@ -338,7 +338,7 @@ async def internal_score_article(
     await broadcast_new_article(article_dict, user_id=user_id)
 
     # Fire-and-forget embedding — must not block or raise
-    asyncio.create_task(embed_article_async(article.id))
+    asyncio.create_task(embed_article_async(article.id, user_id=user_id))
 
     return {"status": "ok"}
 

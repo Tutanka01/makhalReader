@@ -23,25 +23,26 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "/data/chroma")
 
-_chroma_collection = None
+_chroma_collections: dict[int, object] = {}
 
 
-def _get_chroma():
-    """Lazy-init singleton — returns the 'articles' Chroma collection.
-
-    Import of chromadb is deferred so the API service starts even if the
-    package is not installed or the Chroma directory is not available.
+def _get_chroma(user_id: int = 1):
+    """Lazy-init per-user singleton — returns a 'articles_u{user_id}' Chroma
+    collection. Each tenant's embeddings are isolated in their own collection
+    (FR-MT-40). Import of chromadb is deferred so the API service starts even
+    if the package is not installed or the Chroma directory is not available.
     """
-    global _chroma_collection
-    if _chroma_collection is not None:
-        return _chroma_collection
+    if user_id in _chroma_collections:
+        return _chroma_collections[user_id]
     import chromadb  # deferred import
     client = chromadb.PersistentClient(path=CHROMA_PATH)
-    _chroma_collection = client.get_or_create_collection(
-        name="articles",
+    name = f"articles_u{user_id}"
+    collection = client.get_or_create_collection(
+        name=name,
         metadata={"hnsw:space": "cosine"},
     )
-    return _chroma_collection
+    _chroma_collections[user_id] = collection
+    return collection
 
 
 def _build_embed_text(article: Article) -> str:
@@ -65,8 +66,8 @@ def _build_embed_text(article: Article) -> str:
     return "\n".join(parts)[:4000]
 
 
-async def embed_article_async(article_id: int) -> None:
-    """Fire-and-forget: embed article and upsert into ChromaDB.
+async def embed_article_async(article_id: int, user_id: int = 1) -> None:
+    """Fire-and-forget: embed article into user's Chroma collection.
 
     Called via asyncio.create_task() after scoring — must NEVER raise.
     Sets embedding_indexed=1 on success, 0 on failure.
@@ -89,7 +90,7 @@ async def embed_article_async(article_id: int) -> None:
             resp.raise_for_status()
             vector = resp.json()["embedding"]
 
-        collection = _get_chroma()
+        collection = _get_chroma(user_id)
         collection.upsert(
             ids=[str(article_id)],
             embeddings=[vector],
@@ -119,9 +120,9 @@ async def embed_article_async(article_id: int) -> None:
                         text("""
                             INSERT OR IGNORE INTO tracked_authors
                             (ss_author_id, name, paper_count, avg_score, alert_count, last_checked, created_at, user_id)
-                            VALUES (:ss_id, :name, 0, 0.0, 0, NULL, :now, 1)
+                            VALUES (:ss_id, :name, 0, 0.0, 0, NULL, :now, :uid)
                         """),
-                        {"ss_id": ss_id, "name": name, "now": datetime.now(timezone.utc)},
+                        {"ss_id": ss_id, "name": name, "now": datetime.now(timezone.utc), "uid": user_id},
                     )
                     author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_id).first()
                     if author:
@@ -133,7 +134,7 @@ async def embed_article_async(article_id: int) -> None:
                 logger.warning("author_upsert_failed", article_id=article_id, error=str(au_e))
 
         db.commit()
-        logger.info("article_embedded", article_id=article_id, model=OLLAMA_EMBED_MODEL)
+        logger.info("article_embedded", article_id=article_id, model=OLLAMA_EMBED_MODEL, user_id=user_id)
 
     except Exception as e:
         logger.warning("embedding_failed", article_id=article_id, error=str(e))

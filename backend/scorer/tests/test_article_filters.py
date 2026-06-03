@@ -1250,3 +1250,72 @@ class TestPerUserScoringIsolation:
         assert resp2.status_code == 200
         for f in resp2.json():
             assert "subscriber_user_ids" not in f
+
+
+# ── Per-user ChromaDB isolation — Epic 7 (FR-MT-40, FR-MT-41) ────────────
+
+@SKIP_INTEGRATION
+class TestChromaIsolation:
+    """Each user's embeddings live in a dedicated Chroma collection (FR-MT-40)."""
+
+    def test_get_chroma_per_user_collection(self, client):
+        """_get_chroma(user_id) returns a collection named articles_u{user_id}."""
+        c, session = client
+        from embedder import _get_chroma
+
+        col1 = _get_chroma(1)
+        col2 = _get_chroma(2)
+
+        assert col1.name == "articles_u1"
+        assert col2.name == "articles_u2"
+        assert col1 is not col2
+
+    def test_chroma_collections_isolated(self, client):
+        """Data written to one user's collection is invisible to another."""
+        c, session = client
+        from embedder import _get_chroma
+
+        col1 = _get_chroma(1)
+        col2 = _get_chroma(2)
+
+        col1.upsert(
+            ids=["101"],
+            embeddings=[[0.1] * 64],
+            metadatas=[{"article_id": 101, "user_id": 1}],
+        )
+        col2.upsert(
+            ids=["202"],
+            embeddings=[[0.2] * 64],
+            metadatas=[{"article_id": 202, "user_id": 2}],
+        )
+
+        got1 = col1.get(ids=["101"])
+        assert len(got1["ids"]) == 1
+
+        got2 = col2.get(ids=["101"])
+        assert len(got2["ids"]) == 0
+
+        got2_own = col2.get(ids=["202"])
+        assert len(got2_own["ids"]) == 1
+
+    def test_embed_article_async_accepts_user_id(self):
+        """embed_article_async signature must accept user_id parameter."""
+        from embedder import embed_article_async
+        import inspect
+        sig = inspect.signature(embed_article_async)
+        assert "user_id" in sig.parameters
+        assert sig.parameters["user_id"].default == 1
+
+    def test_get_chroma_default_user_1(self):
+        """_get_chroma() with no arg returns the collection for user_id=1."""
+        from embedder import _get_chroma
+        col = _get_chroma()
+        assert col.name == "articles_u1"
+
+    def test_chroma_collections_cached(self, client):
+        """_get_chroma(user_id) returns the same object for the same user_id."""
+        from embedder import _get_chroma
+
+        col_a = _get_chroma(1)
+        col_b = _get_chroma(1)
+        assert col_a is col_b
