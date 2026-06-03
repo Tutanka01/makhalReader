@@ -4,6 +4,7 @@ import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 import { usePolling } from '../hooks/usePolling'
+import { useCurrentUser } from '../context/UserContext'
 
 export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager'
 
@@ -34,6 +35,10 @@ export function Sidebar({
   onLogout
 }: SidebarProps) {
   const { filter, setFilter, articles } = useArticlesStore()
+  const { user } = useCurrentUser()
+  const initials = user?.display_name
+    ? user.display_name.split(' ').map(s => s[0]).join('').toUpperCase().slice(0, 2)
+    : '?'
   const [notifications, setNotifications] = useState<NotificationCounts>(NO_NOTIFICATIONS)
 
   const fetchNotifications = useCallback(() => {
@@ -168,11 +173,11 @@ export function Sidebar({
       <div className="mt-auto p-2 border-t border-border-subtle">
         <div onClick={onOpenProfile} className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors hover:bg-bg-hover">
           <div className="w-7 h-7 rounded-full bg-text-primary text-white flex items-center justify-center text-[10px] font-semibold flex-shrink-0 tracking-wide">
-            AF
+            {initials}
           </div>
           <div className="flex-1">
-            <div className="text-[12.5px] font-medium text-text-primary leading-tight">Arona</div>
-            <div className="text-[11px] text-text-muted leading-tight">Admin</div>
+            <div className="text-[12.5px] font-medium text-text-primary leading-tight">{user?.display_name ?? 'User'}</div>
+            <div className="text-[11px] text-text-muted leading-tight">{user?.role ?? 'User'}</div>
           </div>
           <div onClick={(e) => { e.stopPropagation(); onLogout() }} className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-danger transition-colors" title="Logout">
             <LogOut size={14} />
