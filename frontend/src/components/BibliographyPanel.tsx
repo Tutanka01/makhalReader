@@ -17,10 +17,13 @@ const CONTRIB_TYPES: { value: ContribType | ''; label: string }[] = [
   { value: 'other', label: 'Other' },
 ]
 
+type ExportFormat = 'bibtex' | 'zotero'
+
 export default function BibliographyPanel() {
   const [sinceDays, setSinceDays] = useState(365)
   const [minScore, setMinScore] = useState<string>('')
   const [contribType, setContribType] = useState<string>('')
+  const [fmt, setFmt] = useState<ExportFormat>('bibtex')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +34,7 @@ export default function BibliographyPanel() {
     try {
       const params = new URLSearchParams()
       params.set('since_days', String(sinceDays))
+      params.set('fmt', fmt)
       if (minScore) params.set('min_score', minScore)
       if (contribType) params.set('contribution_type', contribType)
 
@@ -41,7 +45,6 @@ export default function BibliographyPanel() {
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }))
         setError(err.detail || 'Export failed')
-        setLoading(false)
         return
       }
 
@@ -49,7 +52,7 @@ export default function BibliographyPanel() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'bibliography.bib'
+      a.download = fmt === 'zotero' ? 'bibliography.json' : 'bibliography.bib'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -66,15 +69,40 @@ export default function BibliographyPanel() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-border-default">
         <div className="flex items-center gap-2.5">
           <BookMarked className="w-4 h-4 text-accent" />
-          <h1 className="text-sm font-semibold text-text-primary">BibTeX Export</h1>
+          <h1 className="text-sm font-semibold text-text-primary">Bibliography Export</h1>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 max-w-lg mx-auto w-full">
         <div className="space-y-5">
           <p className="text-xs text-text-muted leading-relaxed">
-            Export a BibTeX bibliography from your article corpus. The generated <code className="text-accent">.bib</code> file can be used directly in Overleaf or any LaTeX editor.
+            Export your personal bibliography — only articles scored for your account. Use BibTeX for LaTeX/Overleaf, or Zotero JSON to import directly into Zotero.
           </p>
+
+          {/* Format toggle */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Format</label>
+            <div className="flex gap-2">
+              {([
+                { value: 'bibtex' as ExportFormat, label: 'BibTeX', desc: '.bib · LaTeX / Overleaf' },
+                { value: 'zotero' as ExportFormat, label: 'Zotero JSON', desc: '.json · CSL import' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFmt(opt.value)}
+                  className={`flex-1 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                    fmt === opt.value
+                      ? 'border-accent bg-accent/8 text-accent'
+                      : 'border-border-default bg-bg-surface text-text-muted hover:border-border-strong'
+                  }`}
+                >
+                  <div className="text-xs font-semibold">{opt.label}</div>
+                  <div className="text-[10px] opacity-70 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Time range */}
           <div className="space-y-1.5">
@@ -147,10 +175,16 @@ export default function BibliographyPanel() {
             ) : (
               <>
                 <Download className="w-4 h-4" />
-                Download bibliography.bib
+                {fmt === 'zotero' ? 'Download bibliography.json' : 'Download bibliography.bib'}
               </>
             )}
           </button>
+
+          {fmt === 'zotero' && (
+            <p className="text-[10px] text-text-muted leading-relaxed text-center">
+              Journal, volume and page fields may be absent for arXiv preprints — Semantic Scholar does not expose them.
+            </p>
+          )}
         </div>
       </div>
     </div>

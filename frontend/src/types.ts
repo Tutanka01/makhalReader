@@ -54,17 +54,27 @@ export interface UserInfo {
 }
 
 export interface OrgMember {
-  name: string
+  id: number
   email: string
+  display_name: string
   role: string
-  onboarded: boolean
-  thesis: string
+  onboarding_done: boolean
+  thesis_title: string
+}
+
+export interface OrgFeedItem {
+  id: number
+  name: string
+  category: string
+  subscriber_count: number
 }
 
 export interface Organization {
   id: number
   name: string
+  invite_code: string | null
   members: OrgMember[]
+  feed_catalog: OrgFeedItem[]
 }
 
 export interface ScoringCluster {

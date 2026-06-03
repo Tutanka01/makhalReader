@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from database import (
     Article,
+    ArticleScore,
     Feed,
     Highlight,
     LiteratureReview,
@@ -1637,26 +1638,40 @@ async def export_bibliography(
     since_days: int = Query(default=365, ge=1, le=3650),
     min_score: Optional[float] = Query(default=None, ge=0, le=10),
     contribution_type: Optional[str] = Query(default=None, max_length=32),
+    fmt: str = Query(default="bibtex", regex="^(bibtex|zotero)$"),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Export a BibTeX bibliography from the article corpus."""
+    """Export a bibliography filtered to the current user's scored articles."""
+    uid = current_user["id"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
-    q = db.query(Article).filter(Article.created_at >= cutoff)
 
+    q = (
+        db.query(Article)
+        .join(ArticleScore, ArticleScore.article_id == Article.id)
+        .filter(
+            ArticleScore.user_id == uid,
+            Article.created_at >= cutoff,
+        )
+    )
     if min_score is not None:
-        q = q.filter(Article.score >= min_score)
+        q = q.filter(ArticleScore.score >= min_score)
     if contribution_type:
-        q = q.filter(Article.contribution_type == contribution_type)
+        q = q.filter(ArticleScore.contribution_type == contribution_type)
 
     articles = q.order_by(Article.created_at.desc()).all()
 
+    if fmt == "zotero":
+        from bibliography import generate_zotero_json  # noqa: PLC0415
+        return Response(
+            content=generate_zotero_json(articles),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="bibliography.json"'},
+        )
+
     from bibliography import generate_bibtex  # noqa: PLC0415
-
-    content = generate_bibtex(articles)
-
     return Response(
-        content=content,
+        content=generate_bibtex(articles),
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="bibliography.bib"'},
     )

@@ -145,3 +145,52 @@ def _slugify(text: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9]", "", text)
     text = text.lower()
     return text[:64]
+
+
+def generate_zotero_json(articles: list) -> str:
+    """Generate a Zotero-compatible JSON-CSL array from a list of article ORM objects."""
+    items: list[dict] = []
+    for article in articles:
+        authors = _extract_author_list(article)
+        year = _extract_year(article)
+        doi = _extract_doi(article)
+
+        item_type = "preprint"
+        if article.paper_meta_json:
+            try:
+                pm = json.loads(article.paper_meta_json)
+                if pm.get("source") not in ("arxiv", "fallback", "", None):
+                    item_type = "article-journal"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        item: dict = {
+            "id": str(article.id),
+            "type": item_type,
+            "title": article.title or "",
+            "author": [_split_name(a) for a in authors],
+            "URL": article.url or "",
+            "abstract": "",
+        }
+        if doi:
+            item["DOI"] = doi
+        if year:
+            item["issued"] = {"date-parts": [[int(year)]]}
+        if article.paper_meta_json:
+            try:
+                pm = json.loads(article.paper_meta_json)
+                item["abstract"] = (pm.get("abstract") or "")[:800]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        items.append(item)
+
+    return json.dumps(items, ensure_ascii=False, indent=2)
+
+
+def _split_name(name: str) -> dict:
+    """Split 'First Last' into a CSL name object."""
+    parts = name.strip().rsplit(" ", 1)
+    if len(parts) == 2:
+        return {"given": parts[0], "family": parts[1]}
+    return {"family": name}
