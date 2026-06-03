@@ -28,6 +28,7 @@ from database import (
     ThesisContribution,
     TrackedAuthor,
     UserConfig,
+    UserFeedSubscription,
     get_db,
     get_setting,
     get_user_setting,
@@ -769,14 +770,20 @@ async def export_literature_review(
 async def export_arise(
     body: AriseExportRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Export requirement-rich articles for downstream ARISE pipelines (NFR15 schema)."""
     since = body.since
+    sub_feed_ids = [
+        r[0] for r in db.query(UserFeedSubscription.feed_id)
+        .filter(UserFeedSubscription.user_id == current_user["id"])
+        .all()
+    ]
     rows = (
         db.query(Article, Feed.name.label("feed_name"))
         .join(Feed, Article.feed_id == Feed.id)
         .filter(
+            Article.feed_id.in_(sub_feed_ids),
             Article.re_document_type.in_(ARISE_RE_DOCUMENT_TYPES),
             Article.published_at.isnot(None),
             Article.published_at >= since,
@@ -1413,6 +1420,7 @@ async def list_all_highlights(
     q = (
         db.query(Highlight, Article.title, Article.url, Article.score)
         .join(Article, Highlight.article_id == Article.id)
+        .filter(Highlight.user_id == current_user["id"])
     )
     if thesis_section:
         q = q.filter(Highlight.thesis_section == thesis_section)

@@ -127,13 +127,15 @@ async def get_digest(
     limit: int = Query(20, ge=1, le=50),
     min_score: float = Query(5.0, ge=0.0, le=10.0),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     results = (
         db.query(Article, Feed.name.label("feed_name"))
         .join(Feed, Article.feed_id == Feed.id)
+        .join(UserFeedSubscription, Feed.id == UserFeedSubscription.feed_id)
         .filter(
+            UserFeedSubscription.user_id == current_user["id"],
             Article.created_at >= cutoff,
             Article.score.isnot(None),
             Article.score >= min_score,

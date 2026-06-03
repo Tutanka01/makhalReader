@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from auth import require_session
-from database import Article, Feed, Highlight, UserConfig, get_db, get_setting, set_setting
+from database import Article, ArticleScore, Feed, Highlight, UserConfig, UserFeedSubscription, get_db, get_setting, set_setting
 from models import (
     DailyReadCount,
     OldestUnreadItem,
@@ -52,14 +52,48 @@ def _compute_streak(dates: List[str]) -> int:
 
 
 @router.get("/api/stats", response_model=StatsOut)
-async def get_stats(db: Session = Depends(get_db), _: None = _auth):
-    total_read = db.query(Article).filter(Article.read_at.isnot(None)).count()
-    total_unread = db.query(Article).filter(Article.read_at.is_(None)).count()
-    total_bookmarked = db.query(Article).filter(Article.bookmarked == True).count()
+async def get_stats(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    user_id = current_user["id"]
+    sub_feed_ids = [
+        r[0] for r in db.query(UserFeedSubscription.feed_id)
+        .filter(UserFeedSubscription.user_id == user_id)
+        .all()
+    ]
+
+    total_read = (
+        db.query(func.count(Article.id))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.isnot(None),
+        )
+        .scalar()
+    ) or 0
+    total_unread = (
+        db.query(func.count(Article.id))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.is_(None),
+        )
+        .scalar()
+    ) or 0
+    total_bookmarked = (
+        db.query(func.count(Article.id))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.bookmarked == True,
+        )
+        .scalar()
+    ) or 0
 
     date_rows = (
         db.query(func.strftime("%Y-%m-%d", Article.read_at).label("d"))
-        .filter(Article.read_at.isnot(None))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.isnot(None),
+        )
         .distinct()
         .all()
     )
@@ -72,7 +106,10 @@ async def get_stats(db: Session = Depends(get_db), _: None = _auth):
             func.strftime("%Y-%m-%d", Article.read_at).label("d"),
             func.count(Article.id).label("cnt"),
         )
-        .filter(Article.read_at >= cutoff_30)
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at >= cutoff_30,
+        )
         .group_by(func.strftime("%Y-%m-%d", Article.read_at))
         .order_by(func.strftime("%Y-%m-%d", Article.read_at))
         .all()
@@ -81,14 +118,22 @@ async def get_stats(db: Session = Depends(get_db), _: None = _auth):
 
     avg_row = (
         db.query(func.avg(Article.score))
-        .filter(Article.read_at.isnot(None), Article.score.isnot(None))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.isnot(None),
+            Article.score.isnot(None),
+        )
         .scalar()
     )
     avg_score_read = round(float(avg_row), 2) if avg_row is not None else None
 
     tag_rows = (
         db.query(Article.tags_json)
-        .filter(Article.read_at.isnot(None), Article.tags_json.isnot(None))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.isnot(None),
+            Article.tags_json.isnot(None),
+        )
         .order_by(Article.read_at.desc())
         .limit(2000)
         .all()
@@ -106,14 +151,21 @@ async def get_stats(db: Session = Depends(get_db), _: None = _auth):
     ]
 
     try:
-        total_highlights = db.query(Highlight).count()
+        total_highlights = (
+            db.query(Highlight)
+            .filter(Highlight.user_id == user_id)
+            .count()
+        )
     except Exception:
         total_highlights = 0
 
     cat_rows = (
         db.query(Feed.category, func.count(Article.id).label("cnt"))
         .join(Article, Article.feed_id == Feed.id)
-        .filter(Article.read_at.isnot(None))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.isnot(None),
+        )
         .group_by(Feed.category)
         .all()
     )
@@ -155,7 +207,13 @@ async def reading_debt(
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
-    # All unread articles with score
+    sub_feed_ids = [
+        r[0] for r in db.query(UserFeedSubscription.feed_id)
+        .filter(UserFeedSubscription.user_id == user_id)
+        .all()
+    ]
+
+    # All unread articles with score (scoped to user's subscribed feeds)
     unread = (
         db.query(
             Article.id,
@@ -164,7 +222,11 @@ async def reading_debt(
             Article.content_text,
             Article.created_at,
         )
-        .filter(Article.read_at.is_(None), Article.score.isnot(None))
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at.is_(None),
+            Article.score.isnot(None),
+        )
         .all()
     )
 
@@ -174,10 +236,13 @@ async def reading_debt(
     # Reading time
     unread_high_minutes = sum(_est_minutes(a.content_text) for a in unread_high)
 
-    # Weekly progress
+    # Weekly progress (scoped to user's subscribed feeds)
     weekly_progress = (
         db.query(func.count(Article.id))
-        .filter(Article.read_at >= week_ago)
+        .filter(
+            Article.feed_id.in_(sub_feed_ids),
+            Article.read_at >= week_ago,
+        )
         .scalar()
     ) or 0
 
