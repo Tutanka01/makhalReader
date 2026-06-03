@@ -30,8 +30,10 @@ from database import (
     UserConfig,
     get_db,
     get_setting,
+    get_user_setting,
     get_valid_thesis_sections,
     set_setting,
+    set_user_setting,
 )
 from conferences import get_conferences_with_countdown
 from models import (
@@ -1511,12 +1513,13 @@ async def citation_stats(
 @router.get("/conferences", response_model=List[ConferenceOut])
 async def list_conferences(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Return all conferences with countdowns and bookmark state."""
     from conferences import get_conferences_with_countdown  # noqa: PLC0415
 
-    raw = get_setting(db, "bookmarked_conferences", "")
+    user_id = current_user["id"]
+    raw = get_user_setting(db, user_id, "bookmarked_conferences", "")
     bookmarked = set(v.strip() for v in raw.split(",") if v.strip())
     return get_conferences_with_countdown(bookmarked)
 
@@ -1525,12 +1528,13 @@ async def list_conferences(
 async def toggle_conference_bookmark(
     body: ConferenceBookmark,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Toggle bookmark for a conference venue."""
     from conferences import get_conferences_with_countdown  # noqa: PLC0415
 
-    raw = get_setting(db, "bookmarked_conferences", "")
+    user_id = current_user["id"]
+    raw = get_user_setting(db, user_id, "bookmarked_conferences", "")
     bookmarked = set(v.strip() for v in raw.split(",") if v.strip())
 
     if body.bookmarked:
@@ -1538,7 +1542,7 @@ async def toggle_conference_bookmark(
     else:
         bookmarked.discard(body.venue)
 
-    set_setting(db, "bookmarked_conferences", ",".join(sorted(bookmarked)))
+    set_user_setting(db, user_id, "bookmarked_conferences", ",".join(sorted(bookmarked)))
     return get_conferences_with_countdown(bookmarked)
 
 
@@ -1558,9 +1562,10 @@ async def get_notifications(
     current_user: dict = Depends(require_session),
 ):
     """Return counts for notification badges in the sidebar."""
+    user_id = current_user["id"]
 
     # Threat alerts since last dismissal
-    dismissed_threats = get_setting(db, "notifications_last_dismissed_threats", "")
+    dismissed_threats = get_user_setting(db, user_id, "notifications_last_dismissed_threats", "")
     threat_cutoff = datetime.fromisoformat(dismissed_threats) if dismissed_threats else datetime.min.replace(tzinfo=timezone.utc)
     new_threats = (
         db.query(NoveltyAlert)
@@ -1572,7 +1577,7 @@ async def get_notifications(
     )
 
     # Urgent conference deadlines (days_to_paper <= 14, not past)
-    dismissed_confs = get_setting(db, "notifications_last_dismissed_conferences", "")
+    dismissed_confs = get_user_setting(db, user_id, "notifications_last_dismissed_conferences", "")
     conf_cutoff = datetime.fromisoformat(dismissed_confs) if dismissed_confs else datetime.min.replace(tzinfo=timezone.utc)
     all_confs = get_conferences_with_countdown()
     urgent_deadlines = sum(
@@ -1581,7 +1586,7 @@ async def get_notifications(
     )
 
     # Author papers since last dismissal
-    dismissed_authors = get_setting(db, "notifications_last_dismissed_authors", "")
+    dismissed_authors = get_user_setting(db, user_id, "notifications_last_dismissed_authors", "")
     author_cutoff = datetime.fromisoformat(dismissed_authors) if dismissed_authors else datetime.min.replace(tzinfo=timezone.utc)
     new_author_papers = (
         db.query(Article)
@@ -1603,11 +1608,12 @@ async def get_notifications(
 async def dismiss_notifications(
     body: DismissNotificationsRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Mark a notification category as seen so its badge goes to zero."""
+    user_id = current_user["id"]
     key = _NOTIFICATION_KEY_MAP[body.type]
-    set_setting(db, key, datetime.now(timezone.utc).isoformat())
+    set_user_setting(db, user_id, key, datetime.now(timezone.utc).isoformat())
     return {"status": "ok"}
 
 
