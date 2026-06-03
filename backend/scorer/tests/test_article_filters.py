@@ -825,3 +825,75 @@ class TestSseScoping:
         from sse import broadcast_new_article
 
         asyncio.run(broadcast_new_article({"id": 99}, user_id=42))
+
+
+@SKIP_INTEGRATION
+class TestFeedSubscriptions:
+    """Story 3.2 — GET /api/feeds returns only subscribed feeds (FR-MT-14)."""
+
+    def test_list_feeds_only_subscribed(self, client):
+        c, session = client
+        feed1 = _make_feed(session, name="Subscribed Feed")
+        feed2 = _make_feed(session, name="Unsubscribed Feed")
+        session.flush()
+
+        from database import UserFeedSubscription
+        sub = UserFeedSubscription(user_id=1, feed_id=feed1.id)
+        session.add(sub)
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Subscribed Feed"
+        assert data[0]["id"] == feed1.id
+
+    def test_list_feeds_empty_when_no_subscriptions(self, client):
+        c, session = client
+        _make_feed(session, name="Orphan Feed")
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_list_feeds_multiple_subscriptions(self, client):
+        c, session = client
+        feed1 = _make_feed(session, name="Feed A")
+        feed2 = _make_feed(session, name="Feed B")
+        feed3 = _make_feed(session, name="Feed C")
+        session.flush()
+
+        from database import UserFeedSubscription
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed1.id),
+            UserFeedSubscription(user_id=1, feed_id=feed2.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        names = {d["name"] for d in data}
+        assert names == {"Feed A", "Feed B"}
+
+    def test_other_user_subscriptions_not_visible(self, client):
+        c, session = client
+        feed1 = _make_feed(session, name="User A Feed")
+        feed2 = _make_feed(session, name="User B Feed")
+        session.flush()
+
+        from database import UserFeedSubscription
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed1.id),
+            UserFeedSubscription(user_id=2, feed_id=feed2.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "User A Feed"

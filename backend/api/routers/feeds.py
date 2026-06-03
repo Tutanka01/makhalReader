@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import Article, Feed, get_db
+from database import Article, Feed, UserFeedSubscription, get_db
 from models import ArticleListItem, FeedCreate, FeedOut, FeedWithCount
 from routers.articles import _row_to_list_item
 
@@ -18,11 +18,15 @@ _auth = Depends(require_session)
 
 
 @router.get("/api/feeds", response_model=List[FeedWithCount])
-async def list_feeds(db: Session = Depends(get_db), _: None = _auth):
+async def list_feeds(db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
     results = (
         db.query(Feed, func.count(Article.id).label("article_count"))
+        .join(UserFeedSubscription, Feed.id == UserFeedSubscription.feed_id)
         .outerjoin(Article, Feed.id == Article.feed_id)
-        .filter(Feed.active == True)
+        .filter(
+            Feed.active == True,
+            UserFeedSubscription.user_id == current_user["id"],
+        )
         .group_by(Feed.id)
         .all()
     )
