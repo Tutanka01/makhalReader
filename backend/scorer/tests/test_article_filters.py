@@ -1061,3 +1061,34 @@ class TestInternalFeeds:
         names = [d["name"] for d in resp.json()]
         assert "Active Feed" in names
         assert "Inactive Feed" not in names
+
+
+@SKIP_INTEGRATION
+class TestFeedCatalog:
+    """Story 3.6 — GET /api/feeds/catalog returns all active feeds (FR-MT-16)."""
+
+    def test_catalog_returns_all_active_feeds(self, client):
+        c, session = client
+        feed1 = _make_feed(session, name="Feed A")
+        feed2 = _make_feed(session, name="Feed B")
+        session.flush()
+        feed3 = _make_feed(session, name="Inactive Feed")
+        feed3.active = False
+        session.commit()
+
+        resp = c.get("/api/feeds/catalog")
+        assert resp.status_code == 200
+        names = {d["name"] for d in resp.json()}
+        assert names == {"Feed A", "Feed B"}
+
+    def test_catalog_includes_unsubscribed_feeds(self, client):
+        c, session = client
+        _make_feed(session, name="Unsubscribed Feed")
+        session.commit()
+
+        resp = c.get("/api/feeds")
+        assert resp.json() == []
+
+        resp = c.get("/api/feeds/catalog")
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["name"] == "Unsubscribed Feed"

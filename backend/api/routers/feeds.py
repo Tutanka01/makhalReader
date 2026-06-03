@@ -40,6 +40,25 @@ async def list_feeds(db: Session = Depends(get_db), current_user: dict = Depends
     ]
 
 
+@router.get("/api/feeds/catalog", response_model=List[FeedWithCount])
+async def list_catalog(db: Session = Depends(get_db), _: None = _auth):
+    results = (
+        db.query(Feed, func.count(Article.id).label("article_count"))
+        .outerjoin(Article, Feed.id == Article.feed_id)
+        .filter(Feed.active == True)
+        .group_by(Feed.id)
+        .all()
+    )
+    return [
+        FeedWithCount(
+            id=feed.id, url=feed.url, name=feed.name,
+            category=feed.category, active=feed.active,
+            last_fetched=feed.last_fetched, article_count=count,
+        )
+        for feed, count in results
+    ]
+
+
 @router.post("/api/feeds/opml")
 async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
     content = await file.read()
