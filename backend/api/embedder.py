@@ -124,7 +124,7 @@ async def embed_article_async(article_id: int, user_id: int = 1) -> None:
                         """),
                         {"ss_id": ss_id, "name": name, "now": datetime.now(timezone.utc), "uid": user_id},
                     )
-                    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_id).first()
+                    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_id, user_id=user_id).first()
                     if author:
                         new_count = author.paper_count + 1
                         new_avg = (author.avg_score * author.paper_count + article.score) / new_count

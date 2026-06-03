@@ -138,7 +138,7 @@ async def _queue_article_ingestion(arxiv_id: str, tracked_author_id: int) -> boo
             return False
 
 
-async def scan_author(db: Session, ss_author_id: str, name: str) -> int:
+async def scan_author(db: Session, ss_author_id: str, name: str, user_id: int = 1) -> int:
     """Check one author for new papers. Returns count of new articles queued."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
     async with httpx.AsyncClient(timeout=30) as client:
@@ -155,8 +155,8 @@ async def scan_author(db: Session, ss_author_id: str, name: str) -> int:
         if await _queue_article_ingestion(arxiv_id, ss_author_id):
             new_count += 1
 
-    # Update last_checked and alert_count
-    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_author_id).first()
+    # Update last_checked and alert_count (scoped to user)
+    author = db.query(TrackedAuthor).filter_by(ss_author_id=ss_author_id, user_id=user_id).first()
     if author:
         author.last_checked = datetime.now(timezone.utc)
         author.alert_count = (author.alert_count or 0) + new_count
@@ -175,7 +175,7 @@ async def run_author_radar_scan(db: Session, user_id: int = 1) -> AuthorScanResp
     for i, author in enumerate(authors):
         authors_checked += 1
         try:
-            n = await scan_author(db, author.ss_author_id, author.name)
+            n = await scan_author(db, author.ss_author_id, author.name, user_id=author.user_id)
             new_articles_queued += n
         except Exception as e:
             logger.warning("author_scan_failed", ss_author_id=author.ss_author_id, error=str(e))

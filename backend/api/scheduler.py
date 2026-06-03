@@ -74,23 +74,30 @@ def stop_scheduler() -> None:
 
 
 async def _run_threat_scan_job() -> None:
-    """Wrapper: create DB session, run threat scan, log result."""
+    """Wrapper: create DB session, run threat scan for every active user."""
     from datetime import datetime, timezone
 
-    from database import SessionLocal, set_setting
+    from database import SessionLocal, User, set_setting
 
     db = SessionLocal()
     try:
         from routers.research import _run_threat_scan  # noqa: PLC0415
 
-        result = await _run_threat_scan(db, window_days=7)
+        user_ids = [u.id for u in db.query(User.id).all()]
+        for uid in user_ids:
+            try:
+                result = await _run_threat_scan(db, user_id=uid, window_days=7)
+                logger.info(
+                    "scheduler_threat_scan_done",
+                    user_id=uid,
+                    scanned=result.scanned,
+                    alerts_created=result.alerts_created,
+                    skipped=result.skipped,
+                )
+            except Exception as e:
+                logger.warning("scheduler_threat_scan_user_failed", user_id=uid, error=str(e))
+                continue
         set_setting(db, "threat_scan_last_run_at", datetime.now(timezone.utc).isoformat())
-        logger.info(
-            "scheduler_threat_scan_done",
-            scanned=result.scanned,
-            alerts_created=result.alerts_created,
-            skipped=result.skipped,
-        )
     except Exception as e:
         logger.error("scheduler_threat_scan_failed", error=str(e))
     finally:
@@ -98,23 +105,30 @@ async def _run_threat_scan_job() -> None:
 
 
 async def _run_author_radar_job() -> None:
-    """Wrapper: create DB session, run author radar, log result."""
+    """Wrapper: create DB session, run author radar for every active user."""
     from datetime import datetime, timezone
 
-    from database import SessionLocal, set_setting
+    from database import SessionLocal, User, set_setting
 
     db = SessionLocal()
     try:
         from author_radar import run_author_radar_scan  # noqa: PLC0415
 
-        result = await run_author_radar_scan(db)
+        user_ids = [u.id for u in db.query(User.id).all()]
+        for uid in user_ids:
+            try:
+                result = await run_author_radar_scan(db, user_id=uid)
+                logger.info(
+                    "scheduler_author_radar_done",
+                    user_id=uid,
+                    authors_checked=result.authors_checked,
+                    new_articles_queued=result.new_articles_queued,
+                    skipped=result.skipped,
+                )
+            except Exception as e:
+                logger.warning("scheduler_author_radar_user_failed", user_id=uid, error=str(e))
+                continue
         set_setting(db, "author_radar_last_run_at", datetime.now(timezone.utc).isoformat())
-        logger.info(
-            "scheduler_author_radar_done",
-            authors_checked=result.authors_checked,
-            new_articles_queued=result.new_articles_queued,
-            skipped=result.skipped,
-        )
     except Exception as e:
         logger.error("scheduler_author_radar_failed", error=str(e))
     finally:

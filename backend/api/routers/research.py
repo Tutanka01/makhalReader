@@ -1595,12 +1595,14 @@ async def get_notifications(
         if not c["is_past"] and c["days_to_paper"] <= 14
     )
 
-    # Author papers since last dismissal
+    # Author papers since last dismissal (scoped to user's subscribed feeds)
     dismissed_authors = get_user_setting(db, user_id, "notifications_last_dismissed_authors", "")
     author_cutoff = datetime.fromisoformat(dismissed_authors) if dismissed_authors else datetime.min.replace(tzinfo=timezone.utc)
     new_author_papers = (
         db.query(Article)
+        .join(UserFeedSubscription, Article.feed_id == UserFeedSubscription.feed_id)
         .filter(
+            UserFeedSubscription.user_id == user_id,
             Article.tracked_author_alert.is_(True),
             Article.created_at > author_cutoff,
         )
