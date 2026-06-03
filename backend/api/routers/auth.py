@@ -33,7 +33,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: Optional[str] = "admin@basira.local"
+    email: str
     password: str
     remember: bool = False
 

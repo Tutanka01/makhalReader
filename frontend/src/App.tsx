@@ -25,29 +25,13 @@ import OnboardingWizard from './components/OnboardingWizard'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
-import type { Feed, UserInfo } from './types'
+import { useCurrentUser } from './context/UserContext'
+import type { Feed } from './types'
 
 // ---------------------------------------------------------------------------
-// Auth gate
+// URL → AppView
 // ---------------------------------------------------------------------------
 
-type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
-
-function useAuth(): [AuthState, () => void] {
-  const [state, setState] = useState<AuthState>('loading')
-
-  const check = useCallback(() => {
-    fetch('/auth/me', { credentials: 'include' })
-      .then(r => setState(r.ok ? 'authenticated' : 'unauthenticated'))
-      .catch(() => setState('unauthenticated'))
-  }, [])
-
-  useEffect(() => { check() }, [check])
-
-  return [state, check]
-}
-
-// Map URL path → AppView string (strips leading slash)
 function pathToView(pathname: string): AppView {
   const segment = pathname.replace(/^\//, '') as AppView
   const VALID_VIEWS: AppView[] = [
@@ -58,10 +42,26 @@ function pathToView(pathname: string): AppView {
   return VALID_VIEWS.includes(segment) ? segment : 'feed'
 }
 
-export default function App() {
-  const [authState, recheckAuth] = useAuth()
+// ---------------------------------------------------------------------------
+// Root — UserContext is the single auth source of truth
+// ---------------------------------------------------------------------------
 
-  if (authState === 'loading') {
+export default function App() {
+  const { user, loading, refetch, clearUser } = useCurrentUser()
+
+  const handleLogout = useCallback(async () => {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
+    clearUser()   // immediate UI update — no spinner
+    refetch()     // confirm state with server
+  }, [refetch, clearUser])
+
+  // apiClient fires this event when any API call returns 401 (session expired)
+  useEffect(() => {
+    window.addEventListener('basira:unauthorized', handleLogout)
+    return () => window.removeEventListener('basira:unauthorized', handleLogout)
+  }, [handleLogout])
+
+  if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
         <div className="flex items-center gap-3 text-text-muted text-sm">
@@ -74,10 +74,10 @@ export default function App() {
     )
   }
 
-  if (authState === 'unauthenticated') {
+  if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<LoginView onLogin={recheckAuth} />} />
+        <Route path="/login" element={<LoginView onLogin={refetch} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )
@@ -87,18 +87,24 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Navigate to="/feed" replace />} />
       <Route path="/" element={<Navigate to="/feed" replace />} />
-      <Route path="/*" element={<AuthenticatedApp onLogout={recheckAuth} />} />
+      <Route path="/*" element={<AuthenticatedApp onLogout={handleLogout} />} />
     </Routes>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Authenticated shell
+// ---------------------------------------------------------------------------
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const navigate = useNavigate()
   const location = useLocation()
   const appView = pathToView(location.pathname)
 
+  // User comes from context — no local fetch needed
+  const { user, refetch: refetchUser } = useCurrentUser()
+
   const [feeds, setFeeds] = useState<Feed[]>([])
-  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
@@ -109,28 +115,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   useSSE(onLogout)
   const isOnline = useOnlineStatus()
 
-  useEffect(() => {
-    fetch('/auth/me', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(u => setCurrentUser(u))
-      .catch(() => {})
-  }, [])
-
   const setAppView = useCallback((view: AppView) => {
     navigate('/' + view)
     setShowReader(false)
   }, [navigate])
 
-  // ── Onboarding gate ──────────────────────────────────────────────────
-  const handleOnboardingComplete = useCallback(() => {
-    fetch('/auth/me', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(u => setCurrentUser(u))
-      .catch(() => {})
-  }, [])
-
-  if (currentUser && !currentUser.onboarding_done) {
-    return <OnboardingWizard onComplete={handleOnboardingComplete} />
+  // Onboarding gate — driven by the same UserContext user object
+  if (user && !user.onboarding_done) {
+    return <OnboardingWizard onComplete={refetchUser} />
   }
 
   const refreshFeeds = useCallback(() => {
@@ -168,28 +160,22 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
-      const currentIndex = articles.findIndex(a => a.id === selectedId)
+      const idx = articles.findIndex(a => a.id === selectedId)
 
       switch (e.key) {
         case '[':
           setSidebarOpen(v => !v)
           break
         case 'j':
-          if (currentIndex >= 0 && currentIndex < articles.length - 1) {
-            handleSelectArticle(articles[currentIndex + 1].id)
-          }
+          if (idx >= 0 && idx < articles.length - 1) handleSelectArticle(articles[idx + 1].id)
           break
         case 'k':
-          if (currentIndex > 0) {
-            handleSelectArticle(articles[currentIndex - 1].id)
-          }
+          if (idx > 0) handleSelectArticle(articles[idx - 1].id)
           break
         case 'r': {
           if (selectedId) {
             const article = articles.find(a => a.id === selectedId)
-            if (article) {
-              article.read_at ? markUnread(selectedId) : markRead(selectedId)
-            }
+            if (article) article.read_at ? markUnread(selectedId) : markRead(selectedId)
           }
           break
         }
@@ -361,7 +347,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               <ConferenceRadar />
             ) : appView === 'feed-manager' ? (
               <FeedManagerPanel
-                currentUser={currentUser}
+                currentUser={user}
                 onFeedsChange={refreshFeeds}
               />
             ) : appView === 'admin' ? (

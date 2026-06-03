@@ -40,7 +40,7 @@ export function useSSE(onUnauthorized?: () => void) {
       if (stoppedRef.current) return
 
       // Check if we're still authenticated before retrying
-      fetch('/auth/status', { credentials: 'include' }).then(r => {
+      fetch('/auth/me', { credentials: 'include' }).then(r => {
         if (r.status === 401) {
           stoppedRef.current = true
           onUnauthorized?.()

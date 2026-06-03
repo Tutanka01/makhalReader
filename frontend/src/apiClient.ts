@@ -1,14 +1,14 @@
 /// Centralised HTTP client for Baṣīra (Story 8.2, FR-MT-45).
 ///
 /// - Every request sends credentials: 'include' (HttpOnly session cookie).
-/// - A 401 response triggers a global redirect to /login.
+/// - A 401 response fires a 'basira:unauthorized' event; App.tsx listens and
+///   calls POST /auth/logout + recheckAuth() to transition the UI without a
+///   hard page reload.
 /// - Methods are generic so callers get typed response bodies.
 ///
 /// Usage:
 ///   import api from './apiClient'
 ///   const articles = await api.get<Article[]>('/api/articles')
-
-const LOGIN_PATH = '/login'
 
 export class ApiError extends Error {
   status: number
@@ -22,8 +22,8 @@ export class ApiError extends Error {
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (res.status === 401) {
-    window.location.href = LOGIN_PATH
-    throw new ApiError(401, 'Session expired — redirecting to login')
+    window.dispatchEvent(new Event('basira:unauthorized'))
+    throw new ApiError(401, 'Session expired')
   }
   if (!res.ok) {
     let detail = `HTTP ${res.status}`

@@ -184,12 +184,23 @@ export function Sidebar({
             <div className="text-[12.5px] font-medium text-text-primary leading-tight">{user?.display_name ?? 'User'}</div>
             <div className="text-[11px] text-text-muted leading-tight">{user?.role ?? 'User'}</div>
           </div>
-          <div onClick={(e) => { e.stopPropagation(); onOpenSettings() }} className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-text-primary transition-colors" title="Settings">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenSettings() }}
+            className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-text-primary transition-colors"
+            title="Settings"
+          >
             <Settings size={14} />
-          </div>
-          <div onClick={(e) => { e.stopPropagation(); onLogout() }} className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-danger transition-colors" title="Logout">
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onLogout() }}
+            className="p-1 hover:bg-bg-elevated rounded text-text-muted hover:text-danger transition-colors"
+            title="Sign out"
+            aria-label="Sign out"
+          >
             <LogOut size={14} />
-          </div>
+          </button>
         </div>
 
       </div>
