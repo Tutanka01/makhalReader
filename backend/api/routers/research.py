@@ -29,6 +29,7 @@ from database import (
     TrackedAuthor,
     get_db,
     get_setting,
+    get_valid_thesis_sections,
     set_setting,
 )
 from conferences import get_conferences_with_countdown
@@ -1256,11 +1257,12 @@ async def export_highlights(
 @router.get("/export-highlights/sections")
 async def list_highlight_sections(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Return all thesis sections with their highlight counts (0 for untagged sections)."""
+    """Return the current user's thesis sections with highlight counts."""
     from sqlalchemy import func
 
+    valid_sections = get_valid_thesis_sections(db, current_user["id"])
     counts_rows = (
         db.query(Highlight.thesis_section, func.count(Highlight.id).label("count"))
         .filter(Highlight.thesis_section.isnot(None))
@@ -1270,7 +1272,7 @@ async def list_highlight_sections(
     count_map = {row[0]: row[1] for row in counts_rows}
     return [
         {"thesis_section": section, "count": count_map.get(section, 0)}
-        for section in sorted(_VALID_THESIS_SECTIONS)
+        for section in sorted(valid_sections)
     ]
 
 

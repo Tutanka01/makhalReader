@@ -525,3 +525,16 @@ def _backfill_research_profile(conn):
         conn.commit()
     except Exception:
         pass
+
+
+def get_valid_thesis_sections(db: Session, user_id: int) -> set[str]:
+    """Return the user's valid thesis sections from user_config, falling back to defaults."""
+    try:
+        config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+        if config and config.thesis_sections_json:
+            parsed = json.loads(config.thesis_sections_json)
+            if isinstance(parsed, list) and parsed:
+                return set(parsed)
+    except Exception:
+        pass
+    return set(_DEFAULT_THESIS_SECTIONS)

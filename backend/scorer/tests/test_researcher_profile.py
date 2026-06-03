@@ -37,6 +37,7 @@ _SKIP_INTEGRATION = pytest.mark.skipif(
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 _API_DIR = os.path.join(_REPO_ROOT, "backend", "api")
 _RESEARCH_PY = os.path.join(_API_DIR, "routers", "research.py")
+_HIGHLIGHTS_PY = os.path.join(_API_DIR, "routers", "highlights.py")
 _DATABASE_PY = os.path.join(_API_DIR, "database.py")
 _ARTICLES_PY = os.path.join(_API_DIR, "routers", "articles.py")
 _INTERNAL_PY = os.path.join(_API_DIR, "routers", "internal.py")
@@ -167,6 +168,46 @@ class TestProfileUserScoping:
     def test_feedback_sets_user_id_on_new(self):
         src = _read(_ARTICLES_PY)
         assert 'user_id=user_id' in src.replace(' ', '')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.4) — Dynamic thesis sections from user_config (FR-MT-21)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDynamicThesisSections:
+    def test_get_valid_thesis_sections_helper_exists(self):
+        src = _read(_DATABASE_PY)
+        assert "def get_valid_thesis_sections" in src
+
+    def test_get_valid_thesis_sections_reads_user_config(self):
+        src = _read(_DATABASE_PY)
+        assert "UserConfig" in src
+        assert "thesis_sections_json" in src
+
+    def test_get_valid_thesis_sections_falls_back(self):
+        src = _read(_DATABASE_PY)
+        assert "_DEFAULT_THESIS_SECTIONS" in src
+
+    def test_list_highlight_sections_uses_current_user(self):
+        src = _read(_RESEARCH_PY)
+        assert "@router.get(\"/export-highlights/sections\")" in src
+        assert "current_user: dict = Depends(require_session)" in src
+        assert "get_valid_thesis_sections" in src
+
+    def test_highlight_update_validates_at_handler(self):
+        src = _read(_HIGHLIGHTS_PY)
+        assert "get_valid_thesis_sections" in src
+        assert "raise HTTPException" in src
+
+    def test_bulk_update_validates_at_handler(self):
+        src = _read(_HIGHLIGHTS_PY)
+        assert "bulk_update" in src
+        assert "get_valid_thesis_sections" in src
+
+    def test_pydantic_validators_removed(self):
+        src = _read(_MODELS_PY)
+        assert "validate_thesis_section" not in src
+        assert "validate_section" not in src
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

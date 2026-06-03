@@ -401,12 +401,8 @@ class HighlightUpdate(BaseModel):
             raise ValueError(f"color must be one of {sorted(_HIGHLIGHT_COLORS)}")
         return v
 
-    @field_validator("thesis_section")
-    @classmethod
-    def validate_thesis_section(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in _VALID_THESIS_SECTIONS:
-            raise ValueError(f"thesis_section must be one of {sorted(_VALID_THESIS_SECTIONS)}")
-        return v
+    # thesis_section validation moved to handler level (FR-MT-21)
+    # See get_valid_thesis_sections() in database.py
 
 
 class HighlightOut(BaseModel):
@@ -646,9 +642,5 @@ class BulkUpdateHighlightsRequest(BaseModel):
     highlight_ids: List[int] = Field(..., min_length=1)
     thesis_section: str = Field(..., min_length=1)
 
-    @field_validator("thesis_section")
-    @classmethod
-    def validate_section(cls, v: str) -> str:
-        if v not in _VALID_THESIS_SECTIONS:
-            raise ValueError(f"thesis_section must be one of {sorted(_VALID_THESIS_SECTIONS)}")
-        return v
+    # thesis_section validation moved to handler level (FR-MT-21)
+    # See get_valid_thesis_sections() in database.py

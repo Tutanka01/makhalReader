@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import Article, Highlight, get_db
+from database import Article, Highlight, get_db, get_valid_thesis_sections
 from models import BulkUpdateHighlightsRequest, HighlightCreate, HighlightOut, HighlightUpdate
 
 router = APIRouter()
@@ -57,7 +57,7 @@ async def update_highlight(
     highlight_id: int,
     body: HighlightUpdate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     highlight = (
         db.query(Highlight)
@@ -71,6 +71,12 @@ async def update_highlight(
     if body.note is not None:
         highlight.note = body.note
     if body.thesis_section is not None:
+        valid = get_valid_thesis_sections(db, current_user["id"])
+        if body.thesis_section not in valid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"thesis_section must be one of {sorted(valid)}",
+            )
         highlight.thesis_section = body.thesis_section
     db.commit()
     db.refresh(highlight)
@@ -82,7 +88,7 @@ async def patch_highlight(
     highlight_id: int,
     body: HighlightUpdate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Partial update of a highlight — only the fields present in the body are updated."""
     h = db.query(Highlight).filter(Highlight.id == highlight_id).first()
@@ -93,6 +99,12 @@ async def patch_highlight(
     if body.note is not None:
         h.note = body.note
     if body.thesis_section is not None:
+        valid = get_valid_thesis_sections(db, current_user["id"])
+        if body.thesis_section not in valid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"thesis_section must be one of {sorted(valid)}",
+            )
         h.thesis_section = body.thesis_section
     db.commit()
     return HighlightOut.model_validate(h)
@@ -102,9 +114,15 @@ async def patch_highlight(
 async def bulk_update_highlights(
     body: BulkUpdateHighlightsRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Update thesis_section for multiple highlights at once."""
+    valid = get_valid_thesis_sections(db, current_user["id"])
+    if body.thesis_section not in valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"thesis_section must be one of {sorted(valid)}",
+        )
     updated = (
         db.query(Highlight)
         .filter(Highlight.id.in_(body.highlight_ids))
