@@ -1,6 +1,8 @@
+import hashlib
 import os
 from datetime import datetime, timezone
 
+import bcrypt
 from sqlalchemy import (
     Boolean,
     Column,
@@ -41,6 +43,27 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    display_name = Column(String, nullable=True)
+    role = Column(String, nullable=False, default="member")
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    onboarding_done = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class Feed(Base):
@@ -155,6 +178,7 @@ class AuthSession(Base):
     last_seen = Column(DateTime, nullable=True)
     user_agent = Column(String(500), nullable=True)
     remember_me = Column(Boolean, default=False, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
 class ThesisContribution(Base):
@@ -212,6 +236,37 @@ def set_setting(db: Session, key: str, value: str) -> None:
     db.commit()
 
 
+def _seed_default_user():
+    """Auto-create seed user_id=1 when AUTH_PASSWORD is set and users table is empty."""
+    raw = os.getenv("AUTH_PASSWORD", "")
+    if not raw:
+        return
+    from sqlalchemy import text as _text
+    try:
+        db = SessionLocal()
+        existing = db.query(User).count()
+        if existing > 0:
+            return
+        pwd_hash = bcrypt.hashpw(
+            hashlib.sha256(raw.encode()).digest(),
+            bcrypt.gensalt(rounds=12),
+        )
+        user = User(
+            email="admin@basira.local",
+            password_hash=pwd_hash.decode(),
+            display_name="Admin",
+            role="admin",
+            onboarding_done=True,
+        )
+        db.add(user)
+        db.commit()
+        print(f"[init_db] Seed user created: id={user.id}")
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -258,6 +313,10 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_articles_ss_paper_id ON articles(ss_paper_id)",
+        # Multi-tenant: organizations & users
+        "CREATE TABLE IF NOT EXISTS organizations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL DEFAULT 'member', org_id INTEGER REFERENCES organizations(id), onboarding_done BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "ALTER TABLE auth_sessions ADD COLUMN user_id INTEGER REFERENCES users(id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -266,3 +325,5 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass  # column already exists
+
+    _seed_default_user()

@@ -35,11 +35,11 @@ if SQLALCHEMY_AVAILABLE:
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.orm import sessionmaker
 
-    SHARED_DIR = Path(__file__).parent.parent.parent.parent / "shared"
+    SHARED_DIR = Path(__file__).parent.parent.parent / "shared"
     if str(SHARED_DIR) not in sys.path:
         sys.path.insert(0, str(SHARED_DIR))
 
-    from database import Article, Base, Feed, SessionLocal, init_db
+    from database import Article, Base, Feed, Organization, SessionLocal, User, init_db
 
 
 @pytest.fixture()
@@ -158,3 +158,113 @@ class TestNullableColumnsRoundtrip:
         assert fetched.re_document_type == "elicitation"
         assert json.loads(fetched.score_meta_json) == score_meta
         session.close()
+
+
+class TestMultiTenantTables:
+    """Story 1.1 — organizations & users tables + seed user."""
+
+    def test_organizations_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "organizations" in tables
+
+    def test_users_table_exists(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "users" in tables
+
+    def test_users_columns(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("users")}
+        assert {"id", "email", "password_hash", "display_name", "role",
+                "org_id", "onboarding_done", "created_at"}.issubset(columns)
+
+    def test_organizations_columns(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("organizations")}
+        assert {"id", "name", "created_at"}.issubset(columns)
+
+    def test_init_db_twice_new_tables(self, tmp_db):
+        engine, db_module = tmp_db
+        db_module.init_db()
+        db_module.init_db()  # must not raise
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        assert "organizations" in tables
+        assert "users" in tables
+
+    def test_seed_user_created_from_auth_password(self, monkeypatch, tmp_db):
+        engine, db_module = tmp_db
+        monkeypatch.setenv("AUTH_PASSWORD", "test_secret_123")
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        users = session.query(db_module.User).all()
+        assert len(users) == 1
+        assert users[0].id == 1
+        assert users[0].email == "admin@basira.local"
+        assert users[0].role == "admin"
+        assert users[0].onboarding_done is True
+        session.close()
+
+    def test_seed_user_not_created_when_users_exist(self, monkeypatch, tmp_db):
+        engine, db_module = tmp_db
+        monkeypatch.setenv("AUTH_PASSWORD", "test_secret_456")
+        db_module.init_db()
+
+        # Add a second user manually
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        user2 = db_module.User(
+            email="user2@test.com",
+            password_hash="dummy",
+            display_name="User Two",
+        )
+        session.add(user2)
+        session.commit()
+        session.close()
+
+        # Re-init — seed should NOT add another user
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        users = Session().query(db_module.User).all()
+        assert len(users) == 2  # still exactly 2
+
+    def test_multi_tenant_migration_idempotent_with_existing_data(self, tmp_db):
+        """Backward-compat: existing articles survive after adding user tables."""
+        from datetime import datetime
+        engine, db_module = tmp_db
+        db_module.init_db()
+
+        # Insert a pre-existing article
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        feed = db_module.Feed(
+            url="https://existing.com/rss", name="Existing Feed", category="Test"
+        )
+        session.add(feed)
+        session.commit()
+        article = db_module.Article(
+            feed_id=feed.id,
+            title="Existing Article",
+            url="https://existing.com/1",
+            created_at=datetime.utcnow(),
+        )
+        session.add(article)
+        session.commit()
+        session.close()
+
+        # Re-init adds user tables but preserves data
+        db_module.init_db()
+        Session = sessionmaker(bind=engine)
+        articles = Session().query(db_module.Article).all()
+        assert len(articles) == 1
+        assert articles[0].title == "Existing Article"

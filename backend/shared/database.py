@@ -3,9 +3,11 @@ Shared database initialization module for Baṣīra.
 This module provides the SQLAlchemy engine, session factory, and ORM models
 shared across backend services. Each service can import from here.
 """
+import hashlib
 import os
 from datetime import datetime
 
+import bcrypt
 from sqlalchemy import (
     Boolean,
     Column,
@@ -45,6 +47,27 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    display_name = Column(String, nullable=True)
+    role = Column(String, nullable=False, default="member")
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    onboarding_done = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Feed(Base):
@@ -112,6 +135,9 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN re_document_type VARCHAR(24)",
         "ALTER TABLE articles ADD COLUMN contribution_type VARCHAR(24)",
         "ALTER TABLE articles ADD COLUMN paper_meta_json TEXT",
+        # Multi-tenant: organizations & users
+        "CREATE TABLE IF NOT EXISTS organizations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL DEFAULT 'member', org_id INTEGER REFERENCES organizations(id), onboarding_done BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -120,3 +146,35 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass  # column already exists — idempotent
+
+    _seed_default_user()
+
+
+def _seed_default_user():
+    """Auto-create seed user_id=1 when AUTH_PASSWORD is set and users table is empty."""
+    raw = os.getenv("AUTH_PASSWORD", "")
+    if not raw:
+        return
+    try:
+        db = SessionLocal()
+        existing = db.query(User).count()
+        if existing > 0:
+            return
+        pwd_hash = bcrypt.hashpw(
+            hashlib.sha256(raw.encode()).digest(),
+            bcrypt.gensalt(rounds=12),
+        )
+        user = User(
+            email="admin@basira.local",
+            password_hash=pwd_hash.decode(),
+            display_name="Admin",
+            role="admin",
+            onboarding_done=True,
+        )
+        db.add(user)
+        db.commit()
+        print(f"[init_db] Seed user created: id={user.id}")
+    except Exception:
+        pass
+    finally:
+        db.close()
