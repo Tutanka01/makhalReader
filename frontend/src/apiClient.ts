@@ -70,6 +70,16 @@ const apiClient = {
     }).then(handleResponse<T>)
   },
 
+  patch<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    return fetch(url, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+    }).then(handleResponse<T>)
+  },
+
   /** Raw fetch for streaming responses or blob downloads (bypasses JSON parsing). */
   raw(url: string, init?: RequestInit): Promise<Response> {
     return fetch(url, { credentials: 'include', ...init })

@@ -317,7 +317,7 @@ class TrackedAuthor(Base):
     alert_count = Column(Integer, default=0, nullable=False)
     last_checked = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=False)
 
 
 def get_setting(db: Session, key: str, default: str = "") -> str:
@@ -467,6 +467,9 @@ def init_db():
             except Exception:
                 pass  # column already exists
 
+    _seed_default_user()
+
+    with engine.connect() as conn:
         _backfill_article_scores(conn)
         _backfill_subscriptions(conn)
         _backfill_user_config(conn)
@@ -475,8 +478,6 @@ def init_db():
         _backfill_literature_reviews(conn)
         _backfill_novelty_alerts(conn)
         _backfill_tracked_authors(conn)
-
-    _seed_default_user()
 
 
 def _backfill_article_scores(conn):

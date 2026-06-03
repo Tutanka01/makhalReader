@@ -216,7 +216,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       clearInterval(articleCheck)
       clearInterval(previewTimer)
       evtSource.close()
-    }, 45000)
+    }, 120000)
 
     return () => {
       evtSource.close()

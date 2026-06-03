@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import apiClient from '../apiClient'
 import type {
   Cluster,
   ExternalReview,
@@ -51,12 +52,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   fetchClusters: async (windowDays = 14) => {
     set({ clustersLoading: true, clustersError: null })
     try {
-      const r = await fetch(`/api/research/clusters?window_days=${windowDays}`, {
-        credentials: 'include',
-        cache: 'no-store',
-      })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: Cluster[] = await r.json()
+      const data = await apiClient.get<Cluster[]>(`/api/research/clusters?window_days=${windowDays}`)
       set({ clusters: data, clustersLoading: false })
     } catch (err) {
       set({
@@ -74,9 +70,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   fetchProfile: async () => {
     set({ profileLoading: true, profileError: null })
     try {
-      const r = await fetch('/api/research/profile', { credentials: 'include' })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: ResearchProfileEntry[] = await r.json()
+      const data = await apiClient.get<ResearchProfileEntry[]>('/api/research/profile')
       set({ profile: data, profileLoading: false })
     } catch (err) {
       set({
@@ -89,14 +83,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   saveProfile: async (entries: ResearchProfileEntry[]) => {
     set({ profileLoading: true, profileError: null })
     try {
-      const r = await fetch('/api/research/profile', {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),
-      })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: ResearchProfileEntry[] = await r.json()
+      const data = await apiClient.put<ResearchProfileEntry[]>('/api/research/profile', { entries })
       set({ profile: data, profileLoading: false })
     } catch (err) {
       set({
@@ -118,9 +105,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   fetchReviewList: async () => {
     set({ reviewsLoading: true, reviewsError: null })
     try {
-      const r = await fetch('/api/research/reviews', { credentials: 'include' })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: LiteratureReviewSummary[] = await r.json()
+      const data = await apiClient.get<LiteratureReviewSummary[]>('/api/research/reviews')
       set({ reviews: data, reviewsLoading: false })
     } catch (err) {
       set({
@@ -133,9 +118,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   fetchReviewById: async (id: number) => {
     set({ reviewDetailLoading: true, reviewError: null })
     try {
-      const r = await fetch(`/api/research/reviews/${id}`, { credentials: 'include' })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: LiteratureReview = await r.json()
+      const data = await apiClient.get<LiteratureReview>(`/api/research/reviews/${id}`)
       set({ currentReview: data, reviewDetailLoading: false })
     } catch (err) {
       set({
@@ -148,32 +131,17 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   generateReview: async (topic: string, windowDays: number, minRigor: number) => {
     set({ reviewGenerating: true, reviewError: null })
     try {
-      const r = await fetch('/api/research/review', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, window_days: windowDays, min_rigor: minRigor }),
+      const data = await apiClient.post<LiteratureReview>('/api/research/review', {
+        topic,
+        window_days: windowDays,
+        min_rigor: minRigor,
       })
-      const bodyText = await r.text()
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`
-        try {
-          const j = JSON.parse(bodyText)
-          if (typeof j.detail === 'string') msg = j.detail
-          else if (Array.isArray(j.detail)) msg = j.detail.map((x: { msg?: string }) => x.msg || x).join(', ')
-        } catch {
-          if (bodyText) msg = bodyText.slice(0, 200)
-        }
-        throw new Error(msg)
-      }
-      const data = JSON.parse(bodyText) as LiteratureReview
       set({ currentReview: data, reviewGenerating: false })
       // refresh past list
-      const lr = await fetch('/api/research/reviews', { credentials: 'include' })
-      if (lr.ok) {
-        const list: LiteratureReviewSummary[] = await lr.json()
+      try {
+        const list = await apiClient.get<LiteratureReviewSummary[]>('/api/research/reviews')
         set({ reviews: list })
-      }
+      } catch {}
     } catch (err) {
       set({
         reviewError: err instanceof Error ? err.message : 'Generation failed',
@@ -184,11 +152,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
 
   deleteReview: async (id: number) => {
     try {
-      const r = await fetch(`/api/research/reviews/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      await apiClient.del(`/api/research/reviews/${id}`)
       set(state => ({
         reviews: (state.reviews ?? []).filter(rv => rv.id !== id),
         currentReview: state.currentReview?.id === id ? null : state.currentReview,
@@ -206,22 +170,12 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   generateExternalReview: async (topic, maxResults, minYear) => {
     set({ externalReviewGenerating: true, externalReviewError: null, externalReview: null })
     try {
-      const r = await fetch('/api/research/external-review', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, max_results: maxResults, min_year: minYear }),
+      const data = await apiClient.post<ExternalReview>('/api/research/external-review', {
+        topic,
+        max_results: maxResults,
+        min_year: minYear,
       })
-      const bodyText = await r.text()
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`
-        try {
-          const j = JSON.parse(bodyText)
-          if (typeof j.detail === 'string') msg = j.detail
-        } catch { if (bodyText) msg = bodyText.slice(0, 200) }
-        throw new Error(msg)
-      }
-      set({ externalReview: JSON.parse(bodyText) as ExternalReview, externalReviewGenerating: false })
+      set({ externalReview: data, externalReviewGenerating: false })
     } catch (err) {
       set({
         externalReviewError: err instanceof Error ? err.message : 'Generation failed',

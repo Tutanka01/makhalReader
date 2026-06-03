@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { ArticleList } from './components/ArticleList'
 import { ReaderView } from './components/ReaderView'
 import { Sidebar } from './components/Sidebar'
+import type { AppView } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
 import ResearchProfileEditor from './components/ResearchProfileEditor'
@@ -26,7 +28,7 @@ import { useOnlineStatus } from './hooks/useOnlineStatus'
 import type { Feed, UserInfo } from './types'
 
 // ---------------------------------------------------------------------------
-// Auth gate — checks session on load, shows LoginView if unauthenticated
+// Auth gate
 // ---------------------------------------------------------------------------
 
 type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
@@ -43,6 +45,17 @@ function useAuth(): [AuthState, () => void] {
   useEffect(() => { check() }, [check])
 
   return [state, check]
+}
+
+// Map URL path → AppView string (strips leading slash)
+function pathToView(pathname: string): AppView {
+  const segment = pathname.replace(/^\//, '') as AppView
+  const VALID_VIEWS: AppView[] = [
+    'feed', 'digest', 'stats', 'research', 'litreview', 'threats',
+    'authors', 'write', 'conferences', 'highlights', 'bibliography',
+    'feed-manager', 'admin',
+  ]
+  return VALID_VIEWS.includes(segment) ? segment : 'feed'
 }
 
 export default function App() {
@@ -62,13 +75,28 @@ export default function App() {
   }
 
   if (authState === 'unauthenticated') {
-    return <LoginView onLogin={recheckAuth} />
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginView onLogin={recheckAuth} />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    )
   }
 
-  return <AuthenticatedApp onLogout={recheckAuth} />
+  return (
+    <Routes>
+      <Route path="/login" element={<Navigate to="/feed" replace />} />
+      <Route path="/" element={<Navigate to="/feed" replace />} />
+      <Route path="/*" element={<AuthenticatedApp onLogout={recheckAuth} />} />
+    </Routes>
+  )
 }
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const appView = pathToView(location.pathname)
+
   const [feeds, setFeeds] = useState<Feed[]>([])
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
   const [showReader, setShowReader] = useState(false)
@@ -76,7 +104,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'feed-manager' | 'admin'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -88,6 +115,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       .then(u => setCurrentUser(u))
       .catch(() => {})
   }, [])
+
+  const setAppView = useCallback((view: AppView) => {
+    navigate('/' + view)
+    setShowReader(false)
+  }, [navigate])
 
   // ── Onboarding gate ──────────────────────────────────────────────────
   const handleOnboardingComplete = useCallback(() => {
@@ -249,7 +281,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               currentView={appView}
               onViewChange={(v) => {
                 setAppView(v)
-                setShowReader(false)
                 if (window.innerWidth < 1024) setSidebarOpen(false)
               }}
               feeds={feeds}
@@ -262,7 +293,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
         {/* Overlay for mobile sidebar */}
         {sidebarOpen && (
-          <div 
+          <div
             className="fixed inset-0 bg-black/20 z-30 lg:hidden"
             onClick={() => setSidebarOpen(false)}
           />

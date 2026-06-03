@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Baṣīra — Multi-Tenant Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Lora:ital@0;1&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FFFFFF; --bg-secondary:#F7F6F3; --bg-hover:#EFEFED; --bg-active:#E8E7E3; --sidebar-bg:#FBFAF8;
+  --border:#E8E6E1; --border-strong:#D4D0C8;
+  --text:#191919; --text-secondary:#6B6B6B; --text-muted:#9B9B9B;
+  --accent:#2F6FED; --accent-light:#EBF1FD;
+  --success:#0F7B6C; --success-bg:#E3F5F2; --warning:#B45309; --warning-bg:#FEF3C7;
+  --danger:#C0392B; --danger-bg:#FDECEA; --purple:#6B4FBB; --purple-bg:#EDE9FF;
+  --sidebar-w:240px; --header-h:52px; --radius:6px; --radius-lg:10px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 12px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:'DM Sans',system-ui,-apple-system,sans-serif;
+  background:var(--bg); color:var(--text);
+  -webkit-font-smoothing:antialiased; font-size:14px; line-height:1.5;
+}
+.mono{font-family:'DM Mono',ui-monospace,monospace}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;font-size:14px;color:var(--text)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:6px;border:2px solid var(--bg)}
+.hidden{display:none!important}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.fade{animation:fade .25s ease}
+
+/* ---------- shared bits ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--radius);font-weight:500;font-size:13.5px;transition:.12s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#255fd6}
+.btn-ghost{background:transparent;color:var(--text-secondary);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--bg-hover);color:var(--text)}
+.btn-sm{padding:5px 10px;font-size:12.5px}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:16px}
+.field label{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+.field .hint{font-size:12px;color:var(--text-muted);font-weight:400}
+.input{padding:9px 11px;border:1px solid var(--border-strong);border-radius:var(--radius);background:var(--bg);outline:none;transition:.12s}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+textarea.input{resize:vertical;min-height:64px;line-height:1.55}
+
+/* ---------- AUTH ---------- */
+#auth{height:100%;display:flex;align-items:center;justify-content:center;background:radial-gradient(120% 120% at 50% 0%,#fff 0%,var(--bg-secondary) 100%)}
+.auth-card{width:380px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:30px}
+.brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px}
+.logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#2F6FED,#6B4FBB);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px}
+.brand h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.auth-sub{text-align:center;color:var(--text-muted);font-size:13px;margin-bottom:22px}
+.auth-tabs{display:flex;gap:4px;background:var(--bg-secondary);padding:3px;border-radius:8px;margin-bottom:20px}
+.auth-tabs button{flex:1;padding:7px;border-radius:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
+.auth-tabs button.on{background:var(--bg);color:var(--text);box-shadow:var(--shadow)}
+
+/* ---------- ONBOARDING ---------- */
+#onboard{height:100%;display:flex;flex-direction:column;background:var(--bg-secondary)}
+.ob-top{height:56px;border-bottom:1px solid var(--border);background:var(--bg);display:flex;align-items:center;padding:0 22px;gap:10px;flex-shrink:0}
+.steps{display:flex;align-items:center;gap:6px;margin-left:auto}
+.step{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-muted);font-weight:500}
+.step .dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--bg-active);color:var(--text-secondary)}
+.step.on .dot{background:var(--accent);color:#fff}
+.step.on{color:var(--text)}
+.step.done .dot{background:var(--success);color:#fff}
+.step .bar{width:24px;height:2px;background:var(--border-strong)}
+.ob-body{flex:1;overflow-y:auto;display:flex;justify-content:center;padding:36px 20px}
+.ob-panel{width:680px;max-width:100%}
+.ob-panel h2{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.ob-panel .lead{color:var(--text-secondary);margin-bottom:26px}
+.ob-foot{display:flex;justify-content:space-between;margin-top:30px;padding-top:20px;border-top:1px solid var(--border)}
+
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:12px}
+.tpl{border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:15px;cursor:pointer;transition:.12s;background:var(--bg)}
+.tpl:hover{border-color:var(--accent);box-shadow:var(--shadow)}
+.tpl.on{border-color:var(--accent);background:var(--accent-light)}
+.tpl .t{font-weight:600;margin-bottom:4px}
+.tpl .d{font-size:12px;color:var(--text-muted);line-height:1.4}
+
+.feed-pick{display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);margin-bottom:7px}
+.feed-pick .meta{flex:1}
+.feed-pick .nm{font-weight:600;font-size:13.5px}
+.feed-pick .cat{font-size:11.5px;color:var(--text-muted)}
+.toggle{width:38px;height:22px;border-radius:11px;background:var(--bg-active);position:relative;transition:.15s;flex-shrink:0;cursor:pointer}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:var(--shadow);transition:.15s}
+.toggle.on{background:var(--accent)}
+.toggle.on::after{left:18px}
+.dot7{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+.run-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary);padding:7px 0}
+.run-row .ic{width:18px;height:18px;border-radius:50%;border:2px solid var(--border-strong);flex-shrink:0}
+.run-row.done .ic{border-color:var(--success);background:var(--success)}
+.progress{height:6px;border-radius:4px;background:var(--bg-active);overflow:hidden;margin:14px 0}
+.progress>div{height:100%;background:var(--accent);width:0;transition:width .3s}
+
+/* ---------- APP SHELL ---------- */
+#app{height:100%;display:flex}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;overflow-y:auto}
+.sb-head{height:var(--header-h);padding:0 14px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-head .logo{width:24px;height:24px;border-radius:6px;font-size:13px}
+.sb-head .nm{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.sb-sec{padding:14px 8px 2px}
+.sb-label{font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase;padding:0 8px 6px}
+.nav{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);cursor:pointer;font-size:13.5px;color:var(--text-secondary);margin-bottom:1px;transition:.1s}
+.nav:hover{background:var(--bg-hover);color:var(--text)}
+.nav.on{background:var(--bg-active);color:var(--text);font-weight:500}
+.nav svg{width:16px;height:16px;opacity:.6;flex-shrink:0}
+.nav.on svg{opacity:.9}
+.nav .ct{margin-left:auto;font-size:11px;color:var(--text-muted);background:var(--bg-active);border-radius:9px;padding:0 7px;font-weight:600}
+.nav .red{width:7px;height:7px;border-radius:50%;background:var(--danger);margin-left:auto}
+.sb-spacer{flex:1}
+.sb-foot{padding:8px;border-top:1px solid var(--border)}
+
+.main{flex:1;display:flex;flex-direction:column;height:100%;overflow:hidden}
+.topbar{height:var(--header-h);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 18px;flex-shrink:0;background:var(--bg)}
+.topbar .title{font-size:15px;font-weight:600}
+.search{flex:1;max-width:360px;margin-left:8px;position:relative}
+.search input{width:100%;padding:7px 11px 7px 30px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-secondary);outline:none;font-size:13px}
+.search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text-muted)}
+.usermenu{margin-left:auto;display:flex;align-items:center;gap:9px;cursor:pointer;padding:4px 8px;border-radius:var(--radius)}
+.usermenu:hover{background:var(--bg-hover)}
+.avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11.5px;flex-shrink:0}
+.content{flex:1;overflow-y:auto;padding:24px 28px;background:var(--bg)}
+.canvas{max-width:760px;margin:0 auto}
+.canvas.wide{max-width:980px}
+
+/* article card */
+.acard{padding:16px 0;border-bottom:1px solid var(--border)}
+.acard .top{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap}
+.acard h3{font-size:16px;font-weight:600;letter-spacing:-.01em;line-height:1.3;margin:2px 0 6px;cursor:pointer}
+.acard h3:hover{color:var(--accent)}
+.acard .src{font-size:12px;color:var(--text-muted)}
+.scorebar{display:flex;align-items:center;gap:9px;margin:9px 0 11px}
+.scorebar .track{height:4px;flex:1;border-radius:3px;background:var(--bg-active);overflow:hidden}
+.scorebar .track>div{height:100%;border-radius:3px}
+.scorebar .val{font-size:13px;font-weight:700;width:30px;text-align:right}
+.bullets{margin:8px 0 10px;padding-left:2px}
+.bullets li{list-style:none;font-size:13.5px;color:var(--text-secondary);padding-left:16px;position:relative;margin-bottom:4px}
+.bullets li::before{content:"";position:absolute;left:3px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--text-muted)}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{font-size:11.5px;color:var(--text-secondary);background:var(--bg-secondary);border:1px solid var(--border);padding:2px 8px;border-radius:12px}
+.acard .actions{display:flex;gap:6px;margin-top:10px}
+.icbtn{width:30px;height:30px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:1px solid var(--border)}
+.icbtn:hover{background:var(--bg-hover);color:var(--text)}
+.icbtn.on{color:var(--accent);border-color:var(--accent);background:var(--accent-light)}
+
+.card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--bg);padding:18px;margin-bottom:16px}
+.card h4{font-size:14px;font-weight:600;margin-bottom:3px}
+.card .sub{font-size:12.5px;color:var(--text-muted);margin-bottom:14px}
+.cluster{border:1px solid var(--border);border-radius:var(--radius);padding:12px 13px;margin-bottom:9px}
+.cluster .row1{display:flex;align-items:center;gap:8px}
+.cluster input.cn{flex:1;border:none;font-weight:600;font-size:14px;outline:none;background:transparent}
+.reward{padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;text-transform:uppercase;border:none;cursor:pointer}
+.rw-critical{background:var(--success-bg);color:var(--success)}
+.rw-high{background:var(--accent-light);color:var(--accent)}
+.rw-tangential{background:var(--warning-bg);color:var(--warning)}
+.rw-noise{background:var(--bg-active);color:var(--text-muted)}
+.cluster .d{font-size:12.5px;color:var(--text-secondary);margin-top:6px}
+
+.banner{background:var(--accent-light);border:1px solid #cfe0fc;border-radius:var(--radius-lg);padding:13px 15px;display:flex;gap:11px;align-items:flex-start;margin-bottom:18px;font-size:13px;color:#1c4fbf}
+.banner svg{flex-shrink:0;margin-top:1px}
+
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+table.tbl th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg-secondary)}
+table.tbl td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.pill{font-size:11px;font-weight:600;padding:2px 9px;border-radius:11px}
+
+.promptbox{background:#1c1c1e;color:#e8e8ea;border-radius:var(--radius-lg);padding:16px;font-family:'DM Mono',monospace;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-x:auto}
+.promptbox .hl{color:#7eb0ff;font-weight:500}
+.promptbox .hg{color:#7bdcb5}
+
+.empty{text-align:center;color:var(--text-muted);padding:60px 20px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;box-shadow:var(--shadow-md);opacity:0;transition:.25s;pointer-events:none;z-index:50}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ============ AUTH ============ -->
+<div id="auth">
+  <div class="auth-card fade">
+    <div class="brand"><div class="logo">بَ</div><h1>Baṣīra</h1></div>
+    <div class="auth-sub">Intelligent literature monitoring — scored to your thesis</div>
+    <div class="auth-tabs">
+      <button id="tabLogin" class="on" onclick="setAuthMode('login')">Sign in</button>
+      <button id="tabReg" onclick="setAuthMode('register')">Register</button>
+    </div>
+    <div id="regName" class="field hidden">
+      <label>Display name</label>
+      <input class="input" id="iName" placeholder="e.g. Rachid Fall" value="Rachid Fall">
+    </div>
+    <div class="field">
+      <label>Email</label>
+      <input class="input" id="iEmail" placeholder="you@university.edu" value="rachid@univ-pau.fr">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input class="input" id="iPass" type="password" placeholder="••••••••" value="researchpwd">
+    </div>
+    <div id="regInvite" class="field hidden">
+      <label>Invite code <span class="hint">— optional, joins a lab organization</span></label>
+      <input class="input" id="iInvite" placeholder="e.g. EVA-LAB-2026">
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px" id="authBtn" onclick="doAuth()">Sign in</button>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted)">
+      Demo prototype · FR-MT-2, FR-MT-4, FR-MT-5
+    </div>
+  </div>
+</div>
+
+<!-- ============ ONBOARDING ============ -->
+<div id="onboard" class="hidden">
+  <div class="ob-top">
+    <div class="logo" style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#2F6FED,#6B4FBB);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">بَ</div>
+    <strong style="font-size:15px">Welcome to Baṣīra</strong>
+    <div class="steps" id="obSteps"></div>
+  </div>
+  <div class="ob-body"><div class="ob-panel fade" id="obPanel"></div></div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="sb-head"><div class="logo" style="background:linear-gradient(135deg,#2F6FED,#6B4FBB);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">بَ</div><span class="nm">Baṣīra</span></div>
+    <div class="sb-sec">
+      <div class="sb-label">Principal</div>
+      <div id="navFeed" class="nav on" onclick="go('feed')"><span class="ic-slot" data-icon="rss"></span><span>Feed</span><span class="ct" id="ctFeed">0</span></div>
+      <div class="nav" onclick="go('bookmarks')"><span class="ic-slot" data-icon="bookmark"></span><span>Bookmarks</span><span class="ct" id="ctBm">0</span></div>
+      <div class="nav" onclick="go('digest')"><span class="ic-slot" data-icon="sparkles"></span><span>Digest</span></div>
+      <div class="nav" onclick="go('litreview')"><span class="ic-slot" data-icon="book"></span><span>Lit Review</span></div>
+      <div class="nav" onclick="go('clusters')"><span class="ic-slot" data-icon="network"></span><span>Clusters</span></div>
+    </div>
+    <div class="sb-sec">
+      <div class="sb-label">Research</div>
+      <div class="nav" onclick="go('highlights')"><span class="ic-slot" data-icon="highlight"></span><span>Highlights</span></div>
+      <div class="nav" onclick="go('threats')"><span class="ic-slot" data-icon="alert"></span><span>Novelty Alerts</span><span class="red" id="dotThreat"></span></div>
+      <div class="nav" onclick="go('authors')"><span class="ic-slot" data-icon="users"></span><span>Author Radar</span></div>
+    </div>
+    <div class="sb-sec" id="catSec">
+      <div class="sb-label">Sources</div>
+      <div id="catList"></div>
+    </div>
+    <div class="sb-spacer"></div>
+    <div class="sb-foot">
+      <div class="nav" onclick="go('config')"><span class="ic-slot" data-icon="settings"></span><span>Research Config</span></div>
+      <div class="nav hidden" id="navAdmin" onclick="go('admin')"><span class="ic-slot" data-icon="shield"></span><span>Lab Admin</span></div>
+      <div class="nav" onclick="logout()"><span class="ic-slot" data-icon="logout"></span><span>Sign out</span></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <span class="title" id="viewTitle">Feed</span>
+      <div class="search"><span class="ic-slot" data-icon="search"></span><input placeholder="Search articles…"></div>
+      <div class="usermenu" onclick="switchUser()" title="Click to switch tenant (demo isolation)">
+        <div class="avatar" id="tbAvatar">RF</div>
+        <div style="line-height:1.15"><div id="tbName" style="font-size:13px;font-weight:600">Rachid Fall</div><div id="tbRole" style="font-size:11px;color:var(--text-muted)">Researcher</div></div>
+        <span class="ic-slot" data-icon="swap"></span>
+      </div>
+    </div>
+    <div class="content"><div id="view" class="canvas"></div></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================ ICONS ============================ */
+function ICON(n){
+  const p={
+    rss:'<path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>',
+    bookmark:'<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    sparkles:'<path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/>',
+    book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+    network:'<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4m0 0l-5.5 8M12 11l5.5 8"/>',
+    highlight:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    alert:'<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1A4 4 0 0 1 16 11"/>',
+    settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 0 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 0 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H23a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
+    search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    swap:'<path d="M7 10l-4 4 4 4M3 14h14M17 14l4-4-4-4M21 10H7" transform="scale(0.7) translate(5 5)"/>',
+    star:'<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/>',
+    check:'<path d="M20 6 9 17l-5-5"/>'
+  };
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(p[n]||'')+'</svg>';
+}
+
+/* ============================ DATA ============================ */
+const TEMPLATES={
+  'NLP/AI':[
+    {name:'LLM Reasoning & Agents',reward:'critical',weight:4,desc:'Chain-of-thought, tool use, multi-agent orchestration, GraphRAG.'},
+    {name:'Requirement Extraction w/ LLMs',reward:'high',weight:3.5,desc:'NL→formal requirements, elicitation, traceability.',section:'P2 Method'},
+    {name:'Benchmarks & Evaluation',reward:'high',weight:2.5,desc:'New datasets, eval protocols, leaderboards.'},
+    {name:'General DevOps / Infra',reward:'noise',weight:.5,desc:'K8s, CI/CD, incident retros — deprioritize.'}
+  ],
+  'Software Eng.':[
+    {name:'AI-MBSE & Model Transformation',reward:'critical',weight:4,desc:'Arcadia/Capella, SysML, model-to-model.',section:'P1 Construction'},
+    {name:'Systems-of-Systems Interop',reward:'high',weight:3,desc:'SoS architecture, interoperability, emergence.'},
+    {name:'Empirical SE Studies',reward:'tangential',weight:1.5,desc:'Mining repos, developer surveys.'}
+  ],
+  'Robotics':[
+    {name:'Embodied Policy Learning',reward:'critical',weight:4,desc:'RL/IL for manipulation, sim-to-real.'},
+    {name:'Perception & SLAM',reward:'high',weight:3,desc:'Mapping, localization, sensor fusion.'},
+    {name:'Safety & Verification',reward:'high',weight:2.5,desc:'Formal guarantees for autonomous systems.'}
+  ],
+  'Computer Vision':[
+    {name:'Generative Vision',reward:'critical',weight:4,desc:'Diffusion, video gen, 3D synthesis.'},
+    {name:'Open-Vocab Detection',reward:'high',weight:3,desc:'VLMs, grounding, segmentation.'},
+    {name:'Datasets & Benchmarks',reward:'tangential',weight:1.5,desc:'New CV corpora.'}
+  ],
+  'General CS':[
+    {name:'Core Topic A',reward:'high',weight:3,desc:'Your primary research area.'},
+    {name:'Adjacent Methods',reward:'tangential',weight:1.5,desc:'Cross-disciplinary techniques.'},
+    {name:'Off-topic',reward:'noise',weight:.5,desc:'Deprioritize.'}
+  ]
+};
+
+const CATALOG=[
+  {id:1,name:'arXiv cs.AI',cat:'AI',color:'#2F6FED'},
+  {id:2,name:'arXiv cs.SE',cat:'Software Eng.',color:'#0F7B6C'},
+  {id:3,name:'arXiv cs.RO',cat:'Robotics',color:'#B45309'},
+  {id:4,name:'Semantic Scholar — RE',cat:'AI',color:'#2F6FED'},
+  {id:5,name:'ACL Anthology',cat:'NLP',color:'#6B4FBB'},
+  {id:6,name:'OpenReview ICLR',cat:'AI',color:'#2F6FED'},
+  {id:7,name:'IEEE TSE',cat:'Software Eng.',color:'#0F7B6C'},
+  {id:8,name:'The Gradient (blog)',cat:'AI',color:'#2F6FED'}
+];
+
+// Shared corpus — same articles, scored differently per tenant (fan-out demo)
+const CORPUS=[
+  {id:101,title:'GraphRAG for Requirements Traceability in Model-Based Systems Engineering',src:'arXiv cs.SE',cat:'Software Eng.',time:'2h ago',contrib:'method',redoc:'extraction',
+   bullets:['Builds a property graph over Capella models to recover NL→requirement links.','Beats dense-retrieval baselines on a new Arcadia traceability set.','Open-sources an MBSE evaluation corpus.'],tags:['GraphRAG','MBSE','traceability'],
+   scores:{rachid:9.2,amina:6.1,lab:8.4}},
+  {id:102,title:'A Survey of LLM-Based Requirement Elicitation: Methods, Datasets, Open Problems',src:'Semantic Scholar — RE',cat:'AI',time:'4h ago',contrib:'survey',redoc:'elicitation',
+   bullets:['Taxonomy of 60+ elicitation approaches across 2019–2026.','Identifies evaluation as the field\'s central gap.'],tags:['survey','elicitation','requirements'],
+   scores:{rachid:8.6,amina:7.4,lab:8.0}},
+  {id:103,title:'Diffusion Policies for Contact-Rich Robotic Assembly',src:'arXiv cs.RO',cat:'Robotics',time:'6h ago',contrib:'method',redoc:'none',
+   bullets:['Diffusion-based action heads for high-precision insertion.','Strong sim-to-real transfer on a peg-in-hole suite.'],tags:['robotics','diffusion','manipulation'],
+   scores:{rachid:3.4,amina:9.0,lab:5.2}},
+  {id:104,title:'Zero-Downtime Kubernetes Migrations: A Production Retrospective',src:'The Gradient (blog)',cat:'AI',time:'8h ago',contrib:'incident',redoc:'none',
+   bullets:['War story of a 400-node cluster migration.','Checklist for blue-green at scale.'],tags:['kubernetes','devops','infra'],
+   scores:{rachid:2.1,amina:1.8,lab:2.0}},
+  {id:105,title:'Benchmarking Open-Vocabulary Detection under Distribution Shift',src:'OpenReview ICLR',cat:'AI',time:'11h ago',contrib:'benchmark',redoc:'none',
+   bullets:['New OOD split for open-vocab detectors.','VLM grounding degrades sharply under shift.'],tags:['CV','benchmark','VLM'],
+   scores:{rachid:5.0,amina:7.8,lab:6.3}},
+  {id:106,title:'Formal Verification of Emergent Behavior in Systems-of-Systems',src:'IEEE TSE',cat:'Software Eng.',time:'1d ago',contrib:'theory',redoc:'method',
+   bullets:['Compositional model-checking for SoS interoperability.','Case study on avionics integration.'],tags:['SoS','verification','formal'],
+   scores:{rachid:7.9,amina:4.2,lab:7.1}}
+];
+
+const USERS={
+  rachid:{key:'rachid',name:'Rachid Fall',role:'Researcher',avatar:'RF',color:'#2F6FED',org:null,admin:false,
+    thesis:{title:'AI-Driven Requirements Engineering for Model-Based Systems',question:'How can LLMs extract and trace formal requirements from MBSE artifacts (Arcadia/Capella)?',contribution:'A GraphRAG pipeline (ARISE) that converts MBSE models into a traceable requirement knowledge graph.'},
+    clusters:JSON.parse(JSON.stringify([TEMPLATES['Software Eng.'][0],TEMPLATES['NLP/AI'][1],TEMPLATES['Software Eng.'][1],TEMPLATES['NLP/AI'][3]])),
+    venues:['ICSE','RE','MODELS','ACL'],subs:[1,2,4,5,6,7],bookmarks:[101],highlights:2,collection:'articles_u1'},
+  amina:{key:'amina',name:'Amina Cherif',role:'Researcher · EVA Lab',avatar:'AC',color:'#0F7B6C',org:'EVA Lab',admin:false,
+    thesis:{title:'Sim-to-Real Transfer for Contact-Rich Manipulation',question:'How do diffusion policies generalize from simulation to physical assembly tasks?',contribution:'A curriculum that closes the sim-to-real gap for high-precision insertion.'},
+    clusters:JSON.parse(JSON.stringify(TEMPLATES['Robotics'])),
+    venues:['CoRL','RSS','ICRA'],subs:[1,3,6],bookmarks:[103],highlights:5,collection:'articles_u4'},
+  lab:{key:'lab',name:'Pr. Diallo',role:'PI · EVA Lab Admin',avatar:'PD',color:'#6B4FBB',org:'EVA Lab',admin:true,
+    thesis:{title:'(Lab overview profile)',question:'Cross-cutting AI + systems engineering monitoring for the group.',contribution:'Shared catalog curation; personal scoring lens for own reading.'},
+    clusters:JSON.parse(JSON.stringify([TEMPLATES['Software Eng.'][0],TEMPLATES['NLP/AI'][0],TEMPLATES['Robotics'][2]])),
+    venues:['ICSE','NeurIPS'],subs:[1,2,3,4,6,7],bookmarks:[],highlights:0,collection:'articles_u7'}
+};
+
+const LAB_MEMBERS=[
+  {name:'Pr. Diallo',email:'diallo@univ-pau.fr',role:'admin',onboarded:true,thesis:'Lab overview profile'},
+  {name:'Rachid Fall',email:'rachid@univ-pau.fr',role:'researcher',onboarded:true,thesis:'AI-Driven Requirements Engineering'},
+  {name:'Amina Cherif',email:'amina@univ-pau.fr',role:'researcher',onboarded:true,thesis:'Sim-to-Real Manipulation'},
+  {name:'Yacine B.',email:'yacine@univ-pau.fr',role:'researcher',onboarded:true,thesis:'Neuro-symbolic planning'},
+  {name:'Léa M.',email:'lea@univ-pau.fr',role:'researcher',onboarded:false,thesis:'— (invite sent)'}
+];
+
+/* ============================ STATE ============================ */
+let authMode='login';
+let current='rachid';
+let view='feed';
+let read=new Set();
+let bookmarks=new Set([101]);
+const ob={step:1,template:null,thesisTitle:'',thesisQ:'',subs:new Set()};
+
+/* ============================ AUTH ============================ */
+function setAuthMode(m){
+  authMode=m;
+  document.getElementById('tabLogin').classList.toggle('on',m==='login');
+  document.getElementById('tabReg').classList.toggle('on',m==='register');
+  document.getElementById('regName').classList.toggle('hidden',m!=='register');
+  document.getElementById('regInvite').classList.toggle('hidden',m!=='register');
+  document.getElementById('authBtn').textContent=m==='login'?'Sign in':'Create account';
+}
+function doAuth(){
+  if(authMode==='register'){startOnboarding();}
+  else{ // existing seed user → straight to app
+    current='rachid'; bookmarks=new Set(USERS.rachid.bookmarks); read=new Set();
+    show('app'); render();
+    toast('Signed in — backward-compatible seed user (user_id=1)');
+  }
+}
+
+/* ============================ ONBOARDING ============================ */
+function startOnboarding(){ob.step=1;ob.template=null;ob.thesisTitle='';ob.thesisQ='';ob.subs=new Set([1,2]);show('onboard');renderOb();}
+const OB_STEPS=['Thesis','Clusters','Feeds','First run'];
+function renderObSteps(){
+  document.getElementById('obSteps').innerHTML=OB_STEPS.map((s,i)=>{
+    const n=i+1, cls=n<ob.step?'done':n===ob.step?'on':'';
+    return `<div class="step ${cls}"><span class="dot">${n<ob.step?'✓':n}</span>${s}</div>`+(i<3?'<span class="bar"></span>':'');
+  }).join('');
+}
+function renderOb(){
+  renderObSteps();
+  const p=document.getElementById('obPanel');
+  if(ob.step===1){
+    p.innerHTML=`<h2>Set up your thesis</h2><div class="lead">Baṣīra scores every paper against <em>your</em> research — not a generic rubric. <span class="mono" style="font-size:12px;color:var(--text-muted)">FR-MT-49 · Step 1</span></div>
+      <div class="field"><label>Thesis title <span class="hint">required</span></label><input class="input" id="obTitle" value="${ob.thesisTitle}" placeholder="e.g. AI-Driven Requirements Engineering for MBSE"></div>
+      <div class="field"><label>Research question <span class="hint">optional</span></label><textarea class="input" id="obQ" placeholder="What core question drives your reading?">${ob.thesisQ}</textarea></div>
+      <div class="ob-foot"><span></span><button class="btn btn-primary" onclick="obNext()">Continue →</button></div>`;
+  }else if(ob.step===2){
+    p.innerHTML=`<h2>Choose your scoring clusters</h2><div class="lead">Pick a domain template, then tune it. Clusters define what scores high — and which double as thesis sections. <span class="mono" style="font-size:12px;color:var(--text-muted)">FR-MT-50 · Step 2</span></div>
+      <div class="tpl-grid">${Object.keys(TEMPLATES).map(t=>`<div class="tpl ${ob.template===t?'on':''}" onclick="pickTpl('${t}')"><div class="t">${t}</div><div class="d">${TEMPLATES[t].length} reward clusters</div></div>`).join('')}</div>
+      <div id="tplPreview" style="margin-top:18px">${ob.template?clusterPreview(TEMPLATES[ob.template]):''}</div>
+      <div class="ob-foot"><button class="btn btn-ghost" onclick="obBack()">← Back</button><button class="btn btn-primary" onclick="obNext()" ${ob.template?'':'disabled style=opacity:.5'}>Continue →</button></div>`;
+  }else if(ob.step===3){
+    p.innerHTML=`<h2>Subscribe to feeds</h2><div class="lead">The lab catalog is shared and deduplicated — pick what you want scored for <em>you</em>. <span class="mono" style="font-size:12px;color:var(--text-muted)">FR-MT-13/15 · Step 3</span></div>
+      ${CATALOG.map(f=>`<div class="feed-pick"><span class="dot7" style="background:${f.color}"></span><div class="meta"><div class="nm">${f.name}</div><div class="cat">${f.cat}</div></div><div class="toggle ${ob.subs.has(f.id)?'on':''}" onclick="toggleSub(${f.id})"></div></div>`).join('')}
+      <div class="ob-foot"><button class="btn btn-ghost" onclick="obBack()">← Back</button><button class="btn btn-primary" onclick="obNext()" ${ob.subs.size?'':'disabled style=opacity:.5'}>Run first poll →</button></div>`;
+  }else{
+    p.innerHTML=`<h2>Scoring your first articles…</h2><div class="lead">Triggering an immediate poll, building your dynamic prompt, and scoring. <span class="mono" style="font-size:12px;color:var(--text-muted)">FR-MT-51 · NFR-T3 · &lt; 8 min</span></div>
+      <div class="card" style="margin-top:4px"><div id="runRows"></div><div class="progress"><div id="runBar"></div></div><div id="runPreview"></div></div>
+      <div class="ob-foot" id="runFoot"><span></span></div>`;
+    runFirstPoll();
+  }
+}
+function clusterPreview(cs){return `<div class="card" style="margin:0"><div class="sub" style="margin-bottom:10px">Preview — edit anytime in Research Config</div>${cs.map(c=>`<div class="cluster" style="margin-bottom:7px"><div class="row1"><span style="flex:1;font-weight:600">${c.name}</span><span class="reward rw-${c.reward}">${c.reward}</span></div><div class="d">${c.desc}${c.section?` · <strong>thesis section: ${c.section}</strong>`:''}</div></div>`).join('')}</div>`;}
+function pickTpl(t){ob.template=t;renderOb();}
+function toggleSub(id){ob.subs.has(id)?ob.subs.delete(id):ob.subs.add(id);renderOb();}
+function obNext(){
+  if(ob.step===1){const t=document.getElementById('obTitle').value.trim();if(!t){toast('Thesis title is required');return;}ob.thesisTitle=t;ob.thesisQ=document.getElementById('obQ').value.trim();}
+  ob.step++;renderOb();
+}
+function obBack(){ob.step--;renderOb();}
+function runFirstPoll(){
+  const rows=['Connecting to '+ob.subs.size+' subscribed feeds','Fetching new articles (shared corpus)','Building UserScoringContext from your config','Rendering dynamic prompt → caching (SHA-256)','Scoring into article_scores (user-scoped)'];
+  const rr=document.getElementById('runRows');
+  rr.innerHTML=rows.map((r,i)=>`<div class="run-row" id="rr${i}"><span class="ic"></span><span>${r}</span></div>`).join('');
+  let i=0;const bar=document.getElementById('runBar');
+  const tick=()=>{
+    if(i<rows.length){document.getElementById('rr'+i).classList.add('done');document.getElementById('rr'+i).querySelector('.ic').innerHTML='<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin:1px"><path d="M20 6 9 17l-5-5"/></svg>';bar.style.width=Math.round((i+1)/rows.length*100)+'%';i++;setTimeout(tick,520);}
+    else{showPreview();}
+  };
+  setTimeout(tick,400);
+}
+function showPreview(){
+  // build a temp tenant from onboarding choices, score top 3 from corpus by cluster keyword overlap
+  const top=[...CORPUS].sort((a,b)=>b.scores.rachid-a.scores.rachid).slice(0,3);
+  document.getElementById('runPreview').innerHTML=`<div style="font-weight:600;margin:14px 0 8px">Your top 3 scored articles</div>`+top.map(a=>{
+    const s=a.scores.rachid;return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)"><span class="val" style="color:${scoreColor(s)};font-weight:700;width:34px">${s.toFixed(1)}</span><div style="flex:1"><div style="font-weight:600;font-size:13.5px">${a.title}</div><div class="src">${a.src} · ${a.contrib}</div></div></div>`;
+  }).join('');
+  document.getElementById('runFoot').innerHTML=`<span style="font-size:12.5px;color:var(--success);font-weight:600">✓ First articles scored in 0:42 — well under the 8-min target</span><button class="btn btn-primary" onclick="finishOnboarding()">Finish — go to feed →</button>`;
+}
+function finishOnboarding(){
+  // commit onboarding into the rachid tenant for the demo
+  USERS.rachid.thesis.title=ob.thesisTitle||USERS.rachid.thesis.title;
+  USERS.rachid.thesis.question=ob.thesisQ||USERS.rachid.thesis.question;
+  if(ob.template)USERS.rachid.clusters=JSON.parse(JSON.stringify(TEMPLATES[ob.template]));
+  USERS.rachid.subs=[...ob.subs];
+  current='rachid';bookmarks=new Set(USERS.rachid.bookmarks);read=new Set();
+  show('app');render();toast('Onboarding complete · onboarding_done = 1 (FR-MT-52)');
+}
+
+/* ============================ APP ============================ */
+function show(screen){['auth','onboard','app'].forEach(s=>document.getElementById(s).classList.toggle('hidden',s!==screen));}
+function logout(){show('auth');setAuthMode('login');}
+function switchUser(){
+  const order=['rachid','amina','lab'];current=order[(order.indexOf(current)+1)%order.length];
+  const u=USERS[current];bookmarks=new Set(u.bookmarks);read=new Set();
+  render();toast('Switched tenant → '+u.name+' · isolated data ('+u.collection+')');
+}
+function go(v){view=v;render();}
+
+const VIEW_TITLES={feed:'Feed',bookmarks:'Bookmarks',digest:'Digest',litreview:'Lit Review',clusters:'Clusters',highlights:'Highlights',threats:'Novelty Alerts',authors:'Author Radar',config:'Research Config',admin:'Lab Admin'};
+
+function render(){
+  const u=USERS[current];
+  // topbar identity (FR-MT-46)
+  document.getElementById('tbAvatar').textContent=u.avatar;document.getElementById('tbAvatar').style.background=u.color;
+  document.getElementById('tbName').textContent=u.name;document.getElementById('tbRole').textContent=u.role;
+  document.getElementById('navAdmin').classList.toggle('hidden',!u.admin);
+  document.getElementById('viewTitle').textContent=VIEW_TITLES[view]||'Feed';
+  // nav active
+  document.querySelectorAll('.sidebar .nav').forEach(n=>n.classList.remove('on'));
+  // categories from this user's subscriptions
+  const subs=CATALOG.filter(f=>u.subs.includes(f.id));
+  const cats=[...new Set(subs.map(f=>f.cat))];
+  document.getElementById('catList').innerHTML=cats.map(c=>{
+    const col=subs.find(f=>f.cat===c).color;const n=visibleArticles().filter(a=>a.cat===c).length;
+    return `<div class="nav" onclick="go('feed')"><span class="dot7" style="background:${col};margin:0 2px"></span><span>${c}</span><span class="ct">${n}</span></div>`;
+  }).join('');
+  // counts
+  document.getElementById('ctFeed').textContent=visibleArticles().filter(a=>!read.has(a.id)).length;
+  document.getElementById('ctBm').textContent=bookmarks.size;
+  document.getElementById('dotThreat').style.display=current==='rachid'?'block':'none';
+
+  const el=document.getElementById('view');el.className='canvas'+((['config','admin','clusters'].includes(view))?' wide':'');
+  if(view==='feed'||view==='bookmarks')el.innerHTML=renderFeed(view==='bookmarks');
+  else if(view==='config')el.innerHTML=renderConfig();
+  else if(view==='admin')el.innerHTML=renderAdmin();
+  else if(view==='clusters')el.innerHTML=renderClusters();
+  else el.innerHTML=`<div class="empty">${VIEW_TITLES[view]} — prototype stub.<br><span style="font-size:12.5px">Per-user & isolated for ${u.name}.</span></div>`;
+}
+
+function visibleArticles(){
+  const u=USERS[current];const subNames=CATALOG.filter(f=>u.subs.includes(f.id)).map(f=>f.name);
+  return CORPUS.filter(a=>subNames.includes(a.src));
+}
+function scoreColor(s){return s>=8?'var(--success)':s>=5?'var(--warning)':'var(--danger)';}
+const CONTRIB_COLORS={method:['var(--accent-light)','var(--accent)'],survey:['var(--purple-bg)','var(--purple)'],benchmark:['var(--warning-bg)','var(--warning)'],theory:['var(--success-bg)','var(--success)'],incident:['var(--bg-active)','var(--text-muted)']};
+const REDOC_COLORS={extraction:['var(--success-bg)','var(--success)'],elicitation:['var(--accent-light)','var(--accent)'],method:['var(--purple-bg)','var(--purple)']};
+
+function renderFeed(bmOnly){
+  const u=USERS[current];
+  let arts=visibleArticles();
+  if(bmOnly)arts=arts.filter(a=>bookmarks.has(a.id));
+  arts=arts.map(a=>({...a,score:a.scores[current]})).sort((x,y)=>y.score-x.score);
+  const banner=`<div class="banner">${ICON('shield')}<div><strong>Tenant-isolated view.</strong> These ${arts.length} articles are scored for <strong>${u.name}</strong> against their own clusters (collection <span class="mono">${u.collection}</span>). Click your avatar (top-right) to switch tenant and watch the same papers re-rank. <span class="mono" style="font-size:11px">FR-MT-8 · NFR-T1</span></div></div>`;
+  if(!arts.length)return banner+`<div class="empty">No articles${bmOnly?' bookmarked':''} yet.</div>`;
+  return banner+arts.map(a=>{
+    const cc=CONTRIB_COLORS[a.contrib]||['var(--bg-active)','var(--text-muted)'];
+    const rc=a.redoc!=='none'?REDOC_COLORS[a.redoc]:null;
+    const pct=Math.max(0,Math.min(100,a.score*10));
+    const isBm=bookmarks.has(a.id),isRead=read.has(a.id);
+    return `<div class="acard fade" style="${isRead?'opacity:.55':''}">
+      <div class="top">
+        <span class="badge" style="background:${cc[0]};color:${cc[1]}">${a.contrib}</span>
+        ${rc?`<span class="badge" style="background:${rc[0]};color:${rc[1]}">RE: ${a.redoc}</span>`:''}
+        <span class="src">${a.src} · ${a.time}</span>
+      </div>
+      <h3 onclick="markRead(${a.id})">${a.title}</h3>
+      <div class="scorebar"><div class="track"><div style="width:${pct}%;background:${scoreColor(a.score)}"></div></div><span class="val" style="color:${scoreColor(a.score)}">${a.score.toFixed(1)}</span></div>
+      <ul class="bullets">${a.bullets.map(b=>`<li>${b}</li>`).join('')}</ul>
+      <div class="tags">${a.tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+      <div class="actions">
+        <button class="icbtn ${isBm?'on':''}" title="Bookmark" onclick="toggleBm(${a.id})">${ICON('bookmark')}</button>
+        <button class="icbtn" title="Mark read" onclick="markRead(${a.id})">${ICON('check')}</button>
+        <button class="icbtn" title="Useful 👍" onclick="toast('Feedback recorded → research_profile (FR-MT-10/18)')">${ICON('star')}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function toggleBm(id){bookmarks.has(id)?bookmarks.delete(id):bookmarks.add(id);render();}
+function markRead(id){read.add(id);render();}
+
+function renderClusters(){
+  const u=USERS[current];
+  return `<div class="banner">${ICON('network')}<div>Semantic clusters from <strong>${u.name}</strong>'s private ChromaDB collection <span class="mono">${u.collection}</span>. <span class="mono" style="font-size:11px">FR-MT-40/42</span></div></div>
+  <div class="card"><h4>${u.clusters.length} topic clusters · last 14 days</h4><div class="sub">HDBSCAN over your embeddings — nobody else's vectors are visible here.</div>
+  ${u.clusters.map((c,i)=>`<div class="cluster"><div class="row1"><span class="dot7" style="background:${['#2F6FED','#0F7B6C','#B45309','#6B4FBB'][i%4]}"></span><span style="flex:1;font-weight:600">${c.name}</span><span class="ct" style="background:var(--bg-active);border-radius:9px;padding:1px 9px;font-size:11px;color:var(--text-muted);font-weight:600">${Math.max(2,Math.round(c.weight*2))} papers</span></div><div class="d">${c.desc}</div></div>`).join('')}</div>`;
+}
+
+function renderConfig(){
+  const u=USERS[current];const t=u.thesis;
+  const prompt=buildPrompt(u);
+  return `<div class="banner">${ICON('settings')}<div>This is <strong>${u.name}</strong>'s <span class="mono">TenantConfig</span>. Editing a prompt-affecting field invalidates the cached prompt. <span class="mono" style="font-size:11px">FR-MT-19/20/25</span></div></div>
+  <div class="card">
+    <h4>Thesis</h4><div class="sub">Source of truth for scoring & thesis sections — replaces all hardcoded constants.</div>
+    <div class="field"><label>Title</label><input class="input" value="${t.title}" oninput="USERS['${current}'].thesis.title=this.value;refreshPrompt()"></div>
+    <div class="field"><label>Research question</label><textarea class="input" oninput="USERS['${current}'].thesis.question=this.value;refreshPrompt()">${t.question}</textarea></div>
+    <div class="field" style="margin-bottom:0"><label>Core contribution</label><textarea class="input" oninput="USERS['${current}'].thesis.contribution=this.value">${t.contribution}</textarea></div>
+  </div>
+  <div class="card">
+    <h4>Scoring clusters</h4><div class="sub">Reward dimensions. Clusters marked as thesis sections also drive highlights. Replaces <span class="mono">_VALID_THESIS_SECTIONS</span> & static prompt.</div>
+    ${u.clusters.map((c,i)=>`<div class="cluster">
+      <div class="row1"><input class="cn" value="${c.name}" oninput="USERS['${current}'].clusters[${i}].name=this.value;refreshPrompt()">
+      <button class="reward rw-${c.reward}" onclick="cycleReward('${current}',${i})">${c.reward}</button>
+      <span class="mono" style="font-size:12px;color:var(--text-muted)">w ${c.weight}</span></div>
+      <div class="d">${c.desc}${c.section?` · <strong style="color:var(--accent)">§ ${c.section}</strong>`:''}</div>
+    </div>`).join('')}
+    <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="toast('Add-cluster form (prototype)')">+ Add cluster</button>
+  </div>
+  <div class="card">
+    <h4>Tracked venues</h4><div class="sub">Boost papers from these venues.</div>
+    <div class="tags">${u.venues.map(v=>`<span class="tag">${v}</span>`).join('')}<span class="tag" style="border-style:dashed;cursor:pointer" onclick="toast('Add venue (prototype)')">+ add</span></div>
+  </div>
+  <div class="card" style="background:var(--bg-secondary)">
+    <h4>Rendered scoring prompt <span class="mono" style="font-size:11px;color:var(--text-muted);font-weight:400">— cached, FR-MT-26/29/33</span></h4>
+    <div class="sub" id="cacheLine">cache hash: <span class="mono" id="phash">${promptHash(u)}</span> · <span id="cacheState" style="color:var(--success);font-weight:600">cached</span></div>
+    <div class="promptbox" id="promptBox">${prompt}</div>
+  </div>`;
+}
+function cycleReward(k,i){const order=['critical','high','tangential','noise'];const c=USERS[k].clusters[i];c.reward=order[(order.indexOf(c.reward)+1)%order.length];render();}
+function refreshPrompt(){
+  const u=USERS[current];
+  const box=document.getElementById('promptBox');if(box)box.innerHTML=buildPrompt(u);
+  const h=document.getElementById('phash');if(h)h.textContent=promptHash(u);
+  const st=document.getElementById('cacheState');if(st){st.textContent='re-rendered (cache invalidated)';st.style.color='var(--warning)';}
+}
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function buildPrompt(u){
+  const rewardMap={critical:'9–10',high:'7–8',tangential:'4–6',noise:'0–3'};
+  return `You are scoring research articles for a specific researcher.\n`+
+  `THESIS: <span class="hl">${esc(u.thesis.title)}</span>\n`+
+  `QUESTION: <span class="hl">${esc(u.thesis.question)}</span>\n\n`+
+  `Score each article 0–10 using these reward clusters:\n`+
+  u.clusters.map(c=>`  • <span class="hg">${esc(c.name)}</span>  →  ${rewardMap[c.reward]}  (weight ${c.weight})`).join('\n')+
+  `\n\nBoost venues: <span class="hl">${u.venues.map(esc).join(', ')}</span>\n`+
+  `Return {score, contribution_type, re_document_type, tags, summary_bullets, reason}.`;
+}
+function promptHash(u){
+  const s=JSON.stringify([u.thesis.title,u.thesis.question,u.clusters.map(c=>[c.name,c.reward,c.weight]),u.venues]);
+  let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}
+  return 'sha256:'+h.toString(16).padStart(8,'0')+'…';
+}
+
+function renderAdmin(){
+  return `<div class="banner">${ICON('shield')}<div><strong>EVA Lab</strong> — admin view. You manage the shared catalog and members, but you <strong>cannot</strong> see any researcher's private scores, highlights or reviews. <span class="mono" style="font-size:11px">NFR-T1 · FR-MT-47</span></div></div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:14px 18px"><h4 style="margin:0">Members</h4><div class="sub" style="margin:2px 0 0">5 researchers · invite code <span class="mono" style="background:var(--bg-secondary);padding:1px 7px;border-radius:5px">EVA-LAB-2026</span></div></div>
+    <table class="tbl"><thead><tr><th>Researcher</th><th>Email</th><th>Role</th><th>Thesis</th><th>Onboarded</th></tr></thead><tbody>
+    ${LAB_MEMBERS.map(m=>`<tr><td><div style="display:flex;align-items:center;gap:9px"><div class="avatar" style="width:24px;height:24px;font-size:10px;background:${m.role==='admin'?'#6B4FBB':'#2F6FED'}">${m.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div>${m.name}</div></td><td style="color:var(--text-secondary)">${m.email}</td><td><span class="pill" style="background:${m.role==='admin'?'var(--purple-bg)':'var(--bg-active)'};color:${m.role==='admin'?'var(--purple)':'var(--text-secondary)'}">${m.role}</span></td><td style="color:var(--text-secondary)">${m.thesis}</td><td>${m.onboarded?'<span style="color:var(--success);font-weight:600">✓ active</span>':'<span style="color:var(--warning)">pending</span>'}</td></tr>`).join('')}
+    </tbody></table>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:14px 18px;display:flex;align-items:center"><div><h4 style="margin:0">Shared feed catalog</h4><div class="sub" style="margin:2px 0 0">Polled once for the whole lab; each member subscribes & is scored individually (fan-out).</div></div><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="toast('Add catalog feed (prototype) — FR-MT-16')">+ Add feed</button></div>
+    <table class="tbl"><thead><tr><th>Feed</th><th>Category</th><th>Subscribers</th></tr></thead><tbody>
+    ${CATALOG.map(f=>{const subs=Object.values(USERS).filter(u=>u.subs.includes(f.id)).length;return `<tr><td><div style="display:flex;align-items:center;gap:9px"><span class="dot7" style="background:${f.color}"></span>${f.name}</div></td><td style="color:var(--text-secondary)">${f.cat}</td><td><span class="pill" style="background:var(--bg-active);color:var(--text-secondary)">${subs} ${subs===1?'researcher':'researchers'}</span></td></tr>`;}).join('')}
+    </tbody></table>
+  </div>`;
+}
+
+/* ============================ UTIL ============================ */
+let toastT;
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
+
+// Fill static icon slots once (sidebar + topbar)
+document.querySelectorAll('[data-icon]').forEach(e=>{e.innerHTML=ICON(e.getAttribute('data-icon'));});
+
+setAuthMode('login');
+</script>
+</body>
+</html>

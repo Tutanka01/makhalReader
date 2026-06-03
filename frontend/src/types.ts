@@ -69,7 +69,7 @@ export interface Organization {
 
 export interface ScoringCluster {
   name: string
-  reward: 'critical' | 'high' | 'tangential' | 'noise'
+  reward_level: 'critical' | 'high' | 'tangential' | 'noise'
   weight: number
   desc: string
   section?: string

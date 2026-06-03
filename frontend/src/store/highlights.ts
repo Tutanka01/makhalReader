@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import apiClient from '../apiClient'
 import type { Highlight } from '../types'
 
 interface HighlightCreate {
@@ -30,21 +31,16 @@ export const useHighlightsStore = create<HighlightsState>((set, get) => ({
   highlights: {},
 
   async fetchHighlights(articleId) {
-    const res = await fetch(`/api/articles/${articleId}/highlights`, { credentials: 'include' })
-    if (!res.ok) return
-    const data: Highlight[] = await res.json()
-    set((s) => ({ highlights: { ...s.highlights, [articleId]: data } }))
+    try {
+      const data = await apiClient.get<Highlight[]>(`/api/articles/${articleId}/highlights`)
+      set((s) => ({ highlights: { ...s.highlights, [articleId]: data } }))
+    } catch {
+      // Non-fatal: silently skip if article has no highlights or request fails
+    }
   },
 
   async createHighlight(articleId, data) {
-    const res = await fetch(`/api/articles/${articleId}/highlights`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!res.ok) throw new Error('Failed to create highlight')
-    const created: Highlight = await res.json()
+    const created = await apiClient.post<Highlight>(`/api/articles/${articleId}/highlights`, data)
     set((s) => ({
       highlights: {
         ...s.highlights,
@@ -55,54 +51,48 @@ export const useHighlightsStore = create<HighlightsState>((set, get) => ({
   },
 
   async updateHighlight(articleId, id, data) {
-    const res = await fetch(`/api/articles/${articleId}/highlights/${id}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!res.ok) return
-    const updated: Highlight = await res.json()
-    set((s) => ({
-      highlights: {
-        ...s.highlights,
-        [articleId]: (s.highlights[articleId] ?? []).map((h) =>
-          h.id === id ? updated : h
-        ),
-      },
-    }))
+    try {
+      const updated = await apiClient.put<Highlight>(`/api/articles/${articleId}/highlights/${id}`, data)
+      set((s) => ({
+        highlights: {
+          ...s.highlights,
+          [articleId]: (s.highlights[articleId] ?? []).map((h) =>
+            h.id === id ? updated : h
+          ),
+        },
+      }))
+    } catch {
+      // Non-fatal
+    }
   },
 
   async deleteHighlight(articleId, id) {
-    const res = await fetch(`/api/articles/${articleId}/highlights/${id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
-    if (!res.ok) return
-    set((s) => ({
-      highlights: {
-        ...s.highlights,
-        [articleId]: (s.highlights[articleId] ?? []).filter((h) => h.id !== id),
-      },
-    }))
+    try {
+      await apiClient.del(`/api/articles/${articleId}/highlights/${id}`)
+      set((s) => ({
+        highlights: {
+          ...s.highlights,
+          [articleId]: (s.highlights[articleId] ?? []).filter((h) => h.id !== id),
+        },
+      }))
+    } catch {
+      // Non-fatal
+    }
   },
 
   async patchHighlight(id, data) {
-    const res = await fetch(`/api/highlights/${id}`, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!res.ok) return
-    const updated: Highlight = await res.json()
-    set((s) => {
-      const next = { ...s.highlights }
-      for (const aid of Object.keys(next)) {
-        const aidNum = Number(aid)
-        next[aidNum] = next[aidNum].map((h) => (h.id === id ? updated : h))
-      }
-      return { highlights: next }
-    })
+    try {
+      const updated = await apiClient.patch<Highlight>(`/api/highlights/${id}`, data)
+      set((s) => {
+        const next = { ...s.highlights }
+        for (const aid of Object.keys(next)) {
+          const aidNum = Number(aid)
+          next[aidNum] = next[aidNum].map((h) => (h.id === id ? updated : h))
+        }
+        return { highlights: next }
+      })
+    } catch {
+      // Non-fatal
+    }
   },
 }))

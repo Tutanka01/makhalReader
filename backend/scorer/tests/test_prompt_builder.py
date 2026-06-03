@@ -134,3 +134,14 @@ class TestPromptBuilder:
         ctx = UserScoringContext(thesis_title="Test Title", thesis_question="Test Q", tracked_venues=[])
         result = PromptBuilder.build(ctx)
         assert "none configured" in result
+
+    def test_build_sanitizes_cluster_id(self):
+        """NFR-T5: cluster id must be sanitized before injection into prompt."""
+        ctx = UserScoringContext(
+            scoring_clusters=[
+                {"id": "evil\ninjection", "name": "Cluster", "description": "Desc.", "reward_level": "high"},
+            ]
+        )
+        result = PromptBuilder.build(ctx)
+        assert "\n" not in result
+        assert "evil injection" in result  # sanitize() replaces \n with space

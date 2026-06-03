@@ -91,7 +91,7 @@ def _replace_clusters_section(template: str, ctx: UserScoringContext) -> str:
         name = sanitize(c.get("name", ""))
         desc = sanitize(c.get("description", ""))
         reward = c.get("reward_level", "high")
-        cid = c.get("id", "?")
+        cid = sanitize(c.get("id", "?"))
         lines.append(f"### [Cluster {cid}] {name} ({reward.title()} reward)")
         lines.append(desc)
         lines.append("")

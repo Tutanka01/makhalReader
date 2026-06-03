@@ -115,20 +115,20 @@ def _build_cluster_user_block(articles: List[Article], max_chars: int = 8000) ->
         bullets: List[str] = []
         try:
             bullets = json.loads(a.summary_bullets_json or "[]")[:3]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("json_parse_failed", field="summary_bullets", article_id=a.id, error=str(e))
         tags: List[str] = []
         try:
             tags = json.loads(a.tags_json or "[]")[:8]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("json_parse_failed", field="tags", article_id=a.id, error=str(e))
         abstract = ""
         if a.paper_meta_json:
             try:
                 pm = json.loads(a.paper_meta_json)
                 abstract = (pm.get("abstract") or "")[:600]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("json_parse_failed", field="paper_meta", article_id=a.id, error=str(e))
         chunk = (
             f"---\nID: {a.id}\nTitle: {a.title}\nURL: {a.url}\n"
             f"Score: {a.score}\nTags: {', '.join(tags)}\n"
