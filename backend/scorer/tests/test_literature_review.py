@@ -56,6 +56,7 @@ class TestLiteratureReviewDB:
     def test_orm_class(self):
         src = _read(_DATABASE_PY)
         assert "class LiteratureReview(Base):" in src
+        assert "user_id" in src.split("class LiteratureReview")[1].split("class ")[0]
 
     def test_migration_create_table(self):
         src = _read(_DATABASE_PY)
@@ -63,6 +64,16 @@ class TestLiteratureReviewDB:
         assert "body_json" in src
         assert "window_days" in src
         assert "min_rigor" in src
+        assert "user_id" in src
+
+    def test_backfill_function(self):
+        src = _read(_DATABASE_PY)
+        assert "_backfill_literature_reviews" in src
+        assert "UPDATE literature_reviews SET user_id = 1 WHERE user_id IS NULL" in src
+
+    def test_backfill_called_in_init_db(self):
+        src = _read(_DATABASE_PY)
+        assert "_backfill_literature_reviews(conn)" in src or "_backfill_literature_reviews" in src.split("def init_db")[1].split("def ")[0]
 
 
 class TestPydanticModels:
@@ -80,20 +91,39 @@ class TestPydanticModels:
         assert "class LiteratureReviewCreate" in src
         assert "class LiteratureReviewOut" in src
         assert "class LiteratureReviewSummaryOut" in src
+        assert "user_id" in src.split("class LiteratureReviewOut")[1].split("class ")[0]
+        assert "user_id" in src.split("class LiteratureReviewSummaryOut")[1].split("class ")[0]
 
 
 class TestResearchRoutes:
     def test_post_review_route(self):
         src = _read(_RESEARCH_PY)
         assert '@router.post("/review"' in src
+        assert "require_session" in src
 
     def test_get_reviews_list(self):
         src = _read(_RESEARCH_PY)
         assert '@router.get("/reviews"' in src
+        assert "require_session" in src
+        assert "user_id == current_user" in src
 
     def test_get_review_by_id(self):
         src = _read(_RESEARCH_PY)
         assert '@router.get("/reviews/{review_id}"' in src
+        assert "require_session" in src
+        assert "user_id == current_user" in src
+
+    def test_delete_review_route(self):
+        src = _read(_RESEARCH_PY)
+        assert '@router.delete("/reviews/{review_id}"' in src
+        assert "require_session" in src
+        assert "user_id == current_user" in src
+
+    def test_export_review_route(self):
+        src = _read(_RESEARCH_PY)
+        assert '/reviews/{review_id}/export"' in src
+        assert "require_session" in src
+        assert "user_id == current_user" in src
 
     def test_422_message_exact(self):
         src = _read(_RESEARCH_PY)

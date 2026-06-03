@@ -184,6 +184,7 @@ class LiteratureReviewCreate(BaseModel):
 
 class LiteratureReviewOut(BaseModel):
     id: int
+    user_id: Optional[int] = None
     topic: str
     window_days: int
     min_rigor: float
@@ -193,6 +194,7 @@ class LiteratureReviewOut(BaseModel):
 
 class LiteratureReviewSummaryOut(BaseModel):
     id: int
+    user_id: Optional[int] = None
     topic: str
     window_days: int
     min_rigor: float

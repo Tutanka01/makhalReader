@@ -249,6 +249,7 @@ class LiteratureReview(Base):
     __tablename__ = "literature_reviews"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     topic = Column(Text, nullable=False)
     window_days = Column(Integer, nullable=False)
     min_rigor = Column(Float, default=0.0, nullable=False)
@@ -403,6 +404,8 @@ def init_db():
         "ALTER TABLE highlights ADD COLUMN thesis_section TEXT",
         # Story 6.1 — highlights user_id (FR-MT-34)
         "ALTER TABLE highlights ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        # Story 6.2 — literature reviews user_id (FR-MT-35)
+        "ALTER TABLE literature_reviews ADD COLUMN user_id INTEGER REFERENCES users(id)",
         # Story 5.5 — citation graph
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
@@ -432,6 +435,7 @@ def init_db():
         _backfill_user_config(conn)
         _backfill_research_profile(conn)
         _backfill_highlights(conn)
+        _backfill_literature_reviews(conn)
 
     _seed_default_user()
 
@@ -535,6 +539,15 @@ def _backfill_highlights(conn):
     """Backfill user_id=1 to existing highlights."""
     try:
         conn.execute(text("UPDATE highlights SET user_id = 1 WHERE user_id IS NULL"))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_literature_reviews(conn):
+    """Backfill user_id=1 to existing literature reviews."""
+    try:
+        conn.execute(text("UPDATE literature_reviews SET user_id = 1 WHERE user_id IS NULL"))
         conn.commit()
     except Exception:
         pass

@@ -368,7 +368,7 @@ async def put_profile(
 async def post_literature_review(
     payload: LiteratureReviewCreate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Embed topic → Chroma top-50 → rigor/window filter → HDBSCAN → per-cluster LLM → persist."""
     topic = payload.topic.strip()
@@ -505,6 +505,7 @@ async def post_literature_review(
 
     body_list = [c.model_dump(mode="json") for c in cluster_payloads]
     row = LiteratureReview(
+        user_id=current_user["id"],
         topic=topic,
         window_days=window_days,
         min_rigor=min_rigor,
@@ -517,6 +518,7 @@ async def post_literature_review(
     logger.info("literature_review_saved", review_id=row.id, n_clusters=len(cluster_payloads))
     return LiteratureReviewOut(
         id=row.id,
+        user_id=row.user_id,
         topic=row.topic,
         window_days=row.window_days,
         min_rigor=row.min_rigor,
@@ -528,16 +530,18 @@ async def post_literature_review(
 @router.get("/reviews", response_model=List[LiteratureReviewSummaryOut])
 async def list_literature_reviews(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     rows = (
         db.query(LiteratureReview)
+        .filter(LiteratureReview.user_id == current_user["id"])
         .order_by(LiteratureReview.created_at.desc())
         .all()
     )
     return [
         LiteratureReviewSummaryOut(
             id=r.id,
+            user_id=r.user_id,
             topic=r.topic,
             window_days=r.window_days,
             min_rigor=r.min_rigor,
@@ -551,9 +555,13 @@ async def list_literature_reviews(
 async def get_literature_review(
     review_id: int,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    row = db.query(LiteratureReview).filter(LiteratureReview.id == review_id).first()
+    row = (
+        db.query(LiteratureReview)
+        .filter(LiteratureReview.id == review_id, LiteratureReview.user_id == current_user["id"])
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")
     try:
@@ -570,6 +578,7 @@ async def get_literature_review(
             continue
     return LiteratureReviewOut(
         id=row.id,
+        user_id=row.user_id,
         topic=row.topic,
         window_days=row.window_days,
         min_rigor=row.min_rigor,
@@ -679,9 +688,13 @@ async def post_external_review(
 async def delete_literature_review(
     review_id: int,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    row = db.query(LiteratureReview).filter(LiteratureReview.id == review_id).first()
+    row = (
+        db.query(LiteratureReview)
+        .filter(LiteratureReview.id == review_id, LiteratureReview.user_id == current_user["id"])
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")
     db.delete(row)
@@ -694,10 +707,14 @@ async def export_literature_review(
     review_id: int,
     format: str = Query(default="md", pattern=r"^(md|docx|pdf)$"),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Export a literature review as Markdown, DOCX, or PDF."""
-    row = db.query(LiteratureReview).filter(LiteratureReview.id == review_id).first()
+    row = (
+        db.query(LiteratureReview)
+        .filter(LiteratureReview.id == review_id, LiteratureReview.user_id == current_user["id"])
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")
 
