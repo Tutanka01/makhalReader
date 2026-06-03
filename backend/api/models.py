@@ -344,7 +344,7 @@ class InternalScoreUpdate(BaseModel):
     novelty: Optional[float] = None
     rigor: Optional[float] = None
     relevance_to_topics: Optional[float] = None
-    user_id: Optional[int] = None  # Story 2.4, FR-MT-9 — defaults to 1 in handler
+    user_id: int  # Story 2.7, FR-MT-9 — mandatory
 
 
 # ---------------------------------------------------------------------------

@@ -247,7 +247,7 @@ async def internal_score_article(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
 
-    user_id = score_data.user_id or 1
+    user_id = score_data.user_id
 
     # Write to article_scores (FR-MT-9)
     score = _get_or_create_article_score(db, user_id, article_id)

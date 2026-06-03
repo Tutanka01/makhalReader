@@ -132,6 +132,7 @@ async def score_article_rate_limited(
     content_text: str,
     rss_summary: str,
     paper_meta_json: Optional[str] = None,
+    user_id: int = 1,
 ):
     """Acquire the global semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS."""
     async with _score_semaphore:
@@ -144,6 +145,7 @@ async def score_article_rate_limited(
                     "content_text": content_text or "",
                     "rss_summary": rss_summary or "",
                     "paper_meta_json": paper_meta_json,
+                    "user_id": user_id,
                 },
                 timeout=120,
             )

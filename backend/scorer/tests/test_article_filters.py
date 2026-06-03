@@ -670,10 +670,11 @@ class TestInternalScore:
         assert s.contribution_type == "method"
         assert s.re_document_type == "elicitation"
 
-    def test_score_defaults_user_id_to_1(self, client):
+    def test_score_requires_user_id(self, client):
+        """user_id is mandatory — omitting it causes 422."""
         c, session = client
         feed = _make_feed(session)
-        art = _make_article(session, feed.id, "Score Default")
+        art = _make_article(session, feed.id, "No User")
         session.commit()
 
         resp = c.post(
@@ -685,15 +686,7 @@ class TestInternalScore:
             },
             headers={"X-Internal-Secret": "changeme"},
         )
-        assert resp.status_code == 200
-
-        from database import ArticleScore
-        s = session.query(ArticleScore).filter(
-            ArticleScore.user_id == 1,
-            ArticleScore.article_id == art.id,
-        ).first()
-        assert s is not None
-        assert s.score == 7.0
+        assert resp.status_code == 422
 
     def test_score_writes_to_correct_user(self, client):
         c, session = client
@@ -783,7 +776,7 @@ class TestInternalScore:
         c, session = client
         resp = c.post(
             "/api/internal/articles/99999/score",
-            json={"score": 5.0, "tags": [], "summary_bullets": []},
+            json={"score": 5.0, "tags": [], "summary_bullets": [], "user_id": 1},
             headers={"X-Internal-Secret": "changeme"},
         )
         assert resp.status_code == 404
@@ -796,7 +789,7 @@ class TestInternalScore:
 
         resp = c.post(
             f"/api/internal/articles/{art.id}/score",
-            json={"score": 5.0, "tags": [], "summary_bullets": []},
+            json={"score": 5.0, "tags": [], "summary_bullets": [], "user_id": 1},
             headers={"X-Internal-Secret": "wrong-secret"},
         )
         assert resp.status_code == 403
