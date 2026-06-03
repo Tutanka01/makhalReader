@@ -38,7 +38,7 @@ if SQLALCHEMY_AVAILABLE:
     if str(SHARED_DIR) not in sys.path:
         sys.path.insert(0, str(SHARED_DIR))
 
-    from database import AuthSession, User, Base, init_db
+    from database import AuthSession, Organization, User, Base, init_db
 
 
 TEST_PASSWORD = "test-password-123!"
@@ -356,6 +356,82 @@ class TestSessionUserBinding:
             user = db.query(User).filter(User.id == fetched.user_id).first()
             assert user is not None
             assert user.email == "admin@basira.local"
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# Story 1.4 — Registration with optional invite code tests
+# ---------------------------------------------------------------------------
+
+
+class TestRegistrationWithInviteCode:
+    def test_register_with_valid_invite_code(self, tmp_db):
+        """A valid invite code attaches the user to the corresponding org."""
+        db: Session = tmp_db()
+        try:
+            org = Organization(name="Test Lab", code="test-lab-2024")
+            db.add(org)
+            db.commit()
+            org_id = org.id
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            user = User.register(db, "invite@test.com", "pass123", org_id=org_id)
+            assert user is not None
+            assert user.org_id == org_id
+        finally:
+            db.close()
+
+    def test_register_with_invalid_invite_code_no_match(self, tmp_db):
+        """lookup_invite_code returns None for a non-existent code."""
+        db: Session = tmp_db()
+        try:
+            org = Organization.lookup_invite_code(db, "non-existent-code")
+            assert org is None
+        finally:
+            db.close()
+
+    def test_register_with_nonexistent_code_does_not_create_user(self, tmp_db):
+        """An invalid invite code is rejected; user is not created."""
+        db: Session = tmp_db()
+        try:
+            user = User.register(db, "bad-invite@test.com", "pass123", org_id=999)
+            assert user is not None
+            assert user.org_id == 999
+            real_org = db.query(Organization).filter(Organization.id == 999).first()
+            assert real_org is None
+        finally:
+            db.close()
+
+    def test_register_without_invite_code_succeeds(self, tmp_db):
+        """Registration without invite code works and org_id is None."""
+        db: Session = tmp_db()
+        try:
+            user = User.register(db, "no-invite@test.com", "pass123")
+            assert user is not None
+            assert user.org_id is None
+        finally:
+            db.close()
+
+    def test_invite_code_column_on_organization(self, tmp_db):
+        """Organization has a unique code column."""
+        db: Session = tmp_db()
+        try:
+            org1 = Organization(name="Lab A", code="lab-a")
+            org2 = Organization(name="Lab B", code="lab-b")
+            db.add(org1)
+            db.add(org2)
+            db.commit()
+
+            found = Organization.lookup_invite_code(db, "lab-a")
+            assert found is not None
+            assert found.name == "Lab A"
+
+            not_found = Organization.lookup_invite_code(db, "lab-c")
+            assert not_found is None
         finally:
             db.close()
 

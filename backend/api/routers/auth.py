@@ -15,7 +15,7 @@ from auth import (
     get_current_user,
     set_session_cookie,
 )
-from database import SessionLocal, User
+from database import Organization, SessionLocal, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +29,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     display_name: Optional[str] = None
+    invite_code: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -46,7 +47,13 @@ class LoginRequest(BaseModel):
 async def register(body: RegisterRequest, request: Request, response: Response):
     db = SessionLocal()
     try:
-        user = User.register(db, body.email, body.password, body.display_name)
+        org_id = None
+        if body.invite_code:
+            org = Organization.lookup_invite_code(db, body.invite_code)
+            if not org:
+                raise HTTPException(status_code=400, detail="Invalid invite code")
+            org_id = org.id
+        user = User.register(db, body.email, body.password, body.display_name, org_id=org_id)
         if not user:
             raise HTTPException(status_code=409, detail="Email already registered")
         token = create_session(

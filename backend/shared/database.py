@@ -69,7 +69,12 @@ class Organization(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    code = Column(String, unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    @classmethod
+    def lookup_invite_code(cls, db: Session, code: str):
+        return db.query(cls).filter(cls.code == code).first()
 
 
 class User(Base):
@@ -186,6 +191,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS organizations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL DEFAULT 'member', org_id INTEGER REFERENCES organizations(id), onboarding_done BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "ALTER TABLE auth_sessions ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        "ALTER TABLE organizations ADD COLUMN code VARCHAR(64) UNIQUE",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
