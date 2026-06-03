@@ -212,6 +212,33 @@ class TestDynamicThesisSections:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.7) — Handler-level thesis_section validation in all endpoints (FR-MT-24)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestHandlerValidation:
+    def test_export_highlights_uses_current_user(self):
+        src = _read(_RESEARCH_PY)
+        assert "current_user: dict = Depends(require_session)" in src
+        assert "export_highlights" in src or "export-highlights" in src
+
+    def test_export_highlights_validates_section(self):
+        src = _read(_RESEARCH_PY)
+        assert "get_valid_thesis_sections(db, current_user[\"id\"])" in src
+        assert "thesis_section must be one of" in src
+
+    def test_list_all_highlights_validates_section(self):
+        src = _read(_RESEARCH_PY)
+        assert "@router.get(\"/highlights/all\"" in src
+        assert "get_valid_thesis_sections" in src
+        assert "thesis_section must be one of" in src
+
+    def test_list_all_highlights_uses_current_user(self):
+        src = _read(_RESEARCH_PY)
+        assert "current_user: dict = Depends(require_session)" in src
+        assert "list_all_highlights" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AC (Story 4.5) — CRUD /api/profile/sections (FR-MT-22)
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -1209,9 +1209,15 @@ async def _llm_synthesize_highlights(thesis_section: str, formatted_highlights: 
 async def export_highlights(
     body: HighlightExportRequest,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Synthesize tagged highlights into a writing block via streaming LLM."""
+    valid = get_valid_thesis_sections(db, current_user["id"])
+    if body.thesis_section not in valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"thesis_section must be one of {sorted(valid)}",
+        )
     cutoff = datetime.now(timezone.utc) - timedelta(days=body.window_days)
 
     # Query highlights with article join, ordered by article score desc
@@ -1352,9 +1358,16 @@ async def export_highlights_multi(
 async def list_all_highlights(
     thesis_section: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """List all highlights with article info, optionally filtered by thesis_section."""
+    if thesis_section:
+        valid = get_valid_thesis_sections(db, current_user["id"])
+        if thesis_section not in valid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"thesis_section must be one of {sorted(valid)}",
+            )
     q = (
         db.query(Highlight, Article.title, Article.url, Article.score)
         .join(Article, Highlight.article_id == Article.id)
