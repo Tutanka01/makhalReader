@@ -89,7 +89,7 @@ def client(db_session):
     from main import app
 
     app.dependency_overrides[get_db] = lambda: db_session
-    app.dependency_overrides[require_session] = lambda: None
+    app.dependency_overrides[require_session] = lambda: {"id": 1, "email": "admin@basira.local"}
 
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c, db_session

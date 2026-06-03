@@ -12,7 +12,7 @@ from auth import (
     clear_session_cookie,
     create_session,
     delete_session,
-    get_current_user,
+    require_session,
     set_session_cookie,
 )
 from database import Organization, SessionLocal, User
@@ -110,5 +110,5 @@ async def logout(request: Request, response: Response):
 
 
 @router.get("/me")
-async def me(user: dict = Depends(get_current_user)):
+async def me(user: dict = Depends(require_session)):
     return user

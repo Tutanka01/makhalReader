@@ -151,22 +151,15 @@ def purge_expired_sessions():
 
 
 def require_session(basira_sid: Optional[str] = Cookie(None)):
-    """FastAPI dependency. Raises 401 if the session cookie is missing/invalid."""
+    """FastAPI dependency. Returns the current user dict or raises 401.
+    This is the sole source of user_id for every protected handler."""
     if not basira_sid:
         raise HTTPException(status_code=401, detail="Authentication required")
-    valid, _ = validate_session(basira_sid)
+    valid, user_id = validate_session(basira_sid)
     if not valid:
         raise HTTPException(status_code=401, detail="Authentication required")
-
-
-def get_current_user(
-    basira_sid: Optional[str] = Cookie(None),
-    _none: None = Depends(require_session),
-) -> dict:
-    """FastAPI dependency. Returns the current user dict or raises 401."""
-    valid, user_id = validate_session(basira_sid)
-    if not valid or not user_id:
-        user_id = 1
+    if not user_id:
+        user_id = 1  # backward compat for legacy sessions without user_id
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
