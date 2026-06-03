@@ -100,7 +100,8 @@ def create_session(user_id: int, remember: bool, user_agent: str | None) -> str:
 
 
 def validate_session(token: str) -> tuple[bool, int | None]:
-    """Returns (is_valid, user_id). user_id may be None for legacy sessions."""
+    """Returns (is_valid, user_id). user_id may be None for legacy sessions.
+    Orphaned sessions (user deleted) are cleaned up and treated as invalid."""
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
@@ -111,6 +112,12 @@ def validate_session(token: str) -> tuple[bool, int | None]:
         )
         if not session:
             return False, None
+        if session.user_id is not None:
+            user = db.query(User).filter(User.id == session.user_id).first()
+            if not user:
+                db.delete(session)
+                db.commit()
+                return False, None
         session.last_seen = now
         db.commit()
         return True, session.user_id

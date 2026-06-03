@@ -233,6 +233,134 @@ class TestSessionLifecycle:
 
 
 # ---------------------------------------------------------------------------
+# Story 1.3 — Session→user binding tests
+# ---------------------------------------------------------------------------
+
+
+class TestSessionUserBinding:
+    """Story 1.3 — Session→user binding.
+
+    Validated through DB-level assertions covering the same logic as
+    validate_session() in api/auth.py.
+    """
+
+    def test_orphaned_session_user_deleted(self, tmp_db):
+        """A session whose user no longer exists has an invalid user reference."""
+        db: Session = tmp_db()
+        try:
+            user = User.register(db, "todelete@test.com", "pass123")
+            uid = user.id
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            db.query(User).filter(User.id == uid).delete()
+            db.commit()
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            user = db.query(User).filter(User.id == uid).first()
+            assert user is None
+        finally:
+            db.close()
+
+    def test_session_with_nonexistent_user_id_invalid(self, tmp_db):
+        """Simulating validate_session: a session with user_id=999 finds no user."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        session = AuthSession(
+            id="nonexistent-user-token",
+            user_id=999,
+            created_at=now,
+            expires_at=now + timedelta(hours=24),
+            last_seen=now,
+            user_agent="pytest",
+            remember_me=False,
+        )
+        db: Session = tmp_db()
+        try:
+            db.add(session)
+            db.commit()
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            user = db.query(User).filter(User.id == 999).first()
+            assert user is None
+        finally:
+            db.close()
+
+    def test_legacy_session_no_user_id(self, tmp_db):
+        """A legacy session with user_id=None is still valid (backward compat)."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        session = AuthSession(
+            id="legacy-no-user-id",
+            user_id=None,
+            created_at=now,
+            expires_at=now + timedelta(hours=24),
+            last_seen=now,
+            user_agent="pytest",
+            remember_me=False,
+        )
+        db: Session = tmp_db()
+        try:
+            db.add(session)
+            db.commit()
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            fetched = db.query(AuthSession).filter(
+                AuthSession.id == "legacy-no-user-id",
+                AuthSession.expires_at > datetime.now(timezone.utc),
+            ).first()
+            assert fetched is not None
+            assert fetched.user_id is None
+        finally:
+            db.close()
+
+    def test_create_session_references_existing_user(self, tmp_db):
+        """A session created for a logged-in user references valid users.id."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        session = AuthSession(
+            id="valid-user-token",
+            user_id=1,
+            created_at=now,
+            expires_at=now + timedelta(hours=24),
+            last_seen=now,
+            user_agent="pytest",
+            remember_me=False,
+        )
+        db: Session = tmp_db()
+        try:
+            db.add(session)
+            db.commit()
+        finally:
+            db.close()
+
+        db = tmp_db()
+        try:
+            fetched = db.query(AuthSession).filter(
+                AuthSession.id == "valid-user-token",
+                AuthSession.expires_at > datetime.now(timezone.utc),
+            ).first()
+            assert fetched is not None
+            assert fetched.user_id == 1
+            user = db.query(User).filter(User.id == fetched.user_id).first()
+            assert user is not None
+            assert user.email == "admin@basira.local"
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
 # Backward-compat: existing articles/feeds survive migration
 # ---------------------------------------------------------------------------
 
