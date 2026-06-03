@@ -121,7 +121,7 @@ async def list_articles(
     user_id = current_user["id"]
     threat_overlap_subq = (
         sa_select(NoveltyAlert.overlap_score)
-        .where(NoveltyAlert.article_id == Article.id)
+        .where(NoveltyAlert.article_id == Article.id, NoveltyAlert.user_id == user_id)
         .order_by(NoveltyAlert.checked_at.desc())
         .limit(1)
         .correlate(Article)
@@ -129,7 +129,7 @@ async def list_articles(
     )
     threat_note_subq = (
         sa_select(NoveltyAlert.positioning_note)
-        .where(NoveltyAlert.article_id == Article.id)
+        .where(NoveltyAlert.article_id == Article.id, NoveltyAlert.user_id == user_id)
         .order_by(NoveltyAlert.checked_at.desc())
         .limit(1)
         .correlate(Article)

@@ -285,12 +285,13 @@ class NoveltyAlert(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     overlap_score = Column(Float, nullable=False)
     positioning_note = Column(Text, nullable=False)
     checked_at = Column(DateTime, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("article_id", name="ux_novelty_alert_article"),
+        UniqueConstraint("article_id", "user_id", name="ux_novelty_alert_article_user"),
     )
 
 
@@ -406,6 +407,10 @@ def init_db():
         "ALTER TABLE highlights ADD COLUMN user_id INTEGER REFERENCES users(id)",
         # Story 6.2 — literature reviews user_id (FR-MT-35)
         "ALTER TABLE literature_reviews ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        # Story 6.3 — novelty alerts user_id (FR-MT-36)
+        "ALTER TABLE novelty_alerts ADD COLUMN user_id INTEGER REFERENCES users(id)",
+        "DROP INDEX IF EXISTS ux_novelty_alert_article",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_novelty_alert_article_user ON novelty_alerts(article_id, user_id)",
         # Story 5.5 — citation graph
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
@@ -436,6 +441,7 @@ def init_db():
         _backfill_research_profile(conn)
         _backfill_highlights(conn)
         _backfill_literature_reviews(conn)
+        _backfill_novelty_alerts(conn)
 
     _seed_default_user()
 
@@ -548,6 +554,15 @@ def _backfill_literature_reviews(conn):
     """Backfill user_id=1 to existing literature reviews."""
     try:
         conn.execute(text("UPDATE literature_reviews SET user_id = 1 WHERE user_id IS NULL"))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_novelty_alerts(conn):
+    """Backfill user_id=1 to existing novelty alerts."""
+    try:
+        conn.execute(text("UPDATE novelty_alerts SET user_id = 1 WHERE user_id IS NULL"))
         conn.commit()
     except Exception:
         pass

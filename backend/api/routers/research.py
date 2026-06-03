@@ -922,7 +922,12 @@ async def _run_threat_scan(db: Session, user_id: int = 1, window_days: int = 14)
         )
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
-    already_checked = {r.article_id for r in db.query(NoveltyAlert.article_id).all()}
+    already_checked = {
+        r.article_id
+        for r in db.query(NoveltyAlert.article_id)
+        .filter(NoveltyAlert.user_id == user_id)
+        .all()
+    }
 
     query = db.query(Article).filter(Article.score >= 7.0, Article.created_at >= cutoff)
     if already_checked:
@@ -938,6 +943,7 @@ async def _run_threat_scan(db: Session, user_id: int = 1, window_days: int = 14)
             note = result.get("positioning_note", "")
             db.add(NoveltyAlert(
                 article_id=article.id,
+                user_id=user_id,
                 overlap_score=min(1.0, max(0.0, float(overlap))),
                 positioning_note=str(note)[:1000],
                 checked_at=datetime.now(timezone.utc),
@@ -1001,20 +1007,25 @@ async def list_threats(
     since_days: int = Query(default=30, ge=1, le=365),
     min_overlap: float = Query(default=0.0, ge=0.0, le=1.0),
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Return threat assessments, sorted by overlap_score descending."""
+    """Return threat assessments for the current user, sorted by overlap_score descending."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     rows = (
         db.query(NoveltyAlert, Article.title, Article.url, Article.score)
         .join(Article, NoveltyAlert.article_id == Article.id)
-        .filter(NoveltyAlert.checked_at >= cutoff, NoveltyAlert.overlap_score >= min_overlap)
+        .filter(
+            NoveltyAlert.user_id == current_user["id"],
+            NoveltyAlert.checked_at >= cutoff,
+            NoveltyAlert.overlap_score >= min_overlap,
+        )
         .order_by(NoveltyAlert.overlap_score.desc())
         .all()
     )
     return [
         NoveltyAlertOut(
             article_id=alert.article_id,
+            user_id=alert.user_id,
             title=article_title,
             url=article_url,
             score=article_score,
@@ -1542,14 +1553,21 @@ _NOTIFICATION_KEY_MAP = {
 @router.get("/notifications", response_model=NotificationCounts)
 async def get_notifications(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Return counts for notification badges in the sidebar."""
 
     # Threat alerts since last dismissal
     dismissed_threats = get_setting(db, "notifications_last_dismissed_threats", "")
     threat_cutoff = datetime.fromisoformat(dismissed_threats) if dismissed_threats else datetime.min.replace(tzinfo=timezone.utc)
-    new_threats = db.query(NoveltyAlert).filter(NoveltyAlert.checked_at > threat_cutoff).count()
+    new_threats = (
+        db.query(NoveltyAlert)
+        .filter(
+            NoveltyAlert.user_id == current_user["id"],
+            NoveltyAlert.checked_at > threat_cutoff,
+        )
+        .count()
+    )
 
     # Urgent conference deadlines (days_to_paper <= 14, not past)
     dismissed_confs = get_setting(db, "notifications_last_dismissed_conferences", "")

@@ -510,6 +510,7 @@ class NoveltyAlertOut(BaseModel):
     title: str
     url: str
     score: Optional[float] = None
+    user_id: Optional[int] = None
     overlap_score: float
     positioning_note: str
     checked_at: datetime
