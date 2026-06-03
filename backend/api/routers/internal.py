@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, get_db
+from collections import defaultdict
+
+from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, UserFeedSubscription, get_db
 from models import InternalArticleCreate, InternalScoreUpdate
 from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
@@ -95,8 +97,18 @@ async def internal_list_feeds(
         .group_by(Feed.id)
         .all()
     )
+    subs = db.query(UserFeedSubscription).all()
+    sub_map: dict[int, list[int]] = defaultdict(list)
+    for s in subs:
+        sub_map[s.feed_id].append(s.user_id)
     return [
-        {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
+        {
+            "id": feed.id,
+            "url": feed.url,
+            "name": feed.name,
+            "category": feed.category,
+            "subscriber_user_ids": sub_map.get(feed.id, []),
+        }
         for feed, _ in results
     ]
 

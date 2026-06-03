@@ -981,3 +981,55 @@ class TestSubscribeUnsubscribe:
 
         resp = c.get("/api/feeds")
         assert resp.json() == []
+
+
+@SKIP_INTEGRATION
+class TestInternalFeeds:
+    """Story 3.4 — GET /api/internal/feeds includes subscriber_user_ids (FR-MT-18)."""
+
+    def test_internal_feeds_includes_subscribers(self, client):
+        c, session = client
+        feed1 = _make_feed(session, name="Multi Sub Feed")
+        feed2 = _make_feed(session, name="Single Sub Feed")
+        feed3 = _make_feed(session, name="No Sub Feed")
+        session.flush()
+
+        from database import UserFeedSubscription
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed1.id),
+            UserFeedSubscription(user_id=2, feed_id=feed1.id),
+            UserFeedSubscription(user_id=1, feed_id=feed2.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/internal/feeds", headers={"X-Internal-Secret": "changeme"})
+        assert resp.status_code == 200
+        data = resp.json()
+        sub_map = {d["name"]: d["subscriber_user_ids"] for d in data}
+        assert sorted(sub_map["Multi Sub Feed"]) == [1, 2]
+        assert sub_map["Single Sub Feed"] == [1]
+        assert sub_map["No Sub Feed"] == []
+
+    def test_internal_feeds_requires_secret(self, client):
+        c, _ = client
+        resp = c.get("/api/internal/feeds")
+        assert resp.status_code == 403
+
+    def test_internal_feeds_lists_only_active_feeds(self, client):
+        c, session = client
+        feed = _make_feed(session, name="Active Feed")
+        inactive = _make_feed(session, name="Inactive Feed")
+        inactive.active = False
+        session.flush()
+
+        from database import UserFeedSubscription
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed.id),
+            UserFeedSubscription(user_id=1, feed_id=inactive.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/internal/feeds", headers={"X-Internal-Secret": "changeme"})
+        names = [d["name"] for d in resp.json()]
+        assert "Active Feed" in names
+        assert "Inactive Feed" not in names
