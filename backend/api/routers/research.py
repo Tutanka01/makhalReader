@@ -297,11 +297,12 @@ def _profile_to_entry(row: ResearchProfile) -> ResearchProfileEntry:
 @router.get("/profile", response_model=List[ResearchProfileEntry])
 async def get_profile(
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Return all researcher profile entries ordered by kind then weight DESC."""
+    """Return all researcher profile entries for the current user."""
     rows = (
         db.query(ResearchProfile)
+        .filter(ResearchProfile.user_id == current_user["id"])
         .order_by(ResearchProfile.kind, ResearchProfile.weight.desc())
         .all()
     )
@@ -312,13 +313,10 @@ async def get_profile(
 async def put_profile(
     payload: ResearchProfileUpsert,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
-    """Upsert profile entries. weight==0 deletes the entry.
-
-    Uses INSERT OR REPLACE via SQLAlchemy merge on the unique constraint so
-    a second call with the same (kind, label) updates the existing row.
-    """
+    """Upsert profile entries scoped to the current user. weight==0 deletes."""
+    user_id = current_user["id"]
     for entry in payload.entries:
         norm_label = entry.label.strip().lower()
         if not norm_label:
@@ -326,7 +324,11 @@ async def put_profile(
 
         existing = (
             db.query(ResearchProfile)
-            .filter(ResearchProfile.kind == entry.kind, ResearchProfile.label == norm_label)
+            .filter(
+                ResearchProfile.user_id == user_id,
+                ResearchProfile.kind == entry.kind,
+                ResearchProfile.label == norm_label,
+            )
             .first()
         )
 
@@ -339,6 +341,7 @@ async def put_profile(
                 existing.source = entry.source
             else:
                 db.add(ResearchProfile(
+                    user_id=user_id,
                     kind=entry.kind,
                     label=norm_label,
                     weight=entry.weight,
@@ -348,6 +351,7 @@ async def put_profile(
     db.commit()
     rows = (
         db.query(ResearchProfile)
+        .filter(ResearchProfile.user_id == user_id)
         .order_by(ResearchProfile.kind, ResearchProfile.weight.desc())
         .all()
     )

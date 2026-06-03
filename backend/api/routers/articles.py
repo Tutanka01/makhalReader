@@ -382,13 +382,13 @@ async def submit_feedback(
 
     # On 👍 feedback: upsert article tags into research_profile as topic entries
     if body.value == 1:
-        _upsert_tags_from_feedback(db, article)
+        _upsert_tags_from_feedback(db, article, user_id)
 
     return {"user_feedback": score.user_feedback}
 
 
-def _upsert_tags_from_feedback(db: Session, article: Article) -> None:
-    """Upsert article tags into research_profile (kind='topic', source='feedback').
+def _upsert_tags_from_feedback(db: Session, article: Article, user_id: int) -> None:
+    """Upsert article tags into research_profile (kind='topic', source='feedback') for a user.
 
     Each tag increments weight by 0.1 (capped at 2.0) if already present,
     or is inserted with weight=1.1 if new.  Tags are normalised to lowercase.
@@ -401,7 +401,11 @@ def _upsert_tags_from_feedback(db: Session, article: Article) -> None:
                 continue
             existing = (
                 db.query(ResearchProfile)
-                .filter(ResearchProfile.kind == "topic", ResearchProfile.label == label)
+                .filter(
+                    ResearchProfile.user_id == user_id,
+                    ResearchProfile.kind == "topic",
+                    ResearchProfile.label == label,
+                )
                 .first()
             )
             if existing:
@@ -409,6 +413,7 @@ def _upsert_tags_from_feedback(db: Session, article: Article) -> None:
                 existing.source = "feedback"
             else:
                 db.add(ResearchProfile(
+                    user_id=user_id,
                     kind="topic",
                     label=label,
                     weight=1.1,

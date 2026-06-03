@@ -127,6 +127,49 @@ class TestProfileEndpointSource:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AC (Story 4.3) — Profile endpoints scoped to user_id (FR-MT-23)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestProfileUserScoping:
+    def test_get_uses_current_user_depends(self):
+        src = _read(_RESEARCH_PY)
+        assert "current_user: dict = Depends(require_session)" in src
+
+    def test_get_filters_by_user_id(self):
+        src = _read(_RESEARCH_PY)
+        assert 'ResearchProfile.user_id == current_user["id"]' in src
+
+    def test_put_uses_current_user_depends(self):
+        src = _read(_RESEARCH_PY)
+        # Must appear twice (GET + PUT) or use the pattern once in PUT
+        assert 'Depends(require_session)' in src
+
+    def test_put_filters_by_user_id(self):
+        src = _read(_RESEARCH_PY)
+        assert 'ResearchProfile.user_id == user_id' in src
+
+    def test_put_sets_user_id_on_new_entries(self):
+        src = _read(_RESEARCH_PY)
+        assert 'user_id=user_id' in src.replace(' ', '')
+
+    def test_feedback_passes_user_id(self):
+        src = _read(_ARTICLES_PY)
+        assert '_upsert_tags_from_feedback(db, article, user_id)' in src
+
+    def test_feedback_function_accepts_user_id(self):
+        src = _read(_ARTICLES_PY)
+        assert 'user_id: int' in src
+
+    def test_feedback_filters_by_user_id(self):
+        src = _read(_ARTICLES_PY)
+        assert 'ResearchProfile.user_id == user_id' in src
+
+    def test_feedback_sets_user_id_on_new(self):
+        src = _read(_ARTICLES_PY)
+        assert 'user_id=user_id' in src.replace(' ', '')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AC 4 — Feedback hook: tags → research_profile on 👍
 # ═══════════════════════════════════════════════════════════════════════════════
 
