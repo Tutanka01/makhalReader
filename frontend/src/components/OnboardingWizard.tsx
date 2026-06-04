@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import ConfigBootstrapStep from './ConfigBootstrapStep'
 import FacetSchemaEditor from './FacetSchemaEditor'
+import TemplateBrowser from './TemplateBrowser'
+import { Loader2 } from 'lucide-react'
 import type { BootstrapResult, ClusterProposal, FacetSchema } from '../types'
 
 interface OnboardingWizardProps {
@@ -30,6 +32,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const [manualClusters, setManualClusters] = useState<ClusterProposal[]>([])
   const [manualFacetSchema, setManualFacetSchema] = useState<FacetSchema>({ version: 1, dimensions: [] })
+  const [showTemplates, setShowTemplates] = useState(false)
 
   const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
   const [scoredCount, setScoredCount] = useState(0)
@@ -100,6 +103,20 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const handleBootstrapSkip = () => {
     setStep(3)
+  }
+
+  const handleApplyTemplate = async (templateId: number) => {
+    try {
+      const res = await fetch(`/api/profile/from-template/${templateId}`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (Array.isArray(data.scoring_clusters)) setManualClusters(data.scoring_clusters)
+      if (data.facet_schema) setManualFacetSchema(data.facet_schema)
+      setShowTemplates(false)
+    } catch { /* ignore */ }
   }
 
   const handleManualNext = async () => {
@@ -299,6 +316,21 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-20 overflow-y-auto">
         <div className="w-full max-w-2xl px-6 pb-12">
           <StepIndicator />
+
+          <button
+            onClick={() => setShowTemplates(true)}
+            className="mb-6 text-xs rounded bg-accent/10 text-accent px-3 py-1.5 font-medium hover:bg-accent/20 transition-colors"
+          >
+            Browse Starter Packs
+          </button>
+          {showTemplates && (
+            <TemplateBrowser
+              onApply={handleApplyTemplate}
+              onClose={() => setShowTemplates(false)}
+              mode="onboarding"
+            />
+          )}
+
           {hasThesis ? (
             <ConfigBootstrapStep
               thesisText={thesisTitle}

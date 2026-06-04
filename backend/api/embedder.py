@@ -5,6 +5,7 @@ Responsibilities:
 - embed_article_async: fire-and-forget background task called after scoring.
 - All operations are fault-tolerant: any failure logs a warning and returns.
 """
+import asyncio
 import json
 import math
 import os
@@ -22,26 +23,61 @@ logger = structlog.get_logger().bind(service="embedder")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "/data/chroma")
+logger.info("embedder_init", model=OLLAMA_EMBED_MODEL, chroma_path=CHROMA_PATH)
 
-_chroma_collections: dict[int, object] = {}
+_chroma_collections: dict[str, object] = {}
+_reembed_in_progress: dict[int, bool] = {}
 
 
-def _get_chroma(user_id: int = 1):
-    """Lazy-init per-user singleton — returns a 'articles_u{user_id}' Chroma
-    collection. Each tenant's embeddings are isolated in their own collection
+def _resolve_collection_name(user_id: int, db) -> str:
+    """Return the collection name for the given user based on DB state.
+
+    Reads user_config.embed_model — if set, returns the versioned name
+    (articles_u{user_id}_v2). Otherwise returns the default name.
+    """
+    from database import UserConfig
+    config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+    if config and config.embed_model:
+        return f"articles_u{user_id}_v2"
+    return f"articles_u{user_id}"
+
+
+def _get_chroma(user_id: int = 1, collection_name: Optional[str] = None):
+    """Lazy-init per-user singleton — returns a Chroma collection.
+
+    Each tenant's embeddings are isolated in their own collection
     (FR-MT-40). Import of chromadb is deferred so the API service starts even
     if the package is not installed or the Chroma directory is not available.
+
+    When collection_name is provided, uses it directly (for re-embed writers).
+    Otherwise resolves the name via DB state (for readers).
     """
-    if user_id in _chroma_collections:
-        return _chroma_collections[user_id]
+    if collection_name is not None:
+        return _get_or_create_collection(collection_name)
+
+    # Reader call: determine which collection to serve
+    resolved = f"articles_u{user_id}"
+    if not _reembed_in_progress.get(user_id):
+        db = SessionLocal()
+        try:
+            resolved = _resolve_collection_name(user_id, db)
+        finally:
+            db.close()
+
+    if resolved in _chroma_collections:
+        return _chroma_collections[resolved]
+    return _get_or_create_collection(resolved)
+
+
+def _get_or_create_collection(name: str):
+    """Get or create a Chroma collection by name. Caches result."""
     import chromadb  # deferred import
     client = chromadb.PersistentClient(path=CHROMA_PATH)
-    name = f"articles_u{user_id}"
     collection = client.get_or_create_collection(
         name=name,
         metadata={"hnsw:space": "cosine"},
     )
-    _chroma_collections[user_id] = collection
+    _chroma_collections[name] = collection
     return collection
 
 
@@ -145,6 +181,88 @@ async def embed_article_async(article_id: int, user_id: int = 1) -> None:
         except Exception:
             pass
     finally:
+        db.close()
+
+
+async def reembed_user_collection(user_id: int, force_model: str) -> dict:
+    """Re-embed all articles for a user using a new model.
+
+    Creates a versioned collection (articles_u{user_id}_v2), re-embeds every
+    article using force_model, then updates user_config.embed_model.
+    During migration, readers continue to use the old collection (AC2).
+    Returns {"status": "complete", "reembedded": count, "model": model}.
+    """
+    db = SessionLocal()
+    try:
+        from database import UserConfig
+
+        _reembed_in_progress[user_id] = True
+        config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+        if config:
+            config.pending_embed_model = force_model
+            db.commit()
+
+        new_name = f"articles_u{user_id}_v2"
+        new_collection = _get_chroma(user_id, collection_name=new_name)
+
+        # Use articles from the user's current collection as the source
+        old_collection = _get_chroma(user_id)
+        old_data = old_collection.get(include=[])
+        article_ids = [int(aid) for aid in old_data["ids"]]
+
+        reembedded = 0
+        offset = 0
+        batch_size = 50
+        while offset < len(article_ids):
+            batch_ids = article_ids[offset:offset + batch_size]
+            articles = db.query(Article).filter(Article.id.in_(batch_ids)).all()
+            articles_by_id = {a.id: a for a in articles}
+
+            for aid in batch_ids:
+                article = articles_by_id.get(aid)
+                if not article:
+                    continue
+                try:
+                    embed_text = _build_embed_text(article)
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.post(
+                            f"{OLLAMA_URL}/api/embeddings",
+                            json={"model": force_model, "prompt": embed_text},
+                        )
+                        resp.raise_for_status()
+                        vector = resp.json()["embedding"]
+
+                    meta = {
+                        "article_id": article.id,
+                        "feed_id": article.feed_id or 0,
+                        "score": float(article.score or 0.0),
+                        "created_at": article.created_at.isoformat() if article.created_at else "",
+                    }
+                    new_collection.upsert(
+                        ids=[str(article.id)],
+                        embeddings=[vector],
+                        metadatas=[meta],
+                    )
+                    reembedded += 1
+                except Exception as ae:
+                    logger.warning("reembed_article_failed", article_id=aid, error=str(ae))
+                    continue
+
+            offset += batch_size
+
+        if config:
+            config.embed_model = force_model
+            config.pending_embed_model = None
+            db.commit()
+
+        logger.info("reembed_complete", user_id=user_id, model=force_model, reembedded=reembedded)
+        return {"status": "complete", "reembedded": reembedded, "model": force_model}
+
+    except Exception as e:
+        logger.error("reembed_failed", user_id=user_id, error=str(e))
+        return {"status": "failed", "error": str(e)}
+    finally:
+        _reembed_in_progress[user_id] = False
         db.close()
 
 

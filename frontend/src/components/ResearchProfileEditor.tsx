@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Plus, Trash2, Loader2, UserCircle2, BookOpen, Layers, Globe, RefreshCw } from 'lucide-react'
+import { X, Plus, Trash2, Loader2, UserCircle2, BookOpen, Layers, Globe, RefreshCw, FileText } from 'lucide-react'
 import type { ProfileKind, ResearchProfileEntry, ClusterProposal, FacetSchema } from '../types'
 import { useResearchStore } from '../store/research'
 import FacetSchemaEditor from './FacetSchemaEditor'
 import RediscoverPanel from './RediscoverPanel'
+import TemplateBrowser from './TemplateBrowser'
 
 interface Props {
   open: boolean
@@ -151,6 +152,8 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
   const [sources, setSources] = useState<string[]>([])
   const [thesisQuestion, setThesisQuestion] = useState('')
   const [showRediscover, setShowRediscover] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [templateSuccess, setTemplateSuccess] = useState('')
 
   // Load profile when panel opens
   useEffect(() => {
@@ -205,6 +208,37 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
     if (already) return
     setDraft((d) => [...d, { kind, label, weight: 1.0, source: 'manual' }])
     setDirty(true)
+  }
+
+  const mapConfigToDraft = (data: any): ResearchProfileEntry[] => {
+    const entries: ResearchProfileEntry[] = []
+    if (Array.isArray(data.scoring_clusters)) {
+      for (const c of data.scoring_clusters) {
+        entries.push({ kind: 'topic', label: c.name || '', weight: c.reward_level ?? 1.0, source: 'manual' })
+      }
+    }
+    if (data.facet_schema?.dimensions) {
+      for (const d of data.facet_schema.dimensions) {
+        entries.push({ kind: 'domain', label: d.id || d.name || '', weight: 1.0, source: 'manual' })
+      }
+    }
+    return entries
+  }
+
+  const handleLoadTemplate = async (templateId: number) => {
+    setTemplateSuccess('')
+    const res = await fetch(`/api/profile/from-template/${templateId}`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    if (!res.ok) return
+    const applied = await res.json()
+    setDraft(mapConfigToDraft(applied))
+    if (Array.isArray(applied.scoring_clusters)) setClusters(applied.scoring_clusters)
+    if (applied.facet_schema) setFacetSchema(applied.facet_schema)
+    setDirty(true)
+    setTemplateSuccess('Template loaded — review and save when ready')
+    setShowTemplates(false)
   }
 
   const handleSave = async () => {
@@ -347,6 +381,32 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
               <FacetSchemaEditor
                 value={facetSchema}
                 onChange={fs => { setFacetSchema(fs); setDirty(true) }}
+              />
+            )}
+          </section>
+
+          {/* ── Templates (Story 14-4) ── */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-2">
+              <FileText size={14} className="text-accent" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                Templates
+              </h3>
+            </div>
+            {templateSuccess && (
+              <p className="text-xs text-success mb-2">{templateSuccess}</p>
+            )}
+            <button
+              onClick={() => setShowTemplates(true)}
+              className="text-xs rounded bg-accent/10 text-accent px-3 py-1.5 font-medium hover:bg-accent/20 transition-colors"
+            >
+              Browse Templates
+            </button>
+            {showTemplates && (
+              <TemplateBrowser
+                onApply={handleLoadTemplate}
+                onClose={() => setShowTemplates(false)}
+                mode="editor"
               />
             )}
           </section>

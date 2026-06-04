@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -95,8 +96,18 @@ class ConfigUpdate(BaseModel):
     facet_schema: dict | None = None
 
 
+class PublishTemplateRequest(BaseModel):
+    name: str
+    scope: str = "org"
+
+
 class BootstrapRequest(BaseModel):
     thesis_text: str
+
+
+def _slugify(name: str, owner_id: int) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return f"{base}-{owner_id}"
 
 
 def _config_to_response(config: UserConfig) -> Dict[str, Any]:
@@ -287,22 +298,111 @@ async def list_templates(
 ):
     """Return all global templates plus org-scoped templates for the user's org."""
     try:
-        rows = db.query(ConfigTemplate).filter(
-            ConfigTemplate.scope == "global"
-        ).all()
+        user_id = current_user["id"]
+        org_id = current_user.get("org_id")
+        from sqlalchemy import and_, or_
+
+        filters = [ConfigTemplate.scope == "global"]
+        if org_id is not None:
+            filters.append(
+                and_(ConfigTemplate.scope == "org", ConfigTemplate.org_id == org_id)
+            )
+        filters.append(
+            and_(ConfigTemplate.scope == "user", ConfigTemplate.owner_user_id == user_id)
+        )
+        rows = db.query(ConfigTemplate).filter(or_(*filters)).all()
     except Exception:
         return []
-    return [
-        {
+    result = []
+    for t in rows:
+        cluster_count = None
+        if t.body_json:
+            try:
+                body = json.loads(t.body_json)
+                clusters = body.get("scoring_clusters", [])
+                if isinstance(clusters, list):
+                    cluster_count = len(clusters)
+            except Exception:
+                pass
+        result.append({
             "id": t.id,
             "slug": t.slug,
             "name": t.name,
             "domain_label": t.domain_label,
             "scope": t.scope,
+            "cluster_count": cluster_count,
+            "owner_user_id": t.owner_user_id,
+            "org_id": t.org_id,
             "created_at": t.created_at.isoformat() if t.created_at else None,
-        }
-        for t in rows
-    ]
+        })
+    return result
+
+
+@templates_router.post("/templates")
+async def publish_template(
+    body: PublishTemplateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    """Publish current user config as a template (Story 14.3)."""
+    if body.scope not in ("org", "user"):
+        raise HTTPException(status_code=422, detail="scope must be 'org' or 'user'")
+    if body.scope == "org" and not current_user.get("org_id"):
+        raise HTTPException(status_code=422, detail="User must belong to an org to publish org-scoped templates")
+
+    user_id = current_user["id"]
+    config = _get_user_config(db, user_id)
+
+    try:
+        scoring_clusters = json.loads(config.scoring_clusters_json or "[]")
+    except Exception:
+        scoring_clusters = []
+    try:
+        facet_schema = json.loads(config.facet_schema_json or "{}")
+    except Exception:
+        facet_schema = {}
+    try:
+        avoid_topics = json.loads(config.avoid_topics_json or "[]")
+    except Exception:
+        avoid_topics = []
+    try:
+        tracked_venues = json.loads(config.tracked_venues_json or "[]")
+    except Exception:
+        tracked_venues = []
+
+    keywords = list(set(tracked_venues + avoid_topics))
+    domain_label = config.domain_label or (config.thesis_title[:50] if config.thesis_title else None)
+
+    body_json = json.dumps({
+        "scoring_clusters": scoring_clusters,
+        "facet_schema": facet_schema,
+        "keywords": keywords,
+        "domain_label": domain_label,
+        "suggested_source_queries": [],
+    })
+
+    slug = _slugify(body.name, user_id)
+    template = ConfigTemplate(
+        slug=slug,
+        name=body.name,
+        domain_label=domain_label,
+        body_json=body_json,
+        scope=body.scope,
+        owner_user_id=user_id,
+        org_id=current_user.get("org_id"),
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+
+    logger.info("template_published", user_id=user_id, slug=slug, scope=body.scope)
+    return {
+        "id": template.id,
+        "slug": template.slug,
+        "name": template.name,
+        "scope": template.scope,
+        "org_id": template.org_id,
+    }
 
 
 @router.post("/from-template/{template_id}", response_model=UserConfigResponse)
@@ -322,6 +422,13 @@ async def apply_template(
 
     template = db.query(ConfigTemplate).filter(ConfigTemplate.id == template_id).first()
     if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # Org isolation (NFR-DA7)
+    user_org_id = current_user.get("org_id")
+    if template.scope == "org" and template.org_id != user_org_id:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if template.scope == "user" and template.owner_user_id != user_id:
         raise HTTPException(status_code=404, detail="Template not found")
 
     try:

@@ -238,6 +238,8 @@ class UserConfig(Base):
     bootstrap_model = Column(String(64), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    embed_model = Column(String, nullable=True)
+    pending_embed_model = Column(String, nullable=True)
 
 
 class ConfigTemplate(Base):
@@ -252,6 +254,7 @@ class ConfigTemplate(Base):
     scope = Column(String, nullable=False, default="global")
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
 
 
 class UserSetting(Base):
@@ -531,6 +534,11 @@ def init_db():
         # Story 13.5 — canonical_id on sources for idempotent dedup
         "ALTER TABLE sources ADD COLUMN canonical_id TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_sources_canonical_id ON sources(canonical_id) WHERE canonical_id IS NOT NULL",
+        # Story 14.2 — per-user embedding model override
+        "ALTER TABLE user_config ADD COLUMN embed_model TEXT",
+        "ALTER TABLE user_config ADD COLUMN pending_embed_model TEXT",
+        # Story 14.3 — org-scoped templates
+        "ALTER TABLE config_templates ADD COLUMN org_id INTEGER REFERENCES organizations(id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

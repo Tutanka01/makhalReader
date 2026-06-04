@@ -1,3 +1,4 @@
+import asyncio
 import json
 import structlog
 import secrets
@@ -95,14 +96,33 @@ async def normalize_article_urls(db: Session = Depends(get_db), _: None = _auth)
     return {"updated": updated, "merged": merged, "skipped": skipped}
 
 
-@router.post("/reindex")
-async def reindex_chroma(db: Session = Depends(get_db), _: None = _auth):
-    """Copy old 'articles' Chroma collection to 'articles_u1' (Story 7.4).
+class ReindexRequest(BaseModel):
+    force_model: Optional[str] = None
 
-    One-time migration for existing deployments. Idempotent — safe to call
-    multiple times. Returns how many vectors were migrated (0 if already done).
-    Also called automatically at startup.
+
+@router.post("/reindex")
+async def reindex_chroma(
+    body: ReindexRequest = ReindexRequest(),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    """Reindex Chroma collections.
+
+    Without force_model: legacy behavior — copy old 'articles' collection to
+    'articles_u1' (Story 7.4). Idempotent, returns migrated count.
+
+    With force_model: triggers per-user re-embed to a new model (Story 14-2).
+    Returns immediately with {"status": "started", "model": ...} — the actual
+    re-embed runs as a background task. NFR-DA1: user_id=1 without explicit
+    force_model is NEVER re-embedded by this code path.
     """
+    if body.force_model is not None:
+        user_id = current_user["id"]
+        from embedder import reembed_user_collection  # noqa: PLC0415
+        asyncio.create_task(reembed_user_collection(user_id, body.force_model))
+        logger.info("reembed_started", user_id=user_id, model=body.force_model)
+        return {"status": "started", "model": body.force_model}
+
     from embedder import _migrate_chroma_articles_to_per_user  # noqa: PLC0415
     count = _migrate_chroma_articles_to_per_user()
     if count > 0:
