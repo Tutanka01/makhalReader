@@ -521,6 +521,16 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS user_source_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, source_id))",
         # Story 12.6 — provider-based article source link
         "ALTER TABLE articles ADD COLUMN source_id INTEGER REFERENCES sources(id)",
+        # Story 13.5 — discovery_runs table for tracking apply status
+        "CREATE TABLE IF NOT EXISTS discovery_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id), expand_input TEXT, expand_result_json TEXT, pack_result_json TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, applied_at DATETIME)",
+        # Story 13.5 — tracked_venues table
+        "CREATE TABLE IF NOT EXISTS tracked_venues (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id), venue_name TEXT NOT NULL, provider_id TEXT, source_id INTEGER REFERENCES sources(id), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_tracked_venues_user_venue ON tracked_venues(user_id, venue_name)",
+        # Story 13.5 — openalex_id on tracked_authors
+        "ALTER TABLE tracked_authors ADD COLUMN openalex_id TEXT",
+        # Story 13.5 — canonical_id on sources for idempotent dedup
+        "ALTER TABLE sources ADD COLUMN canonical_id TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_sources_canonical_id ON sources(canonical_id) WHERE canonical_id IS NOT NULL",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

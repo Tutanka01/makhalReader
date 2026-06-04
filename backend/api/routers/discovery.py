@@ -114,3 +114,33 @@ async def post_resolve(
     except Exception as e:
         logger.warning("resolve_endpoint_failed", user_id=user_id, error=str(e))
         return source_discovery.DiscoveryPack()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/discovery/apply
+# ---------------------------------------------------------------------------
+
+
+class ApplyResponse(BaseModel):
+    applied: bool = True
+    counts: dict = {}
+
+
+@router.post("/apply")
+async def post_apply(
+    body: source_discovery.ApplyRequest,
+    current_user: dict = Depends(require_session),
+):
+    user_id = current_user["id"]
+    try:
+        counts = source_discovery.apply_discovery_pack(
+            user_id=user_id,
+            sources=body.sources,
+            venues=body.venues,
+            authors=body.authors,
+        )
+        logger.info("apply_endpoint", user_id=user_id, counts=counts)
+        return ApplyResponse(applied=True, counts=counts)
+    except Exception as e:
+        logger.error("apply_endpoint_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

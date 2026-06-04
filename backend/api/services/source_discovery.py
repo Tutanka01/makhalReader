@@ -564,6 +564,96 @@ def _rank_and_group(candidates: List[DiscoveryCandidate]) -> DiscoveryPack:
 # ---------------------------------------------------------------------------
 
 
+# ===========================================================================
+# Story 13.5 — APPLY (idempotent persist)
+# ===========================================================================
+
+
+class ApplyRequest(BaseModel):
+    sources: List[DiscoveredItem] = []
+    venues: List[DiscoveredItem] = []
+    authors: List[DiscoveredItem] = []
+
+
+def get_canonical_id(item: DiscoveredItem) -> str:
+    qj = item.query_json or {}
+    oid = qj.get("openalex_id") or qj.get("openalexId") or qj.get("id", "")
+    if isinstance(oid, str) and oid.startswith("https://openalex.org/"):
+        return "openalex:" + oid.split("/")[-1]
+    arxiv = qj.get("arxiv_id") or qj.get("arxivId", "")
+    if arxiv:
+        return "arxiv:" + arxiv
+    doi = qj.get("doi", "")
+    if doi:
+        return "doi:" + doi
+    raw = f"{item.provider}:{item.name}"
+    return "hash:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _author_ss_id(item: DiscoveredItem) -> str:
+    qj = item.query_json or {}
+    oid = qj.get("openalex_id") or qj.get("openalexId") or qj.get("id", "")
+    if isinstance(oid, str) and oid.startswith("https://openalex.org/"):
+        return "openalex:" + oid.split("/")[-1]
+    if oid:
+        return "openalex:" + oid
+    return "author:" + hashlib.sha256(item.name.encode("utf-8")).hexdigest()[:16]
+
+
+def apply_discovery_pack(
+    user_id: int,
+    sources: list[DiscoveredItem],
+    venues: list[DiscoveredItem],
+    authors: list[DiscoveredItem],
+) -> dict:
+    from sqlalchemy import text
+    from database import engine as _engine
+
+    counts: dict[str, int] = {"sources": 0, "venues": 0, "authors": 0}
+    with _engine.connect() as conn:
+        for item in sources:
+            cid = get_canonical_id(item)
+            qj_str = json.dumps(item.query_json) if item.query_json else "{}"
+            result = conn.execute(
+                text("INSERT OR IGNORE INTO sources (name, provider, query_json, label, category, active, canonical_id, created_at) VALUES (:name, :provider, :query_json, :label, 'Discovery', 1, :cid, datetime('now'))"),
+                {"name": item.name, "provider": item.provider, "query_json": qj_str, "label": item.label or None, "cid": cid},
+            )
+            if result.rowcount and result.rowcount > 0:
+                counts["sources"] += 1
+            row = conn.execute(
+                text("SELECT id FROM sources WHERE canonical_id = :cid"),
+                {"cid": cid},
+            ).fetchone()
+            if row:
+                conn.execute(
+                    text("INSERT OR IGNORE INTO user_source_subscriptions (user_id, source_id, created_at) VALUES (:uid, :sid, datetime('now'))"),
+                    {"uid": user_id, "sid": row[0]},
+                )
+
+        for item in venues:
+            conn.execute(
+                text("INSERT OR IGNORE INTO tracked_venues (user_id, venue_name, provider_id) VALUES (:uid, :name, :provider)"),
+                {"uid": user_id, "name": item.name, "provider": item.provider},
+            )
+            counts["venues"] += 1
+
+        for item in authors:
+            ss_id = _author_ss_id(item)
+            oid = None
+            qj = item.query_json or {}
+            raw_oid = qj.get("openalex_id") or qj.get("openalexId") or qj.get("id", "")
+            if isinstance(raw_oid, str):
+                oid = raw_oid
+            conn.execute(
+                text("INSERT OR IGNORE INTO tracked_authors (user_id, name, ss_author_id, openalex_id, paper_count, avg_score, alert_count, created_at) VALUES (:uid, :name, :ss_id, :oid, 0, 0.0, 0, datetime('now'))"),
+                {"uid": user_id, "name": item.name, "ss_id": ss_id, "oid": oid},
+            )
+            counts["authors"] += 1
+
+        conn.commit()
+    return counts
+
+
 async def resolve_verify_rank(expand_result: ExpandResult) -> DiscoveryPack:
     """Run the full discovery pipeline on an ExpandResult.
 
