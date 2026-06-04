@@ -175,6 +175,7 @@ class ArticleScore(Base):
     contribution_type = Column(String(24), nullable=True)
     re_document_type = Column(String(24), nullable=True)
     score_meta_json = Column(Text, nullable=True)
+    facets_json = Column(Text, nullable=True)  # Story 10.1 — per-article facets result
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
@@ -204,6 +205,7 @@ class UserConfig(Base):
     prompt_profile = Column(String, nullable=False, default="unified")
     prompt_cache_text = Column(Text, nullable=True)
     prompt_cache_hash = Column(String(64), nullable=True)
+    facet_schema_json = Column(Text, nullable=True)  # Story 10.1 — per-tenant facet schema
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -458,6 +460,10 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS user_config (user_id INTEGER PRIMARY KEY REFERENCES users(id), thesis_title TEXT NOT NULL DEFAULT '', thesis_question TEXT, thesis_contribution TEXT, thesis_sections_json TEXT NOT NULL DEFAULT '[]', scoring_clusters_json TEXT NOT NULL DEFAULT '[]', tracked_venues_json TEXT NOT NULL DEFAULT '[]', avoid_topics_json TEXT NOT NULL DEFAULT '[]', weekly_goal INTEGER NOT NULL DEFAULT 10, model_preference TEXT NOT NULL DEFAULT 'google/gemini-flash-1.5', prompt_profile TEXT NOT NULL DEFAULT 'unified', prompt_cache_text TEXT, prompt_cache_hash TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         # Story 6.5 — user_settings table (FR-MT-38)
         "CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL REFERENCES users(id), key TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, key))",
+        # Story 10.1 — per-tenant facet schema (domain-agnostic generalization)
+        "ALTER TABLE user_config ADD COLUMN facet_schema_json TEXT",
+        # Story 10.1 — per-article facets result
+        "ALTER TABLE article_scores ADD COLUMN facets_json TEXT",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
