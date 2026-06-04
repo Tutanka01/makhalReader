@@ -114,6 +114,30 @@ class Feed(Base):
     last_fetched = Column(DateTime, nullable=True)
 
 
+class Source(Base):
+    """Provider-agnostic source (superset of feeds). Story 12.1, FR-MT-60."""
+    __tablename__ = "sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    provider = Column(String(24), nullable=False, default="rss")
+    query_json = Column(Text, nullable=True)
+    label = Column(String, nullable=True)
+    category = Column(String, nullable=False, default="General")
+    active = Column(Boolean, default=True, nullable=False)
+    last_fetched = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class UserSourceSubscription(Base):
+    """User-to-source subscription (Story 12.1, FR-MT-60)."""
+    __tablename__ = "user_source_subscriptions"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    source_id = Column(Integer, ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class Article(Base):
     __tablename__ = "articles"
 
@@ -490,6 +514,10 @@ def init_db():
         "ALTER TABLE user_config ADD COLUMN bootstrap_model VARCHAR(64)",
         # Story 11.3 — config templates table (starter packs)
         "CREATE TABLE IF NOT EXISTS config_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, domain_label TEXT, body_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', owner_user_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+        # Story 12.1 — provider-agnostic sources table (FR-MT-60)
+        "CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider VARCHAR(24) NOT NULL DEFAULT 'rss', query_json TEXT, label TEXT, category TEXT NOT NULL DEFAULT 'General', active BOOLEAN NOT NULL DEFAULT 1, last_fetched DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        # Story 12.1 — user_source_subscriptions (FR-MT-60)
+        "CREATE TABLE IF NOT EXISTS user_source_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, source_id))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -512,6 +540,8 @@ def init_db():
         _backfill_tracked_authors(conn)
         _backfill_facet_schema(conn)   # Story 10.2
         _seed_config_templates(conn)   # Story 11.3
+        _backfill_sources(conn)                    # Story 12.1 — feeds → sources
+        _backfill_user_source_subscriptions(conn)  # Story 12.1 — user_feed_subscriptions → user_source_subscriptions
 
 
 def _backfill_article_scores(conn):
@@ -847,3 +877,29 @@ def get_facet_schema(db: Session, user_id: int) -> dict:
     except Exception:
         pass
     return _DEFAULT_FACET_SCHEMA
+
+
+def _backfill_sources(conn):
+    """Create a source row for every existing feed (provider='rss'). Idempotent."""
+    try:
+        conn.execute(text("""
+            INSERT OR IGNORE INTO sources (id, name, provider, query_json, label, category, active, last_fetched, created_at)
+            SELECT id, name, 'rss', json_object('url', url), NULL, category, active, last_fetched, datetime('now')
+            FROM feeds
+        """))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _backfill_user_source_subscriptions(conn):
+    """Mirror user_feed_subscriptions into user_source_subscriptions. Idempotent."""
+    try:
+        conn.execute(text("""
+            INSERT OR IGNORE INTO user_source_subscriptions (user_id, source_id, created_at)
+            SELECT user_id, feed_id, created_at
+            FROM user_feed_subscriptions
+        """))
+        conn.commit()
+    except Exception:
+        pass

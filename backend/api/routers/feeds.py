@@ -1,3 +1,4 @@
+import json
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -9,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import Article, Feed, UserFeedSubscription, get_db
+from database import Article, Feed, Source, UserFeedSubscription, UserSourceSubscription, get_db
 from models import ArticleListItem, FeedCreate, FeedOut, FeedWithCount
 from routers.articles import _row_to_list_item
 
@@ -170,6 +171,7 @@ async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), current
         if not existing.active:
             existing.active = True
             _ensure_subscription(db, current_user["id"], existing.id)
+            _ensure_source_for_feed(db, existing)
             db.commit()
             db.refresh(existing)
             return FeedOut.model_validate(existing)
@@ -178,7 +180,18 @@ async def add_feed(feed_data: FeedCreate, db: Session = Depends(get_db), current
     feed = Feed(url=feed_data.url, name=feed_data.name, category=feed_data.category)
     db.add(feed)
     db.flush()
+    source = Source(
+        id=feed.id,
+        name=feed_data.name,
+        provider="rss",
+        query_json=json.dumps({"url": feed_data.url}),
+        category=feed_data.category,
+        active=True,
+    )
+    db.add(source)
+    db.flush()
     db.add(UserFeedSubscription(user_id=current_user["id"], feed_id=feed.id))
+    db.add(UserSourceSubscription(user_id=current_user["id"], source_id=source.id))
     db.commit()
     db.refresh(feed)
     return FeedOut.model_validate(feed)
@@ -234,3 +247,17 @@ def _ensure_subscription(db: Session, user_id: int, feed_id: int):
     ).first()
     if not existing:
         db.add(UserFeedSubscription(user_id=user_id, feed_id=feed_id))
+
+
+def _ensure_source_for_feed(db: Session, feed: Feed):
+    existing = db.query(Source).filter(Source.id == feed.id).first()
+    if not existing:
+        source = Source(
+            id=feed.id,
+            name=feed.name,
+            provider="rss",
+            query_json=json.dumps({"url": feed.url}),
+            category=feed.category,
+            active=feed.active,
+        )
+        db.add(source)

@@ -24,6 +24,28 @@ class FeedOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SourceOut(BaseModel):
+    id: int
+    name: str
+    provider: str = "rss"
+    query_json: Optional[str] = None
+    label: Optional[str] = None
+    category: str = "General"
+    active: bool = True
+    last_fetched: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UserSourceSubscriptionOut(BaseModel):
+    user_id: int
+    source_id: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ArticleOut(BaseModel):
     id: int
     feed_id: int
