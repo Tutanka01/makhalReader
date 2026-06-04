@@ -453,6 +453,34 @@ export interface Conference {
   bookmarked: boolean
 }
 
+// ── Source Discovery (Story 13.4) ──────────────────────────────────────────
+
+export interface ExpandResult {
+  field_label: string
+  concepts: string[]
+  venue_keywords: string[]
+  author_keywords: string[]
+  query_terms: string[]
+  language: string
+  degraded: boolean
+}
+
+export interface DiscoveredItem {
+  name: string
+  provider: string
+  query_json: Record<string, unknown>
+  provenance_url: string
+  verified: boolean
+  label: string
+  unverifiable: boolean
+}
+
+export interface DiscoveryPack {
+  sources: DiscoveredItem[]
+  venues: DiscoveredItem[]
+  authors: DiscoveredItem[]
+}
+
 // ── Source (provider-agnostic, Story 12.7) ─────────────────────────────────
 export interface Source {
   id: number
