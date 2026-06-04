@@ -1,8 +1,9 @@
-"""Story 13.1 — Discovery EXPAND stage.
+"""Story 13.1—13.2 — Discovery EXPAND + RESOLVE/VERIFY/RANK pipeline.
 
 Pure async function that takes a free-text thesis description and returns a
 structured ExpandResult (field label, concepts, venue/author keywords, query
-terms, language) via one LLM call.
+terms, language) via one LLM call. Then resolves through all configured providers,
+verifies each candidate, and ranks by relevance.
 
 Constraints:
 - FR-MT-59: LLM contract forbids URLs/DOIs/IDs; Pydantic validator strips any
@@ -12,12 +13,13 @@ Constraints:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
 import re
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 import structlog
@@ -340,3 +342,239 @@ async def expand(thesis_text: str) -> ExpandResult:
     logger.info("expand_ok", latency_ms=elapsed_ms, concepts=len(result.concepts))
     _cache_put(cache_key, result)
     return result
+
+
+# ===========================================================================
+# Story 13.2 — RESOLVE / VERIFY / RANK pipeline
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Pipeline models
+# ---------------------------------------------------------------------------
+
+
+class DiscoveryCandidate(BaseModel):
+    """A single resolved source before verification."""
+    name: str
+    provider: str
+    query_json: dict = {}
+    provenance_url: str = ""
+    relevance_score: float = 0.0
+    verified: bool = False
+    unverifiable: bool = False
+    label: str = ""
+
+
+class DiscoveredItem(BaseModel):
+    """A fully verified-and-ranked item in the final pack."""
+    name: str
+    provider: str
+    query_json: dict = {}
+    provenance_url: str = ""
+    verified: bool = False
+    label: str = ""
+    unverifiable: bool = False
+
+
+class DiscoveryPack(BaseModel):
+    """The final output of the discovery pipeline."""
+    sources: List[DiscoveredItem] = []
+    venues: List[DiscoveredItem] = []
+    authors: List[DiscoveredItem] = []
+
+
+# ---------------------------------------------------------------------------
+# RESOLVE — query all registered providers with EXPAND keywords
+# ---------------------------------------------------------------------------
+
+MAX_CANDIDATES = 60
+_VERIFY_TIMEOUT = 10.0
+
+_RESOLVE_QUERY_KEYS: Dict[str, str] = {
+    "openalex": "concepts",
+    "crossref": "query_terms",
+    "arxiv": "concepts",
+    "doaj": "venue_keywords",
+    "hal": "venue_keywords",
+    "dblp": "venue_keywords",
+    "openreview": "venue_keywords",
+}
+
+
+async def _resolve_one(
+    provider_id: str,
+    provider_cls: type,
+    keyword: str,
+    client: httpx.AsyncClient,
+) -> List[DiscoveryCandidate]:
+    """Call a single provider with a single keyword and map results."""
+    try:
+        from providers.base import SourceIntent
+        provider = provider_cls()
+        intent = SourceIntent(query=keyword)
+        results = await provider.resolve(intent)
+        return [
+            DiscoveryCandidate(
+                name=r.name,
+                provider=r.provider,
+                query_json=r.query_json or {},
+                provenance_url=r.provenance_url or "",
+                relevance_score=1.0,
+                label=r.label or "",
+            )
+            for r in results
+        ]
+    except Exception as e:
+        logger.warning("resolve_one_failed", provider=provider_id, keyword=keyword[:30], error=str(e))
+        return []
+
+
+async def _resolve_all(expand_result: ExpandResult) -> List[DiscoveryCandidate]:
+    """Query all registered providers with keywords from ExpandResult.
+
+    Pairs providers with their strongest keyword category from the expand
+    output, then calls resolve concurrently. Deduplicates by (name, provider)
+    and accumulates relevance score per duplicate.
+    """
+    from providers import PROVIDER_REGISTRY
+
+    keyword_buckets: Dict[str, List[str]] = {}
+    for pid, key_attr in _RESOLVE_QUERY_KEYS.items():
+        keywords = getattr(expand_result, key_attr, [])
+        if keywords:
+            keyword_buckets[pid] = keywords
+        elif pid in PROVIDER_REGISTRY:
+            keyword_buckets[pid] = expand_result.concepts or [expand_result.field_label]
+
+    tasks = []
+    async with httpx.AsyncClient() as client:
+        for pid, keywords in keyword_buckets.items():
+            if pid not in PROVIDER_REGISTRY:
+                continue
+            p_cls = PROVIDER_REGISTRY[pid]
+            for kw in keywords:
+                tasks.append(_resolve_one(pid, p_cls, kw, client))
+
+        all_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Flatten, filter exceptions, dedup + aggregate score
+    seen: Dict[Tuple[str, str], DiscoveryCandidate] = {}
+    for batch in all_results:
+        if not isinstance(batch, list):
+            continue
+        for c in batch:
+            key = (c.name, c.provider)
+            if key in seen:
+                seen[key].relevance_score += c.relevance_score
+            else:
+                seen[key] = c
+
+    candidates = sorted(seen.values(), key=lambda c: c.relevance_score, reverse=True)
+    logger.info("resolve_all_done", total_raw=sum(len(b) if isinstance(b, list) else 0 for b in all_results), deduped=len(candidates))
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Cap — keep top N by relevance score (NFR-DA6)
+# ---------------------------------------------------------------------------
+
+
+def _cap_candidates(candidates: List[DiscoveryCandidate]) -> List[DiscoveryCandidate]:
+    if len(candidates) <= MAX_CANDIDATES:
+        logger.info("cap_no_op", count=len(candidates))
+        return candidates
+    kept = candidates[:MAX_CANDIDATES]
+    logger.info("cap_applied", before=len(candidates), after=MAX_CANDIDATES)
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# VERIFY — concurrent HTTP check of each candidate's provenance URL
+# ---------------------------------------------------------------------------
+
+
+async def _verify_one(candidate: DiscoveryCandidate) -> DiscoveryCandidate:
+    if not candidate.provenance_url:
+        candidate.unverifiable = True
+        return candidate
+
+    try:
+        from net_guard import check_url
+        check_url(candidate.provenance_url)
+    except Exception:
+        candidate.unverifiable = True
+        return candidate
+
+    try:
+        async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT) as c:
+            r = await c.head(candidate.provenance_url, follow_redirects=True)
+            candidate.verified = r.is_success
+    except httpx.TimeoutException:
+        candidate.unverifiable = True
+    except httpx.ConnectError:
+        candidate.verified = False
+    except Exception:
+        candidate.verified = False
+    return candidate
+
+
+async def _verify_all(candidates: List[DiscoveryCandidate]) -> List[DiscoveryCandidate]:
+    tasks = [_verify_one(c) for c in candidates]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    final = []
+    for r in results:
+        if isinstance(r, DiscoveryCandidate):
+            final.append(r)
+    verified_count = sum(1 for c in final if c.verified)
+    unverifiable_count = sum(1 for c in final if c.unverifiable)
+    logger.info("verify_done", total=len(final), verified=verified_count, unverifiable=unverifiable_count)
+    return final
+
+
+# ---------------------------------------------------------------------------
+# RANK — sort verified items and group into DiscoveryPack
+# ---------------------------------------------------------------------------
+
+
+def _rank_and_group(candidates: List[DiscoveryCandidate]) -> DiscoveryPack:
+    sorted_c = sorted(candidates, key=lambda c: c.relevance_score, reverse=True)
+    pack = DiscoveryPack()
+    for c in sorted_c:
+        item = DiscoveredItem(
+            name=c.name,
+            provider=c.provider,
+            query_json=c.query_json,
+            provenance_url=c.provenance_url,
+            verified=c.verified,
+            label=c.label,
+            unverifiable=c.unverifiable,
+        )
+        if c.label in ("journal", "conference", "venue"):
+            pack.venues.append(item)
+        elif c.label == "author":
+            pack.authors.append(item)
+        else:
+            pack.sources.append(item)
+    logger.info("rank_done", sources=len(pack.sources), venues=len(pack.venues), authors=len(pack.authors))
+    return pack
+
+
+# ---------------------------------------------------------------------------
+# Public orchestrator
+# ---------------------------------------------------------------------------
+
+
+async def resolve_verify_rank(expand_result: ExpandResult) -> DiscoveryPack:
+    """Run the full discovery pipeline on an ExpandResult.
+
+    Steps: resolve → cap → verify → rank. Never raises; on total failure
+    returns an empty DiscoveryPack.
+    """
+    try:
+        candidates = await _resolve_all(expand_result)
+        capped = _cap_candidates(candidates)
+        verified = await _verify_all(capped)
+        return _rank_and_group(verified)
+    except Exception as e:
+        logger.error("pipeline_failed", error=str(e))
+        return DiscoveryPack()
