@@ -163,19 +163,23 @@ class TestPreExistingRowsPreserved:
         assert row.score == 0.42
         assert row.facets_json is None  # Story 10.1 leaves this NULL
 
-    def test_seed_user_facet_schema_json_is_null(self, tmp_db):
-        """AC 4: seed user_id=1 starts with facet_schema_json NULL (Story 10-2 backfills)."""
-        from sqlalchemy import text
+    def test_seed_user_user_config_row_exists(self, tmp_db):
+        """AC 4 (post-10-2): seed user_id=1 has a user_config row; the
+        facet_schema_json column exists (Story 10-2 backfill populates it)."""
+        from sqlalchemy import inspect, text
         from sqlalchemy.orm import sessionmaker
         engine, db_module = tmp_db
         db_module.init_db()
 
+        # Column exists on user_config (10-1)
+        columns = {c["name"] for c in inspect(engine).get_columns("user_config")}
+        assert "facet_schema_json" in columns
+
+        # Row exists for seed user
         Session = sessionmaker(bind=engine)
         session = Session()
         row = session.execute(
             text("SELECT facet_schema_json FROM user_config WHERE user_id = 1")
         ).fetchone()
         session.close()
-
-        assert row is not None  # Backfill creates the row
-        assert row.facet_schema_json is None  # Not populated by 10-1
+        assert row is not None

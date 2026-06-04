@@ -484,6 +484,7 @@ def init_db():
         _backfill_literature_reviews(conn)
         _backfill_novelty_alerts(conn)
         _backfill_tracked_authors(conn)
+        _backfill_facet_schema(conn)   # Story 10.2
 
 
 def _backfill_article_scores(conn):
@@ -538,6 +539,29 @@ _DEFAULT_AVOID_TOPICS = [
     "Generic Python or JS tutorials", "Marketing and startup announcements",
     "Social and political news",
 ]
+
+# Story 10.2 — default CS-equivalent facet schema (mirrors legacy enums for backward compat).
+_DEFAULT_FACET_SCHEMA = {
+    "version": 1,
+    "dimensions": [
+        {
+            "id": "contribution_type",
+            "label": "Contribution Type",
+            "type": "enum",
+            "values": [
+                "method", "benchmark", "survey", "empirical",
+                "theory", "position", "tool", "incident",
+                "tutorial", "news", "other",
+            ],
+        },
+        {
+            "id": "re_document_type",
+            "label": "RE Document Type",
+            "type": "enum",
+            "values": ["elicitation", "extraction", "method", "none"],
+        },
+    ],
+}
 
 
 def _backfill_user_config(conn):
@@ -617,6 +641,21 @@ def _backfill_tracked_authors(conn):
         pass
 
 
+def _backfill_facet_schema(conn):
+    """Story 10.2 — populate facet_schema_json for user_id=1 with the CS default if not yet set."""
+    try:
+        conn.execute(
+            text(
+                "UPDATE user_config SET facet_schema_json = :schema "
+                "WHERE user_id = 1 AND facet_schema_json IS NULL"
+            ),
+            {"schema": json.dumps(_DEFAULT_FACET_SCHEMA)},
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+
 def get_valid_thesis_sections(db: Session, user_id: int) -> set[str]:
     """Return the user's valid thesis sections from user_config, falling back to defaults."""
     try:
@@ -628,3 +667,21 @@ def get_valid_thesis_sections(db: Session, user_id: int) -> set[str]:
     except Exception:
         pass
     return set(_DEFAULT_THESIS_SECTIONS)
+
+
+def get_facet_schema(db: Session, user_id: int) -> dict:
+    """Return the user's facet schema from user_config, falling back to the CS default.
+
+    Mirrors get_valid_thesis_sections(): query UserConfig, parse JSON, fall back to
+    _DEFAULT_FACET_SCHEMA on any failure (missing row, NULL column, parse error,
+    non-dict payload). Never raises. Returns a dict with 'version' and 'dimensions'.
+    """
+    try:
+        config = db.query(UserConfig).filter(UserConfig.user_id == user_id).first()
+        if config and config.facet_schema_json:
+            parsed = json.loads(config.facet_schema_json)
+            if isinstance(parsed, dict) and "dimensions" in parsed:
+                return parsed
+    except Exception:
+        pass
+    return _DEFAULT_FACET_SCHEMA
