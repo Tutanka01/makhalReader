@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Plus, Trash2, Loader2, UserCircle2 } from 'lucide-react'
-import type { ProfileKind, ResearchProfileEntry } from '../types'
+import { X, Plus, Trash2, Loader2, UserCircle2, BookOpen, Layers, Globe } from 'lucide-react'
+import type { ProfileKind, ResearchProfileEntry, ClusterProposal, FacetSchema } from '../types'
 import { useResearchStore } from '../store/research'
+import FacetSchemaEditor from './FacetSchemaEditor'
 
 interface Props {
   open: boolean
@@ -142,12 +143,40 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // Research Clusters & Facet Schema (Story 11-6)
+  const [configLoading, setConfigLoading] = useState(false)
+  const [clusters, setClusters] = useState<ClusterProposal[]>([])
+  const [facetSchema, setFacetSchema] = useState<FacetSchema>({ version: 1, dimensions: [] })
+  const [sources, setSources] = useState<string[]>([])
+
   // Load profile when panel opens
   useEffect(() => {
     if (open) {
       fetchProfile()
+      fetchConfig()
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchConfig = async () => {
+    setConfigLoading(true)
+    try {
+      const res = await fetch('/api/profile/config', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data.scoring_clusters)) setClusters(data.scoring_clusters)
+        if (data.facet_schema) setFacetSchema(data.facet_schema)
+      }
+    } catch { /* ignore */ }
+    // Fetch subscribed feeds as sources
+    try {
+      const res = await fetch('/api/feeds', { credentials: 'include' })
+      if (res.ok) {
+        const feeds = await res.json()
+        if (Array.isArray(feeds)) setSources(feeds.map(f => f.name).filter(Boolean))
+      }
+    } catch { /* ignore */ }
+    setConfigLoading(false)
+  }
 
   // Sync draft when remote profile arrives (don't overwrite mid-edit)
   useEffect(() => {
@@ -176,9 +205,20 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
 
   const handleSave = async () => {
     setSaving(true)
-    // Mark deleted entries with weight=0 so the backend removes them
     const toSend = draft.map((e) => ({ ...e }))
     await saveProfile(toSend)
+    // Persist clusters + facet schema via PUT /api/profile/config
+    try {
+      await fetch('/api/profile/config', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scoring_clusters: clusters,
+          facet_schema: facetSchema,
+        }),
+      })
+    } catch { /* ignore */ }
     setSaving(false)
     setDirty(false)
   }
@@ -254,6 +294,79 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
               </section>
             )
           })}
+
+          {/* ── Research Clusters (Story 11-6, FR-MT-58) ── */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-2">
+              <Layers size={14} className="text-accent" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                Research Clusters
+              </h3>
+            </div>
+            {configLoading && (
+              <Loader2 size={14} className="animate-spin text-text-muted" />
+            )}
+            {!configLoading && clusters.length === 0 && (
+              <p className="text-xs text-text-muted italic">No clusters configured</p>
+            )}
+            {!configLoading && clusters.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 py-1">
+                <input
+                  className="flex-1 text-xs rounded border border-border-default bg-bg-base px-2 py-1 outline-none focus:ring-1 focus:ring-accent"
+                  value={c.name}
+                  onChange={e => {
+                    const next = [...clusters]
+                    next[i] = { ...c, name: e.target.value }
+                    setClusters(next)
+                    setDirty(true)
+                  }}
+                  placeholder="Cluster name"
+                />
+                <span className="text-[10px] text-text-muted">
+                  w:{c.reward_level?.toFixed(1) ?? '0.5'}
+                </span>
+              </div>
+            ))}
+          </section>
+
+          {/* ── Facet Schema (Story 11-6, FR-MT-58) ── */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-2">
+              <BookOpen size={14} className="text-accent" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                Facet Schema
+              </h3>
+            </div>
+            {configLoading ? (
+              <Loader2 size={14} className="animate-spin text-text-muted" />
+            ) : (
+              <FacetSchemaEditor
+                value={facetSchema}
+                onChange={fs => { setFacetSchema(fs); setDirty(true) }}
+              />
+            )}
+          </section>
+
+          {/* ── Sources (Story 11-6, FR-MT-58) ── */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-2">
+              <Globe size={14} className="text-accent" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                Sources
+              </h3>
+            </div>
+            {configLoading && (
+              <Loader2 size={14} className="animate-spin text-text-muted" />
+            )}
+            {!configLoading && sources.length === 0 && (
+              <p className="text-xs text-text-muted italic">No sources subscribed</p>
+            )}
+            {!configLoading && sources.map((name, i) => (
+              <div key={i} className="flex items-center gap-2 py-1">
+                <span className="text-xs text-text-primary">{name}</span>
+              </div>
+            ))}
+          </section>
         </div>
 
         {/* Footer */}

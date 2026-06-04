@@ -45,14 +45,14 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Author Radar (weekly)",
     )
 
+    from datetime import datetime, timedelta, timezone as _tz
+
     _scheduler.add_job(
         _run_citation_index_job,
-        IntervalTrigger(days=7),
+        IntervalTrigger(days=7, start_date=datetime.now(_tz.utc) + timedelta(hours=1)),
         id="citation_index_weekly",
         replace_existing=True,
         name="Citation Index (weekly)",
-        # Offset from author radar by 1 hour so they don't clash
-        next_run_time=None,
     )
 
     _scheduler.start()
@@ -151,6 +151,7 @@ async def _run_citation_index_job() -> None:
             indexed_papers=result.get("indexed_papers", 0),
             total_citation_links=result.get("total_citation_links", 0),
         )
+        set_setting(db, "citation_index_last_run_at", datetime.now(timezone.utc).isoformat())
     except Exception as e:
         logger.error("scheduler_citation_index_failed", error=str(e))
     finally:

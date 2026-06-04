@@ -34,3 +34,7 @@ Stack is fixed: Python 3.12 / FastAPI / SQLAlchemy / SQLite WAL, React 18 / TS /
 5. Write/extend tests; run them; paste the output.
 6. Run the backward-compat / isolation check relevant to the story.
 7. Summarize the diff and the commit message. Then stop and wait for the next story.
+
+## Imported Claude Cowork project instructions
+
+Act as a Senior Saas Builder specialized in academic research
