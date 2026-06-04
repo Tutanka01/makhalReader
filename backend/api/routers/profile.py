@@ -1,19 +1,57 @@
-"""Profile router — per-user profile configuration (Story 4.5, FR-MT-22 / 4.6, FR-MT-20)."""
+"""Profile router — per-user profile configuration (Story 4.5, FR-MT-22 / 4.6, FR-MT-20).
+
+Story 11.2 — extends with `POST /api/profile/bootstrap` (preview-only, no
+persistence) plus `thesis_text`, `domain_label`, `facet_schema` fields on
+GET/PUT `/api/profile/config`.
+"""
 from __future__ import annotations
 
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import require_session
 from database import UserConfig, get_db, get_valid_thesis_sections
+from services import config_bootstrap
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 logger = structlog.get_logger().bind(service="profile")
+
+# ── Bootstrap rate limiter (Story 11.2) ────────────────────────────────────
+#
+# NFR-DA6 — module-level dict mapping user_id → list of recent request
+# timestamps. Per-user, in-memory, no Redis. Reset on api restart, which is
+# fine because the LLM cache also lives in-memory.
+
+BOOTSTRAP_RATE_LIMIT = int(os.getenv("BOOTSTRAP_RATE_LIMIT", "10"))
+BOOTSTRAP_RATE_WINDOW_SECONDS = int(os.getenv("BOOTSTRAP_RATE_WINDOW_SECONDS", "3600"))
+_bootstrap_calls: dict[int, list[float]] = {}
+
+
+def _check_bootstrap_rate_limit(user_id: int) -> Optional[int]:
+    """Return seconds until reset if user is over limit, else None."""
+    now = time.monotonic()
+    window = BOOTSTRAP_RATE_WINDOW_SECONDS
+    history = _bootstrap_calls.setdefault(user_id, [])
+    # Drop expired entries
+    cutoff = now - window
+    history[:] = [t for t in history if t > cutoff]
+    if len(history) >= BOOTSTRAP_RATE_LIMIT:
+        retry_after = int(window - (now - history[0])) + 1
+        return max(retry_after, 1)
+    history.append(now)
+    return None
+
+
+def _reset_bootstrap_rate_limits() -> None:
+    """Test-only hook so unit tests can isolate rate-limit state."""
+    _bootstrap_calls.clear()
 
 
 class SectionRequest(BaseModel):
@@ -26,12 +64,16 @@ class UserConfigResponse(BaseModel):
     thesis_question: str | None = None
     thesis_contribution: str | None = None
     thesis_sections: List[str] = Field(default_factory=list)
-    scoring_clusters: List[str] = Field(default_factory=list)
+    scoring_clusters: List[Any] = Field(default_factory=list)
     tracked_venues: List[str] = Field(default_factory=list)
     avoid_topics: List[str] = Field(default_factory=list)
     weekly_goal: int = 10
     model_preference: str = "google/gemini-flash-1.5"
     prompt_profile: str = "unified"
+    # Story 11.2 — bootstrap fields
+    thesis_text: str | None = None
+    domain_label: str | None = None
+    facet_schema: dict | None = None
 
 
 class ConfigUpdate(BaseModel):
@@ -39,15 +81,32 @@ class ConfigUpdate(BaseModel):
     thesis_question: str | None = None
     thesis_contribution: str | None = None
     thesis_sections: List[str] | None = None
-    scoring_clusters: List[str] | None = None
+    scoring_clusters: List[Any] | None = None
     tracked_venues: List[str] | None = None
     avoid_topics: List[str] | None = None
     weekly_goal: int | None = None
     model_preference: str | None = None
     prompt_profile: str | None = None
+    # Story 11.2 — bootstrap fields
+    thesis_text: str | None = None
+    domain_label: str | None = None
+    facet_schema: dict | None = None
+
+
+class BootstrapRequest(BaseModel):
+    thesis_text: str
 
 
 def _config_to_response(config: UserConfig) -> Dict[str, Any]:
+    # Story 11.2 — facet_schema_json may be NULL on legacy rows
+    facet_schema: dict | None = None
+    if config.facet_schema_json:
+        try:
+            parsed = json.loads(config.facet_schema_json)
+            if isinstance(parsed, dict):
+                facet_schema = parsed
+        except (json.JSONDecodeError, TypeError):
+            facet_schema = None
     return {
         "user_id": config.user_id,
         "thesis_title": config.thesis_title,
@@ -60,6 +119,10 @@ def _config_to_response(config: UserConfig) -> Dict[str, Any]:
         "weekly_goal": config.weekly_goal,
         "model_preference": config.model_preference,
         "prompt_profile": config.prompt_profile,
+        # Story 11.2 — bootstrap fields
+        "thesis_text": config.thesis_text,
+        "domain_label": config.domain_label,
+        "facet_schema": facet_schema,
     }
 
 
@@ -180,11 +243,66 @@ async def update_config(
     if "prompt_profile" in updates:
         config.prompt_profile = updates["prompt_profile"]
         dirty = True
+    # Story 11.2 — bootstrap fields. Changing thesis_text or facet_schema also
+    # invalidates the bootstrap cache so the next preview is regenerated.
+    bootstrap_dirty = False
+    if "thesis_text" in updates:
+        config.thesis_text = updates["thesis_text"]
+        config.bootstrap_hash = None
+        bootstrap_dirty = True
+        dirty = True
+    if "domain_label" in updates:
+        config.domain_label = updates["domain_label"]
+        dirty = True
+    if "facet_schema" in updates:
+        config.facet_schema_json = json.dumps(updates["facet_schema"])
+        bootstrap_dirty = True
+        dirty = True
 
     if dirty:
         config.prompt_cache_text = None
         config.prompt_cache_hash = None
         db.commit()
         logger.info("config_updated", user_id=user_id)
+        if bootstrap_dirty:
+            # Clear the in-memory bootstrap LLM cache so a subsequent preview
+            # call regenerates against the new thesis / facet schema.
+            try:
+                config_bootstrap._cache_clear()
+            except Exception:
+                pass
 
     return UserConfigResponse(**_config_to_response(config))
+
+
+# ── Bootstrap preview (Story 11.2) ─────────────────────────────────────────
+
+
+@router.post("/bootstrap", response_model=config_bootstrap.BootstrapResult)
+async def post_bootstrap(
+    body: BootstrapRequest,
+    response: Response,
+    current_user: dict = Depends(require_session),
+):
+    """Generate a proposed config from a free-text thesis description.
+
+    Preview-only — no persistence (FR-MT-53). Caller must follow up with a
+    PUT /api/profile/config to persist the chosen fields.
+    """
+    user_id = current_user["id"]
+    retry_after = _check_bootstrap_rate_limit(user_id)
+    if retry_after is not None:
+        # NFR-DA6 — surface a Retry-After so the client backs off cleanly.
+        raise HTTPException(
+            status_code=429,
+            detail="Bootstrap rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+    result = await config_bootstrap.generate(body.thesis_text)
+    logger.info(
+        "bootstrap_preview",
+        user_id=user_id,
+        degraded=result.degraded,
+        clusters=len(result.scoring_clusters),
+    )
+    return result

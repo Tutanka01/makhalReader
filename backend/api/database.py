@@ -206,6 +206,11 @@ class UserConfig(Base):
     prompt_cache_text = Column(Text, nullable=True)
     prompt_cache_hash = Column(String(64), nullable=True)
     facet_schema_json = Column(Text, nullable=True)  # Story 10.1 — per-tenant facet schema
+    # Story 11.2 — bootstrap config (thesis-driven config generation)
+    thesis_text = Column(Text, nullable=True)
+    domain_label = Column(String(128), nullable=True)
+    bootstrap_hash = Column(String(64), nullable=True)
+    bootstrap_model = Column(String(64), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -464,6 +469,11 @@ def init_db():
         "ALTER TABLE user_config ADD COLUMN facet_schema_json TEXT",
         # Story 10.1 — per-article facets result
         "ALTER TABLE article_scores ADD COLUMN facets_json TEXT",
+        # Story 11.2 — bootstrap config fields on user_config
+        "ALTER TABLE user_config ADD COLUMN thesis_text TEXT",
+        "ALTER TABLE user_config ADD COLUMN domain_label VARCHAR(128)",
+        "ALTER TABLE user_config ADD COLUMN bootstrap_hash VARCHAR(64)",
+        "ALTER TABLE user_config ADD COLUMN bootstrap_model VARCHAR(64)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
