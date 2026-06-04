@@ -215,6 +215,20 @@ class UserConfig(Base):
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class ConfigTemplate(Base):
+    """Starter-pack templates for domain-specific config bootstrap (Story 11.3)."""
+    __tablename__ = "config_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    domain_label = Column(String, nullable=True)
+    body_json = Column(Text, nullable=False)
+    scope = Column(String, nullable=False, default="global")
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
 class UserSetting(Base):
     """Per-user key-value settings (FR-MT-38 / Story 6.5)."""
     __tablename__ = "user_settings"
@@ -474,6 +488,8 @@ def init_db():
         "ALTER TABLE user_config ADD COLUMN domain_label VARCHAR(128)",
         "ALTER TABLE user_config ADD COLUMN bootstrap_hash VARCHAR(64)",
         "ALTER TABLE user_config ADD COLUMN bootstrap_model VARCHAR(64)",
+        # Story 11.3 — config templates table (starter packs)
+        "CREATE TABLE IF NOT EXISTS config_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, domain_label TEXT, body_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', owner_user_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -495,6 +511,7 @@ def init_db():
         _backfill_novelty_alerts(conn)
         _backfill_tracked_authors(conn)
         _backfill_facet_schema(conn)   # Story 10.2
+        _seed_config_templates(conn)   # Story 11.3
 
 
 def _backfill_article_scores(conn):
@@ -664,6 +681,141 @@ def _backfill_facet_schema(conn):
         conn.commit()
     except Exception:
         pass
+
+
+def _seed_config_templates(conn):
+    """Story 11.3 — insert global starter-pack templates idempotently."""
+    templates = [
+        {
+            "slug": "cs-software-engineering",
+            "name": "CS / Software Engineering",
+            "domain_label": "Computer Science",
+            "scope": "global",
+            "body_json": json.dumps({
+                "scoring_clusters": [
+                    {"name": "Systems & Infrastructure", "description": "Papers on OS, networking, distributed systems", "reward_level": 0.8},
+                    {"name": "Algorithms & Theory", "description": "Complexity, data structures, formal methods", "reward_level": 0.8},
+                    {"name": "HCI & Usability", "description": "User studies, interface design, accessibility", "reward_level": 0.7},
+                    {"name": "Machine Learning & AI", "description": "Deep learning, reinforcement learning, NLP, computer vision", "reward_level": 0.9},
+                    {"name": "Software Engineering", "description": "Requirements, testing, program analysis, DevOps", "reward_level": 0.8},
+                ],
+                "facet_schema": {
+                    "version": 1,
+                    "dimensions": [
+                        {"id": "contribution_type", "label": "Contribution Type", "type": "enum", "values": ["System", "Algorithm", "User Study", "Survey", "Position", "Tool", "Dataset"]},
+                        {"id": "venue_type", "label": "Venue Type", "type": "enum", "values": ["Conference", "Journal", "Workshop", "Preprint"]},
+                    ],
+                },
+                "keywords": ["distributed systems", "algorithms", "machine learning", "software engineering", "formal methods"],
+                "suggested_source_queries": ["site:arxiv.org cs.", "site:dl.acm.org", "site:ieeexplore.ieee.org"],
+            }),
+        },
+        {
+            "slug": "design-hci",
+            "name": "Design / HCI",
+            "domain_label": "Design & Human-Computer Interaction",
+            "scope": "global",
+            "body_json": json.dumps({
+                "scoring_clusters": [
+                    {"name": "Interaction Design", "description": "Tangible interfaces, gesture, voice, multimodal interaction", "reward_level": 0.8},
+                    {"name": "Accessibility", "description": "Universal design, assistive tech, inclusive UX", "reward_level": 0.9},
+                    {"name": "Evaluation Methods", "description": "Controlled experiments, field studies, heuristic evaluation", "reward_level": 0.7},
+                    {"name": "Social Computing", "description": "CSCW, social media, online communities", "reward_level": 0.7},
+                    {"name": "Design Tools & Methods", "description": "Design tooling, prototyping, co-design, participatory design", "reward_level": 0.7},
+                ],
+                "facet_schema": {
+                    "version": 1,
+                    "dimensions": [
+                        {"id": "study_method", "label": "Study Method", "type": "enum", "values": ["Qualitative", "Quantitative", "Mixed", "Design Fiction", "Autoethnography"]},
+                        {"id": "artifact_type", "label": "Artifact Type", "type": "enum", "values": ["Prototype", "Framework", "Guideline", "Tool", "Ethnography"]},
+                    ],
+                },
+                "keywords": ["HCI", "UX design", "participatory design", "accessibility", "interaction design"],
+                "suggested_source_queries": ["site:dl.acm.org CHI", "site:dl.acm.org UIST", "site:dl.acm.org CSCW"],
+            }),
+        },
+        {
+            "slug": "law",
+            "name": "Law",
+            "domain_label": "Legal Studies",
+            "scope": "global",
+            "body_json": json.dumps({
+                "scoring_clusters": [
+                    {"name": "Doctrinal Analysis", "description": "Black-letter law, statutory interpretation, precedent", "reward_level": 0.8},
+                    {"name": "Comparative Law", "description": "Cross-jurisdictional comparison, legal transplants", "reward_level": 0.7},
+                    {"name": "Law & Policy", "description": "Regulatory impact, legislative intent, policy analysis", "reward_level": 0.8},
+                    {"name": "Legal Theory", "description": "Jurisprudence, critical legal studies, natural law", "reward_level": 0.6},
+                    {"name": "Empirical Legal Studies", "description": "Quantitative legal analysis, outcome studies, trial data", "reward_level": 0.7},
+                ],
+                "facet_schema": {
+                    "version": 1,
+                    "dimensions": [
+                        {"id": "jurisdiction", "label": "Jurisdiction", "type": "enum", "values": ["US", "EU", "UK", "International", "Comparative"]},
+                        {"id": "instrument_type", "label": "Instrument Type", "type": "enum", "values": ["Statute", "Case", "Treaty", "Regulation", "Constitutional"]},
+                    ],
+                },
+                "keywords": ["jurisprudence", "statutory interpretation", "regulatory law", "comparative law", "legal theory"],
+                "suggested_source_queries": ["site:scholarship.law.*", "SSRN law", "site:heinonline.org"],
+            }),
+        },
+        {
+            "slug": "environmental-science",
+            "name": "Environmental Science",
+            "domain_label": "Environmental Science",
+            "scope": "global",
+            "body_json": json.dumps({
+                "scoring_clusters": [
+                    {"name": "Climate Science", "description": "Climate modeling, attribution, paleoclimate, carbon cycle", "reward_level": 0.9},
+                    {"name": "Biodiversity & Conservation", "description": "Species loss, ecosystem services, protected areas", "reward_level": 0.8},
+                    {"name": "Environmental Policy", "description": "Climate governance, environmental law, sustainable development", "reward_level": 0.7},
+                    {"name": "Pollution & Toxicology", "description": "Air/water quality, microplastics, ecotoxicology", "reward_level": 0.7},
+                    {"name": "Renewable Energy & Sustainability", "description": "Solar/wind, energy storage, circular economy, LCA", "reward_level": 0.8},
+                ],
+                "facet_schema": {
+                    "version": 1,
+                    "dimensions": [
+                        {"id": "study_scale", "label": "Study Scale", "type": "enum", "values": ["Global", "Regional", "Local", "Laboratory"]},
+                        {"id": "data_type", "label": "Data Type", "type": "enum", "values": ["Observational", "Modeled", "Experimental", "Remote Sensing", "Meta-analysis"]},
+                    ],
+                },
+                "keywords": ["climate change", "biodiversity", "sustainability", "ecosystem services", "renewable energy"],
+                "suggested_source_queries": ["site:nature.com climate", "site:sciencedirect.com environmental", "AGU journals"],
+            }),
+        },
+        {
+            "slug": "biomedical",
+            "name": "Biomedical",
+            "domain_label": "Biomedical Research",
+            "scope": "global",
+            "body_json": json.dumps({
+                "scoring_clusters": [
+                    {"name": "Genomics & Bioinformatics", "description": "Genome assembly, GWAS, transcriptomics, CRISPR", "reward_level": 0.9},
+                    {"name": "Clinical Trials", "description": "Phase I-IV trials, trial design, biostatistics, endpoints", "reward_level": 0.8},
+                    {"name": "Drug Discovery", "description": "Small molecules, biologics, high-throughput screening", "reward_level": 0.8},
+                    {"name": "Molecular Medicine", "description": "Signaling pathways, biomarkers, precision medicine", "reward_level": 0.8},
+                    {"name": "Epidemiology & Public Health", "description": "Disease surveillance, risk factors, health policy", "reward_level": 0.7},
+                ],
+                "facet_schema": {
+                    "version": 1,
+                    "dimensions": [
+                        {"id": "study_phase", "label": "Study Phase", "type": "enum", "values": ["Preclinical", "Phase I", "Phase II", "Phase III", "Phase IV", "Meta-analysis", "Epidemiological"]},
+                        {"id": "organism_type", "label": "Organism Type", "type": "enum", "values": ["Human", "Mouse", "Cell line", "Organoid", "In silico"]},
+                    ],
+                },
+                "keywords": ["genomics", "clinical trials", "drug discovery", "biomarkers", "bioinformatics"],
+                "suggested_source_queries": ["PubMed", "site:nature.com biomedical", "site:cell.com", "site:thelancet.com"],
+            }),
+        },
+    ]
+    for t in templates:
+        try:
+            conn.execute(
+                text("""INSERT OR IGNORE INTO config_templates (slug, name, domain_label, body_json, scope, owner_user_id, created_at) VALUES (:slug, :name, :domain_label, :body_json, :scope, NULL, datetime('now'))"""),
+                t,
+            )
+            conn.commit()
+        except Exception:
+            pass
 
 
 def get_valid_thesis_sections(db: Session, user_id: int) -> set[str]:

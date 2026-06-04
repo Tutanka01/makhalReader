@@ -24,6 +24,7 @@ from routers import (
     onboarding,
     poll,
 )
+from routers.profile import templates_router
 from routers.internal import cleanup_old_articles
 from scheduler import start_scheduler, stop_scheduler
 from sse import _sse_queues, broadcast_new_article
@@ -73,6 +74,7 @@ app.include_router(profile.router)
 app.include_router(research.router)
 app.include_router(onboarding.router)
 app.include_router(poll.router)
+app.include_router(templates_router)
 
 # ---------------------------------------------------------------------------
 # Default feeds seeded at startup

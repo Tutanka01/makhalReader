@@ -17,10 +17,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import require_session
-from database import UserConfig, get_db, get_valid_thesis_sections
+from database import ConfigTemplate, UserConfig, get_db, get_valid_thesis_sections
 from services import config_bootstrap
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+# Story 11.3 — branch router for template listing (prefix /api, not /api/profile).
+templates_router = APIRouter(prefix="/api", tags=["templates"])
 logger = structlog.get_logger().bind(service="profile")
 
 # ── Bootstrap rate limiter (Story 11.2) ────────────────────────────────────
@@ -272,6 +274,78 @@ async def update_config(
             except Exception:
                 pass
 
+    return UserConfigResponse(**_config_to_response(config))
+
+
+# ── Template listing (Story 11.3) ──────────────────────────────────────────
+
+
+@templates_router.get("/templates", response_model=List[Dict[str, Any]])
+async def list_templates(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    """Return all global templates plus org-scoped templates for the user's org."""
+    try:
+        rows = db.query(ConfigTemplate).filter(
+            ConfigTemplate.scope == "global"
+        ).all()
+    except Exception:
+        return []
+    return [
+        {
+            "id": t.id,
+            "slug": t.slug,
+            "name": t.name,
+            "domain_label": t.domain_label,
+            "scope": t.scope,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in rows
+    ]
+
+
+@router.post("/from-template/{template_id}", response_model=UserConfigResponse)
+async def apply_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    """Apply a starter-pack template body to the current user's config.
+
+    Preserves existing ``thesis_text`` if non-empty (AC4). Merges
+    ``scoring_clusters``, ``facet_schema``, ``domain_label`` from the
+    template.
+    """
+    user_id = current_user["id"]
+    config = _get_user_config(db, user_id)
+
+    template = db.query(ConfigTemplate).filter(ConfigTemplate.id == template_id).first()
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    try:
+        body = json.loads(template.body_json)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=422, detail="Invalid template body_json")
+
+    if "scoring_clusters" in body and isinstance(body["scoring_clusters"], list):
+        config.scoring_clusters_json = json.dumps(body["scoring_clusters"])
+    if "facet_schema" in body and isinstance(body["facet_schema"], dict):
+        config.facet_schema_json = json.dumps(body["facet_schema"])
+    if template.domain_label:
+        config.domain_label = template.domain_label
+
+    config.prompt_cache_text = None
+    config.prompt_cache_hash = None
+
+    db.commit()
+    logger.info(
+        "template_applied",
+        user_id=user_id,
+        template_id=template_id,
+        slug=template.slug,
+    )
     return UserConfigResponse(**_config_to_response(config))
 
 
