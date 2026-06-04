@@ -10,7 +10,17 @@ from sqlalchemy.orm import Session
 
 from collections import defaultdict
 
-from database import Article, ArticleScore, Feed, ResearchProfile, SessionLocal, UserConfig, UserFeedSubscription, get_db
+from database import (
+    Article,
+    ArticleScore,
+    Feed,
+    ResearchProfile,
+    SessionLocal,
+    UserConfig,
+    UserFeedSubscription,
+    get_db,
+    get_facet_schema,
+)
 from models import InternalArticleCreate, InternalScoreUpdate, PromptCacheUpdate
 from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
@@ -403,6 +413,7 @@ async def internal_get_scoring_context(
     scoring_clusters = _safe_json_loads(str(config.scoring_clusters_json))
     avoid_topics = _safe_json_loads(str(config.avoid_topics_json))
     prompt_profile = config.prompt_profile or "unified"
+    facet_schema = get_facet_schema(db, user_id)
     return {
         "thesis_title": thesis_title,
         "thesis_question": thesis_question,
@@ -411,6 +422,7 @@ async def internal_get_scoring_context(
         "scoring_clusters": scoring_clusters,
         "avoid_topics": avoid_topics,
         "prompt_profile": prompt_profile,
+        "facet_schema": facet_schema,
     }
 
 

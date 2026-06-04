@@ -22,6 +22,7 @@ class UserScoringContext:
     avoid_topics: List[str] = field(default_factory=list)
     prompt_profile: str = "unified"
     thesis_contribution: Optional[str] = None
+    facet_schema: Optional[Dict] = None   # Story 10.3 — per-tenant facet dimensions
 
 
 def sanitize(text: str) -> str:
@@ -99,6 +100,38 @@ def _replace_clusters_section(template: str, ctx: UserScoringContext) -> str:
     return _replace_section(template, _CLUSTERS_PREFIX, new_section)
 
 
+def _replace_facet_section(template: str, ctx: UserScoringContext) -> str:
+    """Story 10.3 — append a CLASSIFICATION DIMENSIONS section when facet_schema is provided.
+
+    No-op when `ctx.facet_schema` is None or has no dimensions, preserving byte-identity
+    for user_id=1 with the legacy prompts (NFR-DA1). All dimension labels, IDs, and
+    enum values are sanitized before being inserted (NFR-DA3).
+    """
+    if not ctx.facet_schema:
+        return template
+    dimensions = ctx.facet_schema.get("dimensions") or []
+    if not dimensions:
+        return template
+    lines = [
+        "\n\n## CLASSIFICATION DIMENSIONS\n",
+        "For each article, you MUST classify it along the following dimensions.",
+        "Include each dimension ID as a key in your JSON response with one of the listed values.\n",
+    ]
+    appended = False
+    for dim in dimensions:
+        label = sanitize(dim.get("label", ""))
+        dim_id = sanitize(dim.get("id", ""))
+        values = [sanitize(v) for v in dim.get("values", []) if v]
+        values = [v for v in values if v]
+        if label and dim_id and values:
+            lines.append(f"**{label}** (`{dim_id}`):")
+            lines.append(f"Values: {', '.join(values)}\n")
+            appended = True
+    if not appended:
+        return template
+    return template + "\n".join(lines)
+
+
 class PromptBuilder:
     """Builds a user-specific scoring prompt from a template + user context."""
 
@@ -107,4 +140,5 @@ class PromptBuilder:
         template = _load_template(ctx.prompt_profile)
         template = _replace_profile_section(template, ctx)
         template = _replace_clusters_section(template, ctx)
+        template = _replace_facet_section(template, ctx)   # Story 10.3
         return template
