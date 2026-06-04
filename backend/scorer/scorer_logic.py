@@ -5,7 +5,7 @@ scorer.py imports from this module.
 """
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 _VALID_CONTRIBUTION_TYPES = {
     "method", "benchmark", "survey", "empirical", "theory",
@@ -39,3 +39,36 @@ def compute_content_cap(scorer_max_chars: int, paper_meta_json: Optional[str]) -
         except (json.JSONDecodeError, TypeError):
             pass
     return cap
+
+
+def extract_facets(data: Any, facet_schema: Optional[dict]) -> Optional[str]:
+    """Story 10.4 — extract per-dimension facet values from an LLM response dict.
+
+    Returns a JSON string like '{"contribution_type": "method", ...}' keyed by the
+    schema's dimension IDs, or None if `facet_schema` is missing/empty, no dimension
+    keys are present in `data`, or any error occurs (NFR-DA9 — graceful degradation).
+
+    Values are stored verbatim from the LLM — no validation against the dimension's
+    `values` list. UX-level validation is deferred to future stories.
+
+    The CS-equivalent schema (dimensions `contribution_type` + `re_document_type`)
+    is handled by the generic lookup path: the LLM already emits those keys, so
+    they are mirrored into facets_json automatically without special-casing
+    (preserves NFR-DA1 for user_id=1).
+    """
+    try:
+        if not facet_schema or not isinstance(data, dict):
+            return None
+        dimensions = facet_schema.get("dimensions") or []
+        if not dimensions:
+            return None
+        result: dict = {}
+        for dim in dimensions:
+            if not isinstance(dim, dict):
+                continue
+            dim_id = dim.get("id")
+            if dim_id and dim_id in data:
+                result[dim_id] = data[dim_id]
+        return json.dumps(result) if result else None
+    except Exception:
+        return None

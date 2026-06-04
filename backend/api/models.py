@@ -348,6 +348,7 @@ class InternalScoreUpdate(BaseModel):
     rigor: Optional[float] = None
     relevance_to_topics: Optional[float] = None
     user_id: int  # Story 2.7, FR-MT-9 — mandatory
+    facets_json: Optional[str] = None  # Story 10.4 — per-dimension facet values
 
 
 class PromptCacheUpdate(BaseModel):

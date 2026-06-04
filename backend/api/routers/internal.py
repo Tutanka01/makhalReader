@@ -309,6 +309,7 @@ async def internal_score_article(
     score.score_meta_json = json.dumps(
         {k: v for k, v in score_meta.items() if v is not None}
     )
+    score.facets_json = score_data.facets_json  # Story 10.4
 
     # Backward compat: also write corpus-level defaults for user_id=1 (NFR-T4)
     if user_id == 1:

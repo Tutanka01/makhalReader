@@ -15,6 +15,7 @@ from scorer_logic import (
     _VALID_RE_DOC_TYPES,
     clamp_float as _clamp_float,
     compute_content_cap,
+    extract_facets,
 )
 
 app = FastAPI(title="Baṣīra Scorer")
@@ -53,6 +54,7 @@ class ScoreResult(BaseModel):
     novelty: Optional[float] = None
     rigor: Optional[float] = None
     relevance_to_topics: Optional[float] = None
+    facets_json: Optional[str] = None  # Story 10.4 — serialized per-dimension facets
 
 
 def _resolve_system_prompt(req: ScoreRequest) -> str:
@@ -180,7 +182,7 @@ def extract_json_from_text(text: str) -> Optional[dict]:
     return None
 
 
-def validate_score_result(data: dict) -> ScoreResult:
+def validate_score_result(data: dict, facet_schema: Optional[dict] = None) -> ScoreResult:
     score = data.get("score", 5)
     try:
         score = float(score)
@@ -210,6 +212,8 @@ def validate_score_result(data: dict) -> ScoreResult:
     if re_document_type not in _VALID_RE_DOC_TYPES:
         re_document_type = None
 
+    facets_json = extract_facets(data, facet_schema)  # Story 10.4
+
     return ScoreResult(
         score=score,
         tags=tags,
@@ -220,10 +224,16 @@ def validate_score_result(data: dict) -> ScoreResult:
         novelty=_clamp_float(data.get("novelty")),
         rigor=_clamp_float(data.get("rigor")),
         relevance_to_topics=_clamp_float(data.get("relevance_to_topics")),
+        facets_json=facets_json,
     )
 
 
-async def score_with_uni_server(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
+async def score_with_uni_server(
+    client: httpx.AsyncClient,
+    user_message: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    facet_schema: Optional[dict] = None,
+) -> Optional[ScoreResult]:
     """Tier 1: University GPU server (OpenAI-compatible API)."""
     if not UNI_OLLAMA_URL or not UNI_OLLAMA_MODEL or not UNI_OLLAMA_API_KEY:
         return None
@@ -253,7 +263,7 @@ async def score_with_uni_server(client: httpx.AsyncClient, user_message: str, sy
         content = data["choices"][0]["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
-            return validate_score_result(parsed)
+            return validate_score_result(parsed, facet_schema)
         print(f"Uni server: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"Uni server scoring failed: {e}")
@@ -261,7 +271,12 @@ async def score_with_uni_server(client: httpx.AsyncClient, user_message: str, sy
     return None
 
 
-async def score_with_openrouter(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
+async def score_with_openrouter(
+    client: httpx.AsyncClient,
+    user_message: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    facet_schema: Optional[dict] = None,
+) -> Optional[ScoreResult]:
     if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.startswith("sk-"):
         return None
 
@@ -293,7 +308,7 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str, sy
         content = data["choices"][0]["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
-            return validate_score_result(parsed)
+            return validate_score_result(parsed, facet_schema)
         print(f"OpenRouter: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"OpenRouter scoring failed: {e}")
@@ -301,7 +316,12 @@ async def score_with_openrouter(client: httpx.AsyncClient, user_message: str, sy
     return None
 
 
-async def score_with_ollama(client: httpx.AsyncClient, user_message: str, system_prompt: str = SYSTEM_PROMPT) -> Optional[ScoreResult]:
+async def score_with_ollama(
+    client: httpx.AsyncClient,
+    user_message: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    facet_schema: Optional[dict] = None,
+) -> Optional[ScoreResult]:
     if not OLLAMA_URL:
         return None
 
@@ -329,7 +349,7 @@ async def score_with_ollama(client: httpx.AsyncClient, user_message: str, system
         content = data["message"]["content"]
         parsed = extract_json_from_text(content)
         if parsed:
-            return validate_score_result(parsed)
+            return validate_score_result(parsed, facet_schema)
         print(f"Ollama: could not parse JSON from response: {content[:200]}")
     except Exception as e:
         print(f"Ollama scoring failed: {e}")
@@ -427,17 +447,27 @@ async def score_article(req: ScoreRequest):
         preference_block = await build_preference_block(client, user_id=req.user_id)
         user_message = f"Title: {req.title}\n\nContent:\n{content_preview}{preference_block}"
 
+        # Story 10.4 — surface the user's facet schema to each scoring tier so
+        # the LLM response is parsed into facets_json keyed by dimension IDs.
+        facet_schema = (req.user_context or {}).get("facet_schema")
+
         # Tier 1: University GPU server (highest quality, free)
         if UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:
-            result = await score_with_uni_server(client, user_message, system_prompt)
+            result = await score_with_uni_server(
+                client, user_message, system_prompt, facet_schema=facet_schema,
+            )
 
         # Tier 2: OpenRouter (cloud fallback)
         if result is None and OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
-            result = await score_with_openrouter(client, user_message, system_prompt)
+            result = await score_with_openrouter(
+                client, user_message, system_prompt, facet_schema=facet_schema,
+            )
 
         # Tier 3: Local Ollama
         if result is None:
-            result = await score_with_ollama(client, user_message, system_prompt)
+            result = await score_with_ollama(
+                client, user_message, system_prompt, facet_schema=facet_schema,
+            )
 
         # Default fallback
         if result is None:
@@ -463,6 +493,7 @@ async def score_article(req: ScoreRequest):
                     "rigor": result.rigor,
                     "relevance_to_topics": result.relevance_to_topics,
                     "user_id": req.user_id,
+                    "facets_json": result.facets_json,  # Story 10.4
                 },
                 headers=INTERNAL_HEADERS,
                 timeout=30,
