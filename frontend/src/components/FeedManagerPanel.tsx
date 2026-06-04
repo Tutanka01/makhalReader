@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Upload, Download, Rss, Loader2, Trash2, AlertCircle, CheckCircle2, Bell, BellOff } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import type { Feed, UserInfo } from '../types'
+import type { Feed, Source, UserInfo } from '../types'
+import { fetchSources, subscribeSource, unsubscribeSource } from '../api/sources'
+import { ProviderBadge } from './ProviderBadge'
 
 interface FeedManagerPanelProps {
   currentUser: UserInfo | null
@@ -39,6 +41,7 @@ function isHealthy(feed: Feed) {
 
 export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPanelProps) {
   const [catalog, setCatalog] = useState<Feed[]>([])
+  const [sources, setSources] = useState<Source[]>([])
   const [loading, setLoading] = useState(true)
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const [addUrl, setAddUrl] = useState('')
@@ -59,11 +62,13 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
   const fetchCatalog = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/feeds/catalog', { credentials: 'include' })
-      if (res.ok) {
-        const data = await res.json()
-        setCatalog(Array.isArray(data) ? data : [])
-      }
+      const [feedsRes, srcList] = await Promise.all([
+        fetch('/api/feeds/catalog', { credentials: 'include' }),
+        fetchSources().catch(() => [] as Source[]),
+      ])
+      const feedData = feedsRes.ok ? (await feedsRes.json()) as Feed[] : []
+      setCatalog(Array.isArray(feedData) ? feedData : [])
+      setSources(Array.isArray(srcList) ? srcList : [])
     } catch {
       /* ignore */
     } finally {
@@ -85,6 +90,23 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
         setCatalog(prev => prev.map(f => f.id === feedId ? { ...f, subscribed: !currentlySubscribed } : f))
         onFeedsChange()
       }
+    } catch {
+      /* ignore */
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const handleSourceSubscribe = async (sourceId: number, currentlySubscribed: boolean) => {
+    setTogglingId(sourceId)
+    try {
+      if (currentlySubscribed) {
+        await unsubscribeSource(sourceId)
+      } else {
+        await subscribeSource(sourceId)
+      }
+      setSources(prev => prev.map(s => s.id === sourceId ? { ...s, subscribed: !currentlySubscribed } : s))
+      onFeedsChange()
     } catch {
       /* ignore */
     } finally {
@@ -240,9 +262,9 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && sources.filter(s => s.provider !== 'rss').filter(s => filterCat === 'all' || s.category === filterCat).length === 0 ? (
           <div className="text-center py-20 text-text-muted text-xs">
-            Aucun feed dans cette catégorie.
+            Aucun feed ou source dans cette catégorie.
           </div>
         ) : (
           <div className="divide-y divide-border-subtle">
@@ -251,9 +273,10 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
               const isToggling = togglingId === feed.id
               const isConfirming = confirmDeleteId === feed.id
               const isDeleting = deletingId === feed.id
+              const src = sources.find(s => s.id === feed.id)
               return (
                 <div
-                  key={feed.id}
+                  key={`feed-${feed.id}`}
                   className="flex items-center gap-3 px-6 py-3 hover:bg-bg-hover transition-colors group"
                 >
                   {/* Health dot */}
@@ -265,6 +288,7 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-text-primary truncate">{feed.name}</p>
                     <div className="flex items-center gap-2 mt-0.5">
+                      <ProviderBadge provider="rss" />
                       <span className="text-[10px] text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded">
                         {feed.category}
                       </span>
@@ -331,6 +355,61 @@ export function FeedManagerPanel({ currentUser, onFeedsChange }: FeedManagerPane
                 </div>
               )
             })}
+
+            {/* Provider sources section */}
+            {filterCat === 'all' || filtered.some(f => f.category === filterCat) ? null : null}
+            {sources
+              .filter(s => s.provider !== 'rss')
+              .filter(s => filterCat === 'all' || s.category === filterCat)
+              .map(source => {
+                const isToggling = togglingId === source.id
+                const feedItem = catalog.find(f => f.id === source.id)
+                const alreadyShown = catalog.some(f => f.id === source.id)
+                if (alreadyShown) return null
+                return (
+                  <div
+                    key={`src-${source.id}`}
+                    className="flex items-center gap-3 px-6 py-3 hover:bg-bg-hover transition-colors group"
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-accent/40" title="Provider source" />
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-text-primary truncate">{source.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <ProviderBadge provider={source.provider} />
+                        <span className="text-[10px] text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded">
+                          {source.category}
+                        </span>
+                        {source.label && (
+                          <span className="text-[10px] text-text-muted truncate max-w-[120px]">
+                            {source.label}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleSourceSubscribe(source.id, !!source.subscribed)}
+                      disabled={isToggling}
+                      className={`flex items-center gap-1 rounded-md transition-all text-[11px] font-medium px-2.5 py-1.5 flex-shrink-0 ${
+                        source.subscribed
+                          ? 'bg-accent/10 text-accent hover:bg-accent/20'
+                          : 'bg-bg-elevated text-text-muted hover:text-text-primary hover:bg-bg-hover'
+                      }`}
+                      title={source.subscribed ? 'Se désabonner' : "S'abonner"}
+                    >
+                      {isToggling ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : source.subscribed ? (
+                        <BellOff className="w-3 h-3" />
+                      ) : (
+                        <Bell className="w-3 h-3" />
+                      )}
+                      {source.subscribed ? 'Abonné' : "S'abonner"}
+                    </button>
+                  </div>
+                )
+              })}
           </div>
         )}
       </div>

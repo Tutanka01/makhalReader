@@ -34,6 +34,7 @@ class SourceOut(BaseModel):
     active: bool = True
     last_fetched: Optional[datetime] = None
     created_at: datetime
+    subscribed: bool = False
 
     model_config = {"from_attributes": True}
 

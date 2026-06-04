@@ -117,6 +117,7 @@ def test_create_and_list():
 
 
 def test_delete_source():
+    """DELETE /api/sources/{id} removes the subscription, source remains visible as unsubscribed."""
     _reset_db()
     client = _get_client()
     headers = _auth_headers(client)
@@ -125,7 +126,9 @@ def test_delete_source():
     del_resp = client.delete(f"/api/sources/{sid}", headers=headers)
     assert del_resp.status_code == 200
     list_resp = client.get("/api/sources", headers=headers)
-    assert len(list_resp.json()) == 0
+    items = list_resp.json()
+    assert len(items) == 1, f"Expected 1 (source still visible), got {len(items)}"
+    assert items[0]["subscribed"] == False
 
 
 def test_delete_nonexistent():
@@ -156,7 +159,7 @@ def test_resolve_no_auth():
 
 
 def test_user_isolation():
-    """User 2 should not see user 1's sources."""
+    """User 2 can see user 1's source but as unsubscribed."""
     _reset_db()
     client = _get_client()
 
@@ -166,8 +169,10 @@ def test_user_isolation():
     client.post("/api/sources", json={"name": "User1Source", "provider": "rss"}, headers=h1)
     r1 = client.get("/api/sources", headers=h1)
     assert len(r1.json()) == 1
+    assert r1.json()[0]["subscribed"] == True
     r2 = client.get("/api/sources", headers=h2)
-    assert len(r2.json()) == 0
+    assert len(r2.json()) == 1, f"Expected 1 (source visible to all), got {len(r2.json())}"
+    assert r2.json()[0]["subscribed"] == False
 
 
 def test_user_isolation_delete():
@@ -183,6 +188,73 @@ def test_user_isolation_delete():
     assert resp.status_code == 404
     r1 = client.get("/api/sources", headers=h1)
     assert len(r1.json()) == 1
+
+
+def test_subscribe_unsubscribe():
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client)
+    cr = client.post("/api/sources", json={"name": "Src", "provider": "rss"}, headers=headers)
+    sid = cr.json()["id"]
+
+    # Auto-subscribed on create
+    r = client.get("/api/sources", headers=headers)
+    assert r.json()[0]["subscribed"] == True
+
+    # Unsubscribe
+    r = client.delete(f"/api/sources/{sid}/subscribe", headers=headers)
+    assert r.status_code == 200
+    r = client.get("/api/sources", headers=headers)
+    assert r.json()[0]["subscribed"] == False
+
+    # Unsubscribe when not subscribed → 404
+    r = client.delete(f"/api/sources/{sid}/subscribe", headers=headers)
+    assert r.status_code == 404
+
+    # Subscribe
+    r = client.post(f"/api/sources/{sid}/subscribe", headers=headers)
+    assert r.status_code == 200
+    r = client.get("/api/sources", headers=headers)
+    assert r.json()[0]["subscribed"] == True
+
+    # Subscribe when already subscribed → idempotent 200
+    r = client.post(f"/api/sources/{sid}/subscribe", headers=headers)
+    assert r.status_code == 200
+
+    # Subscribe to nonexistent source → 404
+    r = client.post("/api/sources/99999/subscribe", headers=headers)
+    assert r.status_code == 404
+
+
+def test_subscribe_unsubscribe_isolation():
+    """User 2's subscribe/unsubscribe does not affect user 1's subscription."""
+    _reset_db()
+    client = _get_client()
+    h1 = _auth_headers(client, user_id=1)
+    h2 = _auth_headers(client, user_id=2)
+    cr = client.post("/api/sources", json={"name": "S", "provider": "rss"}, headers=h1)
+    sid = cr.json()["id"]
+
+    r1 = client.get("/api/sources", headers=h1)
+    assert r1.json()[0]["subscribed"] == True
+
+    r2 = client.get("/api/sources", headers=h2)
+    assert r2.json()[0]["subscribed"] == False
+
+    # User 2 subscribes
+    client.post(f"/api/sources/{sid}/subscribe", headers=h2)
+    r2b = client.get("/api/sources", headers=h2)
+    assert r2b.json()[0]["subscribed"] == True
+    # User 1 unaffected
+    r1b = client.get("/api/sources", headers=h1)
+    assert r1b.json()[0]["subscribed"] == True
+
+    # User 2 unsubscribes
+    client.delete(f"/api/sources/{sid}/subscribe", headers=h2)
+    r2c = client.get("/api/sources", headers=h2)
+    assert r2c.json()[0]["subscribed"] == False
+    r1c = client.get("/api/sources", headers=h1)
+    assert r1c.json()[0]["subscribed"] == True
 
 
 def test_duplicate_source_create():
@@ -208,6 +280,8 @@ def run_tests():
         ("user_isolation", test_user_isolation),
         ("user_isolation_delete", test_user_isolation_delete),
         ("duplicate_source_create", test_duplicate_source_create),
+        ("subscribe_unsubscribe", test_subscribe_unsubscribe),
+        ("subscribe_unsubscribe_isolation", test_subscribe_unsubscribe_isolation),
     ]
     passed = 0
     failed = 0

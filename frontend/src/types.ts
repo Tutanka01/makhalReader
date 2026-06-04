@@ -67,6 +67,7 @@ export interface OrgFeedItem {
   name: string
   category: string
   subscriber_count: number
+  provider: string
 }
 
 export interface Organization {
@@ -450,6 +451,31 @@ export interface Conference {
   days_to_paper: number
   is_past: boolean
   bookmarked: boolean
+}
+
+// ── Source (provider-agnostic, Story 12.7) ─────────────────────────────────
+export interface Source {
+  id: number
+  name: string
+  provider: string
+  query_json: string | null
+  label: string | null
+  category: string
+  active: boolean
+  last_fetched: string | null
+  created_at: string
+  subscribed: boolean
+}
+
+export const PROVIDER_LABELS: Record<string, string> = {
+  rss: "RSS",
+  openalex: "OpenAlex",
+  crossref: "Crossref",
+  arxiv: "arXiv",
+  doaj: "DOAJ",
+  hal: "HAL",
+  dblp: "DBLP",
+  openreview: "OpenReview",
 }
 
 export interface NotificationCounts {

@@ -47,17 +47,23 @@ class SourceCreateRequest(BaseModel):
 
 @router.get("/api/sources", response_model=List[SourceOut])
 async def list_sources(db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
-    results = (
-        db.query(Source)
-        .join(UserSourceSubscription, Source.id == UserSourceSubscription.source_id)
-        .filter(
-            Source.active == True,
-            UserSourceSubscription.user_id == current_user["id"],
+    rows = (
+        db.query(Source, UserSourceSubscription.user_id.label("subscribed_user_id"))
+        .outerjoin(
+            UserSourceSubscription,
+            (Source.id == UserSourceSubscription.source_id)
+            & (UserSourceSubscription.user_id == current_user["id"]),
         )
+        .filter(Source.active == True)
         .order_by(Source.name)
         .all()
     )
-    return [SourceOut.model_validate(r) for r in results]
+    result = []
+    for src, sub_user_id in rows:
+        out = SourceOut.model_validate(src)
+        out.subscribed = sub_user_id is not None
+        result.append(out)
+    return result
 
 
 @router.post("/api/sources", response_model=SourceOut)
@@ -120,6 +126,36 @@ async def resolve_source(body: ProviderResolveRequest, current_user: dict = Depe
         )
         for r in results
     ]
+
+
+@router.post("/api/sources/{source_id}/subscribe")
+async def subscribe_source(source_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    source = db.query(Source).filter(Source.id == source_id, Source.active == True).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    existing = (
+        db.query(UserSourceSubscription)
+        .filter_by(user_id=current_user["id"], source_id=source_id)
+        .first()
+    )
+    if not existing:
+        db.add(UserSourceSubscription(user_id=current_user["id"], source_id=source_id))
+        db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/api/sources/{source_id}/subscribe")
+async def unsubscribe_source(source_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_session)):
+    sub = (
+        db.query(UserSourceSubscription)
+        .filter_by(user_id=current_user["id"], source_id=source_id)
+        .first()
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail="Not subscribed to this source")
+    db.delete(sub)
+    db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/api/sources/providers")

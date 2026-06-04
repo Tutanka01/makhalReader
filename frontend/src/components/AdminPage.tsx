@@ -3,6 +3,7 @@ import { Shield, Plus, Copy, RefreshCw, CheckCircle, Clock, Building2, Trash2, S
 import apiClient, { ApiError } from '../apiClient'
 import { useCurrentUser } from '../context/UserContext'
 import type { Organization } from '../types'
+import { ProviderBadge } from './ProviderBadge'
 
 // ── Create org panel ────────────────────────────────────────────────────────
 
@@ -389,6 +390,7 @@ export default function AdminPage() {
           <thead>
             <tr className="text-xs text-text-muted uppercase tracking-wider border-b border-border-subtle bg-bg-elevated/50">
               <th className="text-left px-[18px] py-2.5 font-medium">Feed</th>
+              <th className="text-left px-[18px] py-2.5 font-medium">Type</th>
               <th className="text-left px-[18px] py-2.5 font-medium">Catégorie</th>
               <th className="text-left px-[18px] py-2.5 font-medium">Abonnés</th>
             </tr>
@@ -396,7 +398,7 @@ export default function AdminPage() {
           <tbody>
             {org.feed_catalog.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-[18px] py-8 text-center text-sm text-text-muted">
+                <td colSpan={4} className="px-[18px] py-8 text-center text-sm text-text-muted">
                   Aucun feed actif.
                 </td>
               </tr>
@@ -407,6 +409,9 @@ export default function AdminPage() {
                     <span className="w-[7px] h-[7px] rounded-full flex-shrink-0" style={{ background: 'var(--accent)' }} />
                     <span className="text-text-primary text-[13px]">{f.name}</span>
                   </div>
+                </td>
+                <td className="px-[18px] py-2.5">
+                  <ProviderBadge provider={f.provider} />
                 </td>
                 <td className="px-[18px] py-2.5 text-text-secondary text-[13px]">{f.category}</td>
                 <td className="px-[18px] py-2.5">

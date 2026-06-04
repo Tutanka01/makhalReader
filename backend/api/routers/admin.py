@@ -187,7 +187,7 @@ async def get_org(db: Session = Depends(get_db), current_user: dict = Depends(re
         .all()
     )
     catalog = [
-        {"id": row.id, "name": row.name, "category": row.category, "subscriber_count": row.subscriber_count}
+        {"id": row.id, "name": row.name, "category": row.category, "subscriber_count": row.subscriber_count, "provider": "rss"}
         for row in catalog_rows
     ]
 
