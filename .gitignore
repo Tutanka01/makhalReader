@@ -22,3 +22,8 @@ CLOUDFLARE_DEPLOY.md
 DEPLOY.md
 
 .agents/
+graphify-out/
+
+.codex/
+
+/AGENTS.md

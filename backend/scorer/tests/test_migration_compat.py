@@ -139,16 +139,28 @@ class TestV1ToV2Migration:
         assert "article_scores" in tables, "article_scores table must be created"
         assert "user_feed_subscriptions" in tables, "user_feed_subscriptions table must be created"
 
-    def test_seed_user_created(self, v1_db):
-        """AUTH_PASSWORD set → user_id=1 must be seeded."""
+    def test_no_seed_user_created(self, v1_db):
+        """AUTH_PASSWORD must not create a hidden user during migration."""
         _, db_module = v1_db
         db_module.init_db()
         db = db_module.SessionLocal()
         try:
             from database import User
-            user = db.query(User).filter(User.id == 1).first()
-            assert user is not None, "Seed user_id=1 must exist after migration"
+            assert db.query(User).count() == 0
+        finally:
+            db.close()
+
+    def test_first_registered_user_after_migration_is_admin(self, v1_db):
+        """The first real user created after migration owns user_id=1 and is admin."""
+        _, db_module = v1_db
+        db_module.init_db()
+        db = db_module.SessionLocal()
+        try:
+            from database import User
+            user = User.register(db, "first@test.com", "pass123")
+            assert user.id == 1
             assert user.role == "admin"
+            assert user.onboarding_done is False
         finally:
             db.close()
 

@@ -78,6 +78,13 @@ class User(Base):
         existing = db.query(cls).filter(cls.email == email).first()
         if existing:
             return None
+        has_real_user = (
+            db.query(cls.id)
+            .filter(cls.email != "admin@basira.local")
+            .first()
+            is not None
+        )
+        role = "member" if has_real_user else "admin"
         pwd_hash = bcrypt.hashpw(
             hashlib.sha256(password.encode()).digest(),
             bcrypt.gensalt(rounds=12),
@@ -87,6 +94,7 @@ class User(Base):
             password_hash=pwd_hash.decode(),
             display_name=display_name,
             org_id=org_id,
+            role=role,
         )
         db.add(user)
         db.commit()
@@ -403,33 +411,18 @@ def set_user_setting(db: Session, user_id: int, key: str, value: str) -> None:
     db.commit()
 
 
-def _seed_default_user():
-    """Auto-create seed user_id=1 when AUTH_PASSWORD is set and users table is empty."""
-    raw = os.getenv("AUTH_PASSWORD", "")
-    if not raw:
-        return
-    from sqlalchemy import text as _text
+def _quarantine_legacy_seed_user():
+    """Neutralize the old dev seed account without deleting existing articles."""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-        existing = db.query(User).count()
-        if existing > 0:
+        user = db.query(User).filter(User.email == "admin@basira.local").first()
+        if not user:
             return
-        pwd_hash = bcrypt.hashpw(
-            hashlib.sha256(raw.encode()).digest(),
-            bcrypt.gensalt(rounds=12),
-        )
-        user = User(
-            email="admin@basira.local",
-            password_hash=pwd_hash.decode(),
-            display_name="Admin",
-            role="admin",
-            onboarding_done=True,
-        )
-        db.add(user)
+        user.onboarding_done = False
+        db.query(UserFeedSubscription).filter(UserFeedSubscription.user_id == user.id).delete()
         db.commit()
-        print(f"[init_db] Seed user created: id={user.id}")
     except Exception:
-        pass
+        db.rollback()
     finally:
         db.close()
 
@@ -548,11 +541,10 @@ def init_db():
             except Exception:
                 pass  # column already exists
 
-    _seed_default_user()
+    _quarantine_legacy_seed_user()
 
     with engine.connect() as conn:
         _backfill_article_scores(conn)
-        _backfill_subscriptions(conn)
         _backfill_user_config(conn)
         _backfill_research_profile(conn)
         _backfill_highlights(conn)
@@ -576,18 +568,6 @@ def _backfill_article_scores(conn):
         conn.commit()
     except Exception:
         pass  # table may not exist yet on very first deploy
-
-
-def _backfill_subscriptions(conn):
-    """Subscribe user_id=1 to all existing feeds (single-tenant compat)."""
-    try:
-        conn.execute(text("""
-            INSERT OR IGNORE INTO user_feed_subscriptions (user_id, feed_id, created_at)
-            SELECT 1, id, datetime('now') FROM feeds
-        """))
-        conn.commit()
-    except Exception:
-        pass
 
 
 _DEFAULT_THESIS_SECTIONS = [
@@ -643,35 +623,8 @@ _DEFAULT_FACET_SCHEMA = {
 
 
 def _backfill_user_config(conn):
-    """Create user_config row for user_id=1 with hardcoded defaults."""
-    try:
-        conn.execute(text("""
-            INSERT OR IGNORE INTO user_config (
-                user_id, thesis_title, thesis_question, thesis_contribution,
-                thesis_sections_json, scoring_clusters_json,
-                tracked_venues_json, avoid_topics_json,
-                weekly_goal, model_preference, prompt_profile,
-                created_at, updated_at
-            ) VALUES (
-                1,
-                :title, :question, :contribution,
-                :sections, :clusters,
-                :venues, :avoids,
-                10, 'google/gemini-flash-1.5', 'unified',
-                datetime('now'), datetime('now')
-            )
-        """), {
-            "title": "AI-driven model-based engineering for cyber-physical systems in the industry of the future.",
-            "question": "How can AI agents be integrated into the Systems Engineering (SE) process to enable effective adoption of Model-Based Systems Engineering (MBSE) throughout the life cycle of industrial Cyber-Physical Systems (CPS)?",
-            "contribution": None,
-            "sections": json.dumps(_DEFAULT_THESIS_SECTIONS),
-            "clusters": json.dumps(_DEFAULT_SCORING_CLUSTERS),
-            "venues": json.dumps(_DEFAULT_TRACKED_VENUES),
-            "avoids": json.dumps(_DEFAULT_AVOID_TOPICS),
-        })
-        conn.commit()
-    except Exception:
-        pass
+    """No-op: user_config now comes exclusively from onboarding."""
+    return None
 
 
 def _backfill_research_profile(conn):

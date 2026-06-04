@@ -17,6 +17,7 @@ from database import (
     ResearchProfile,
     SessionLocal,
     Source,
+    User,
     UserConfig,
     UserFeedSubscription,
     UserSourceSubscription,
@@ -56,7 +57,12 @@ async def internal_list_provider_sources(
         .group_by(Source.id)
         .all()
     )
-    subs = db.query(UserSourceSubscription).all()
+    subs = (
+        db.query(UserSourceSubscription)
+        .join(User, User.id == UserSourceSubscription.user_id)
+        .filter(User.onboarding_done == True)
+        .all()
+    )
     sub_map: dict[int, list[int]] = defaultdict(list)
     for s in subs:
         sub_map[s.source_id].append(s.user_id)
@@ -69,9 +75,10 @@ async def internal_list_provider_sources(
             "query_json": source.query_json,
             "active": source.active,
             "last_fetched": source.last_fetched.isoformat() if source.last_fetched else None,
-            "subscriber_user_ids": sub_map.get(source.id, []),
+            "subscriber_user_ids": subscribers,
         }
         for source, _ in results
+        if (subscribers := sub_map.get(source.id, []))
     ]
 
 
@@ -249,7 +256,12 @@ async def internal_list_feeds(
         .group_by(Feed.id)
         .all()
     )
-    subs = db.query(UserFeedSubscription).all()
+    subs = (
+        db.query(UserFeedSubscription)
+        .join(User, User.id == UserFeedSubscription.user_id)
+        .filter(User.onboarding_done == True)
+        .all()
+    )
     sub_map: dict[int, list[int]] = defaultdict(list)
     for s in subs:
         sub_map[s.feed_id].append(s.user_id)
@@ -259,9 +271,10 @@ async def internal_list_feeds(
             "url": feed.url,
             "name": feed.name,
             "category": feed.category,
-            "subscriber_user_ids": sub_map.get(feed.id, []),
+            "subscriber_user_ids": subscribers,
         }
         for feed, _ in results
+        if (subscribers := sub_map.get(feed.id, []))
     ]
 
 

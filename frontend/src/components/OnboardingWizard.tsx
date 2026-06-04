@@ -36,8 +36,10 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
   const [scoredCount, setScoredCount] = useState(0)
+  const [createdCount, setCreatedCount] = useState(0)
   const [previewArticles, setPreviewArticles] = useState<any[]>([])
   const [pollTriggered, setPollTriggered] = useState(false)
+  const [pollFinished, setPollFinished] = useState(false)
 
   useEffect(() => {
     if (step === 3) {
@@ -166,6 +168,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   const handleComplete = async () => {
+    const selectedFeeds = catalog.filter(feed => feed.subscribed).length
+    if (selectedFeeds === 0) {
+      setError('Select at least one feed to start your first run')
+      return
+    }
+
     setCompleting(true)
     setError('')
     try {
@@ -179,7 +187,14 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setCompleting(false)
         return
       }
-      onComplete()
+      setCompleting(false)
+      setPollPhase('running')
+      setPollTriggered(false)
+      setPollFinished(false)
+      setScoredCount(0)
+      setCreatedCount(0)
+      setPreviewArticles([])
+      setStep(4)
     } catch {
       setError('Network error')
       setCompleting(false)
@@ -193,7 +208,23 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     setPollTriggered(true)
 
     // Trigger poll
-    fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
+    fetch('/api/poll/trigger', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bootstrap: true }),
+    })
+      .then(async res => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          setError(data.detail || 'Failed to start polling')
+          setPollPhase('preview')
+        }
+      })
+      .catch(() => {
+        setError('Failed to start polling')
+        setPollPhase('preview')
+      })
 
     // Connect SSE
     const evtSource = new EventSource('/api/stream', { withCredentials: true })
@@ -222,30 +253,62 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       } catch {}
     }, 5000)
 
+    const statusTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/poll/status', { credentials: 'include' })
+        if (!res.ok) return
+        const status = await res.json()
+        if (status.status === 'complete' || status.status === 'failed') {
+          if (typeof status.articles_created === 'number') {
+            setCreatedCount(status.articles_created)
+          }
+          if (typeof status.articles_scored === 'number') {
+            setScoredCount(status.articles_scored)
+          }
+          setPollFinished(true)
+          if (status.status === 'failed') {
+            setError(status.error || 'Poll failed')
+          }
+          setPollPhase('preview')
+          clearInterval(articleCheck)
+          clearInterval(previewTimer)
+          clearInterval(statusTimer)
+          evtSource.close()
+        }
+      } catch {}
+    }, 2000)
+
     // After 3 articles or 45s timeout, show preview
     const articleCheck = setInterval(() => {
       if (collected.length >= 3) {
+        setPollFinished(true)
         setPollPhase('preview')
         clearInterval(articleCheck)
         clearInterval(previewTimer)
+        clearInterval(statusTimer)
         evtSource.close()
       }
     }, 1000)
 
     const timeout = setTimeout(() => {
+      setPollFinished(true)
       setPollPhase('preview')
       clearInterval(articleCheck)
       clearInterval(previewTimer)
+      clearInterval(statusTimer)
       evtSource.close()
-    }, 120000)
+    }, 30000)
 
     return () => {
       evtSource.close()
       clearInterval(articleCheck)
       clearInterval(previewTimer)
+      clearInterval(statusTimer)
       clearTimeout(timeout)
     }
   }, [step, pollTriggered])
+
+  const selectedFeedCount = catalog.filter(feed => feed.subscribed).length
 
   const StepIndicator = () => (
     <div className="flex items-center justify-center gap-2 mb-10">
@@ -491,8 +554,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               <button onClick={() => setStep(2)} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors">
                 ← Back
               </button>
-              <button onClick={() => setStep(4)} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
-                Continue →
+              <button onClick={handleComplete} disabled={completing || selectedFeedCount === 0} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                {completing ? 'Saving…' : `Start first run${selectedFeedCount ? ` (${selectedFeedCount})` : ''} →`}
               </button>
             </div>
           </div>
@@ -518,7 +581,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               Baṣīra is scanning your feeds, extracting articles, and scoring them against your thesis.
             </p>
             <div className="text-xs text-text-muted font-mono">
-              Scored {scoredCount} article{scoredCount !== 1 ? 's' : ''} so far
+              Created {createdCount} · scored {scoredCount}
             </div>
           </div>
         </div>
@@ -541,7 +604,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
           {top3.length === 0 && (
             <p className="text-sm text-text-muted mb-6">
-              No articles have been scored yet — the poll may still be running. You can check the dashboard shortly.
+              {pollFinished
+                ? 'The first poll finished, but no new article could be scored from the selected feeds. You can start reading now and adjust feeds anytime.'
+                : 'No articles have been scored yet. The poll is still running.'}
             </p>
           )}
 
@@ -567,8 +632,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
           {error && <p className="text-danger text-xs mt-4">{error}</p>}
           <div className="flex items-center justify-end mt-6">
-            <button onClick={handleComplete} disabled={completing} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
-              {completing ? 'Completing…' : 'Finish — start reading →'}
+            <button onClick={onComplete} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
+              Finish — start reading →
             </button>
           </div>
         </div>

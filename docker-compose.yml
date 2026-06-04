@@ -11,7 +11,9 @@ volumes:
 
 services:
   api:
-    build: ./backend/api
+    build:
+      context: ./backend
+      dockerfile: api/Dockerfile
     restart: unless-stopped
     env_file: .env
     volumes:

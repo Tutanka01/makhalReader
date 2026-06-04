@@ -161,7 +161,7 @@ class TestNullableColumnsRoundtrip:
 
 
 class TestMultiTenantTables:
-    """Story 1.1 — organizations & users tables + seed user."""
+    """Story 1.1 — organizations & users tables."""
 
     def test_organizations_table_exists(self, tmp_db):
         engine, db_module = tmp_db
@@ -201,42 +201,29 @@ class TestMultiTenantTables:
         assert "organizations" in tables
         assert "users" in tables
 
-    def test_seed_user_created_from_auth_password(self, monkeypatch, tmp_db):
+    def test_auth_password_does_not_seed_user(self, monkeypatch, tmp_db):
         engine, db_module = tmp_db
         monkeypatch.setenv("AUTH_PASSWORD", "test_secret_123")
         db_module.init_db()
         Session = sessionmaker(bind=engine)
         session = Session()
         users = session.query(db_module.User).all()
-        assert len(users) == 1
-        assert users[0].id == 1
-        assert users[0].email == "admin@basira.local"
-        assert users[0].role == "admin"
-        assert users[0].onboarding_done is True
+        assert users == []
         session.close()
 
-    def test_seed_user_not_created_when_users_exist(self, monkeypatch, tmp_db):
+    def test_first_registered_user_is_admin(self, monkeypatch, tmp_db):
         engine, db_module = tmp_db
         monkeypatch.setenv("AUTH_PASSWORD", "test_secret_456")
         db_module.init_db()
 
-        # Add a second user manually
         Session = sessionmaker(bind=engine)
         session = Session()
-        user2 = db_module.User(
-            email="user2@test.com",
-            password_hash="dummy",
-            display_name="User Two",
-        )
-        session.add(user2)
-        session.commit()
+        first = db_module.User.register(session, "first@test.com", "pass123")
+        second = db_module.User.register(session, "second@test.com", "pass123")
+        assert first.role == "admin"
+        assert first.onboarding_done is False
+        assert second.role == "member"
         session.close()
-
-        # Re-init — seed should NOT add another user
-        db_module.init_db()
-        Session = sessionmaker(bind=engine)
-        users = Session().query(db_module.User).all()
-        assert len(users) == 2  # still exactly 2
 
     def test_multi_tenant_migration_idempotent_with_existing_data(self, tmp_db):
         """Backward-compat: existing articles survive after adding user tables."""
@@ -473,7 +460,7 @@ class TestUserFeedSubscriptions:
 
 
 class TestUserConfig:
-    """Story 4.1 — user_config table + backfill (FR-MT-19)."""
+    """Story 4.1 — user_config table; rows are created by onboarding."""
 
     def test_table_exists(self, tmp_db):
         engine, db_module = tmp_db
@@ -495,37 +482,24 @@ class TestUserConfig:
                     "created_at", "updated_at"}
         assert expected.issubset(columns)
 
-    def test_backfill_populates_user_1(self, tmp_db):
-        import json
+    def test_init_db_does_not_prepopulate_user_config(self, tmp_db):
         engine, db_module = tmp_db
         db_module.init_db()
         Session = sessionmaker(bind=engine)
         session = Session()
-        row = session.execute(
-            text("SELECT * FROM user_config WHERE user_id = 1")
-        ).fetchone()
+        rows = session.execute(text("SELECT COUNT(*) FROM user_config")).scalar()
         session.close()
-        assert row is not None
-        assert "AI-driven model-based engineering" in row.thesis_title
-        sections = json.loads(row.thesis_sections_json)
-        assert "P1 Construction" in sections
-        assert len(sections) == 9
-        clusters = json.loads(row.scoring_clusters_json)
-        assert len(clusters) == 5
-        cluster_ids = {c["id"] for c in clusters}
-        assert cluster_ids == {"A", "B", "C", "D", "E"}
+        assert rows == 0
 
-    def test_backfill_idempotent(self, tmp_db):
+    def test_no_user_config_backfill_is_idempotent(self, tmp_db):
         engine, db_module = tmp_db
         db_module.init_db()
         db_module.init_db()
         Session = sessionmaker(bind=engine)
         session = Session()
-        rows = session.execute(
-            text("SELECT COUNT(*) FROM user_config WHERE user_id = 1")
-        ).scalar()
+        rows = session.execute(text("SELECT COUNT(*) FROM user_config")).scalar()
         session.close()
-        assert rows == 1, "Backfill must be idempotent"
+        assert rows == 0
 
     def test_init_db_twice_no_error(self, tmp_db):
         engine, db_module = tmp_db

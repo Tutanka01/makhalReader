@@ -57,7 +57,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   fetchFacetSchema: async () => {
     set({ facetSchemaLoading: true })
     try {
-      const data = await apiClient.get<{ facet_schema: FacetSchema }>('/api/profile/bootstrap')
+      const data = await apiClient.get<{ facet_schema: FacetSchema }>('/api/profile/config')
       set({ facetSchema: data.facet_schema, facetSchemaLoading: false })
     } catch {
       set({ facetSchemaLoading: false })

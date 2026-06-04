@@ -145,7 +145,7 @@ async def get_digest(
         .limit(limit)
         .all()
     )
-    return [_row_to_list_item(row) for row in results]
+    return [_row_to_list_item(article, feed_name) for article, feed_name in results]
 
 
 @router.post("/api/feeds", response_model=FeedOut)

@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertCircle, ArrowRight, Check, Loader2, Lock, Mail, User } from 'lucide-react'
 
 interface Props {
   onLogin: () => void
@@ -15,15 +16,13 @@ export function LoginView({ onLogin }: Props) {
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [shake, setShake] = useState(false)
   const emailRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { emailRef.current?.focus() }, [mode])
 
-  const switchMode = (m: AuthMode) => {
-    setMode(m)
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode)
     setError(null)
-    setShake(false)
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -53,12 +52,10 @@ export function LoginView({ onLogin }: Props) {
             : (data.detail ?? 'Invalid credentials.')
         )
         setPassword('')
-        setShake(true)
-        setTimeout(() => setShake(false), 500)
       } else {
         const body: Record<string, string> = { email, password }
-        if (displayName) body.display_name = displayName
-        if (inviteCode) body.invite_code = inviteCode
+        if (displayName.trim()) body.display_name = displayName.trim()
+        if (inviteCode.trim()) body.invite_code = inviteCode.trim()
 
         const resp = await fetch('/auth/register', {
           method: 'POST',
@@ -75,8 +72,6 @@ export function LoginView({ onLogin }: Props) {
         const data = await resp.json().catch(() => ({}))
         setError(data.detail ?? 'Registration failed.')
         setPassword('')
-        setShake(true)
-        setTimeout(() => setShake(false), 500)
       }
     } catch {
       setError('Connection error.')
@@ -85,322 +80,188 @@ export function LoginView({ onLogin }: Props) {
     }
   }
 
+  const inputBase = 'w-full rounded-md border border-border-default bg-bg px-10 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent focus:ring-2 focus:ring-accent/15'
+  const isDisabled = loading || !email || !password
+
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-bg-base overflow-hidden relative">
-      {/* Background glow */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div
-          className="absolute rounded-full opacity-20 blur-3xl"
-          style={{
-            width: 600,
-            height: 600,
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -60%)',
-            background: 'radial-gradient(circle, var(--accent) 0%, var(--purple) 40%, transparent 70%)',
-          }}
-        />
-      </div>
-
-      {/* Subtle grid */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.035]"
-        style={{
-          backgroundImage:
-            'linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)',
-          backgroundSize: '52px 52px',
-        }}
-      />
-
-      <div className="relative z-10 w-full max-w-[380px] px-6">
-
-        {/* Logo */}
-        <div className="text-center mb-10 select-none">
-          <img
-            src="/logo.png"
-            alt="Baṣīra Logo"
-            className="inline-flex w-14 h-14 rounded-2xl mb-5 object-cover"
-          />
-          <h1 style={{ color: 'var(--text-primary)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.03em', margin: 0 }}>
-            Baṣīra
-          </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
-            Your private intelligence feed
-          </p>
-        </div>
-
-        {/* Card */}
-        <form
-          onSubmit={submit}
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 20,
-            padding: '28px 28px 24px',
-            backdropFilter: 'blur(12px)',
-            animation: shake ? 'shake 0.4s ease' : undefined,
-          }}
-        >
-          <style>{`
-            @keyframes shake {
-              0%,100%{transform:translateX(0)}
-              20%{transform:translateX(-8px)}
-              40%{transform:translateX(8px)}
-              60%{transform:translateX(-5px)}
-              80%{transform:translateX(5px)}
-            }
-          `}</style>
-
-          {/* Tabs */}
-          <div style={{
-            display: 'flex',
-            gap: 4,
-            background: 'var(--bg-secondary)',
-            padding: 3,
-            borderRadius: 8,
-            marginBottom: 20,
-          }}>
-            <button
-              type="button"
-              onClick={() => switchMode('login')}
-              style={{
-                flex: 1,
-                padding: '7px 0',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                background: mode === 'login' ? 'var(--bg)' : 'transparent',
-                color: mode === 'login' ? 'var(--text-primary)' : 'var(--text-muted)',
-                boxShadow: mode === 'login' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
-                border: 'none',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode('register')}
-              style={{
-                flex: 1,
-                padding: '7px 0',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                background: mode === 'register' ? 'var(--bg)' : 'transparent',
-                color: mode === 'register' ? 'var(--text-primary)' : 'var(--text-muted)',
-                boxShadow: mode === 'register' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
-                border: 'none',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              Create account
-            </button>
-          </div>
-
-          {/* Email field */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
-              Email
-            </label>
-            <input
-              ref={emailRef}
-              type="email"
-              value={email}
-              onChange={e => { setEmail(e.target.value); setError(null) }}
-              placeholder="you@university.edu"
-              autoComplete="email"
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: 10,
-                border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border-default)'}`,
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontSize: 14,
-                outline: 'none',
-                boxSizing: 'border-box',
-                transition: 'border-color 0.15s',
-              }}
-              onFocus={e => {
-                if (!error) e.target.style.borderColor = 'var(--accent)'
-              }}
-              onBlur={e => {
-                if (!error) e.target.style.borderColor = 'var(--border-default)'
-              }}
-            />
-          </div>
-
-          {/* Password field */}
-          <div style={{ marginBottom: mode === 'register' ? 12 : 16 }}>
-            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => { setPassword(e.target.value); setError(null) }}
-              placeholder="••••••••••••••••"
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: 10,
-                border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border-default)'}`,
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontSize: 14,
-                outline: 'none',
-                boxSizing: 'border-box',
-                transition: 'border-color 0.15s',
-              }}
-              onFocus={e => {
-                if (!error) e.target.style.borderColor = 'var(--accent)'
-              }}
-              onBlur={e => {
-                if (!error) e.target.style.borderColor = 'var(--border-default)'
-              }}
-            />
-          </div>
-
-          {/* Register-only fields */}
-          {mode === 'register' && (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
-                  Display name <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional</span>
-                </label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={e => setDisplayName(e.target.value)}
-                  placeholder="e.g. Rachid Fall"
-                  autoComplete="name"
-                  style={{
-                    width: '100%',
-                    padding: '11px 14px',
-                    borderRadius: 10,
-                    border: '1.5px solid var(--border-default)',
-                    background: 'var(--bg-elevated)',
-                    color: 'var(--text-primary)',
-                    fontSize: 14,
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    transition: 'border-color 0.15s',
-                  }}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border-default)' }}
-                />
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 7, fontWeight: 500 }}>
-                  Invite code <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional, joins a lab</span>
-                </label>
-                <input
-                  type="text"
-                  value={inviteCode}
-                  onChange={e => setInviteCode(e.target.value)}
-                  placeholder="e.g. EVA-LAB-2026"
-                  style={{
-                    width: '100%',
-                    padding: '11px 14px',
-                    borderRadius: 10,
-                    border: '1.5px solid var(--border-default)',
-                    background: 'var(--bg-elevated)',
-                    color: 'var(--text-primary)',
-                    fontSize: 14,
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    transition: 'border-color 0.15s',
-                  }}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border-default)' }}
-                />
-              </div>
-            </>
-          )}
-
-          {/* Error */}
-          {error && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
+    <div className="min-h-screen w-full bg-bg-base text-text-primary">
+      <div className="mx-auto grid min-h-screen w-full max-w-6xl grid-cols-1 lg:grid-cols-[1fr_420px]">
+        <section className="hidden border-r border-border-subtle px-10 py-12 lg:flex lg:flex-col lg:justify-between">
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="Baṣīra" className="h-10 w-10 rounded-md object-cover" />
+            <div>
+              <div className="text-base font-semibold">Baṣīra</div>
+              <div className="text-xs text-text-muted">Private research intelligence</div>
             </div>
-          )}
+          </div>
 
-          {/* Remember toggle (login only) */}
-          {mode === 'login' && (
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22, cursor: 'pointer', userSelect: 'none' }}
-              onClick={() => setRemember(v => !v)}
-            >
-              <div style={{
-                position: 'relative',
-                width: 36,
-                height: 20,
-                borderRadius: 99,
-                background: remember ? 'var(--accent)' : 'var(--bg-hover)',
-                transition: 'background 0.2s',
-                flexShrink: 0,
-              }}>
-                <div style={{
-                  position: 'absolute',
-                  top: 3,
-                  left: remember ? 19 : 3,
-                  width: 14,
-                  height: 14,
-                  borderRadius: '50%',
-                  background: 'white',
-                  transition: 'left 0.2s',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
-                }}/>
-              </div>
-              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                Keep me signed in
-              </span>
+          <div className="max-w-xl">
+            <h1 className="mb-4 text-4xl font-semibold leading-tight tracking-normal text-text-primary">
+              Research feeds that stay quiet until you configure them.
+            </h1>
+            <p className="max-w-lg text-sm leading-6 text-text-secondary">
+              Create your account, define your thesis, choose feeds, then Baṣīra starts polling and scoring only for you.
+            </p>
+            <div className="mt-8 grid max-w-lg grid-cols-1 gap-3">
+              {[
+                'No default user or hidden seed profile',
+                'No RSS, extraction, or LLM calls before onboarding',
+                'Per-user feeds, scores, and research context',
+              ].map(item => (
+                <div key={item} className="flex items-center gap-3 text-sm text-text-secondary">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-success-bg text-success">
+                    <Check size={13} strokeWidth={2.5} />
+                  </span>
+                  <span>{item}</span>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
 
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading || !email || !password}
-            style={{
-              width: '100%',
-              padding: '11px',
-              borderRadius: 10,
-              border: 'none',
-              cursor: loading || !email || !password ? 'not-allowed' : 'pointer',
-              background: loading || !email || !password
-                ? 'color-mix(in srgb, var(--accent) 35%, transparent)'
-                : 'linear-gradient(135deg, var(--accent), var(--purple))',
-              color: loading || !email || !password ? 'rgba(255,255,255,0.4)' : 'white',
-              fontSize: 14,
-              fontWeight: 600,
-              transition: 'all 0.15s',
-              letterSpacing: '-0.01em',
-            }}
-          >
-            {loading ? (
-              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                <svg style={{ animation: 'spin 0.8s linear infinite' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                </svg>
-                <style>{'@keyframes spin{to{transform:rotate(360deg)}}'}</style>
-                {mode === 'login' ? 'Signing in…' : 'Creating account…'}
-              </span>
-            ) : mode === 'login' ? 'Sign in →' : 'Create account →'}
-          </button>
-        </form>
+          <div className="text-xs text-text-muted">
+            HttpOnly session cookies, scoped user data, Docker-local runtime.
+          </div>
+        </section>
 
-        {/* Footer */}
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: 'var(--text-muted)', letterSpacing: '0.02em' }}>
-          HttpOnly · Secure · SameSite=Strict
-        </p>
+        <main className="flex min-h-screen items-center justify-center px-5 py-8">
+          <div className="w-full max-w-[390px]">
+            <div className="mb-8 flex items-center gap-3 lg:hidden">
+              <img src="/logo.png" alt="Baṣīra" className="h-10 w-10 rounded-md object-cover" />
+              <div>
+                <div className="text-base font-semibold">Baṣīra</div>
+                <div className="text-xs text-text-muted">Private research intelligence</div>
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold">
+                {mode === 'login' ? 'Sign in' : 'Create your account'}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-text-muted">
+                {mode === 'login'
+                  ? 'Use your account to open your configured research feed.'
+                  : 'The first account becomes admin and starts with onboarding.'}
+              </p>
+            </div>
+
+            <div className="mb-5 grid grid-cols-2 rounded-md border border-border-subtle bg-bg-secondary p-1">
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className={`rounded px-3 py-2 text-sm font-medium transition-colors ${mode === 'login' ? 'bg-bg text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode('register')}
+                className={`rounded px-3 py-2 text-sm font-medium transition-colors ${mode === 'register' ? 'bg-bg text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+              >
+                Register
+              </button>
+            </div>
+
+            <form onSubmit={submit} className="space-y-4">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">Email</span>
+                <span className="relative block">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+                  <input
+                    ref={emailRef}
+                    type="email"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); setError(null) }}
+                    placeholder="you@university.edu"
+                    autoComplete="email"
+                    className={inputBase}
+                  />
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">Password</span>
+                <span className="relative block">
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={e => { setPassword(e.target.value); setError(null) }}
+                    placeholder="Enter password"
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    className={inputBase}
+                  />
+                </span>
+              </label>
+
+              {mode === 'register' && (
+                <>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-text-secondary">Display name</span>
+                    <span className="relative block">
+                      <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={e => setDisplayName(e.target.value)}
+                        placeholder="Optional"
+                        autoComplete="name"
+                        className={inputBase}
+                      />
+                    </span>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-text-secondary">Invite code</span>
+                    <input
+                      type="text"
+                      value={inviteCode}
+                      onChange={e => setInviteCode(e.target.value)}
+                      placeholder="Optional"
+                      className="w-full rounded-md border border-border-default bg-bg px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent focus:ring-2 focus:ring-accent/15"
+                    />
+                  </label>
+                </>
+              )}
+
+              {mode === 'login' && (
+                <label className="flex cursor-pointer items-center gap-3 text-sm text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={e => setRemember(e.target.checked)}
+                    className="h-4 w-4 rounded border-border-default text-accent focus:ring-accent"
+                  />
+                  Keep me signed in
+                </label>
+              )}
+
+              {error && (
+                <div className="flex items-start gap-2 rounded-md border border-danger/20 bg-danger-bg px-3 py-2 text-sm text-danger">
+                  <AlertCircle className="mt-0.5 shrink-0" size={16} />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isDisabled}
+                className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="animate-spin" size={16} />
+                    {mode === 'login' ? 'Signing in' : 'Creating account'}
+                  </>
+                ) : (
+                  <>
+                    {mode === 'login' ? 'Sign in' : 'Create account'}
+                    <ArrowRight size={16} />
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </main>
       </div>
     </div>
   )

@@ -4,7 +4,7 @@ These tests verify:
 - User.register() creates users and rejects duplicates
 - User.authenticate() validates credentials
 - Session table CRUD works (create/validate expiry/delete)
-- Seed user (admin@basira.local) login works
+- No dev seed user is created automatically
 - Backward compat: existing sessions survive
 
 NOTE: Run inside Docker where SQLAlchemy and project deps are available:
@@ -132,12 +132,13 @@ class TestUserAuthenticate:
         finally:
             db.close()
 
-    def test_seed_user_authenticates(self, tmp_db):
+    def test_first_registered_user_authenticates_as_admin(self, tmp_db):
         db: Session = tmp_db()
         try:
-            user = User.authenticate(db, "admin@basira.local", TEST_PASSWORD)
+            User.register(db, "first@test.com", TEST_PASSWORD)
+            user = User.authenticate(db, "first@test.com", TEST_PASSWORD)
             assert user is not None
-            assert user.email == "admin@basira.local"
+            assert user.email == "first@test.com"
             assert user.role == "admin"
         finally:
             db.close()
@@ -220,14 +221,11 @@ class TestSessionLifecycle:
         finally:
             db.close()
 
-    def test_seed_user_exists_after_init(self, tmp_db):
+    def test_no_seed_user_exists_after_init(self, tmp_db):
         db: Session = tmp_db()
         try:
             user = db.query(User).filter(User.email == "admin@basira.local").first()
-            assert user is not None
-            assert user.role == "admin"
-            assert user.onboarding_done is True
-            assert user.display_name == "Admin"
+            assert user is None
         finally:
             db.close()
 
@@ -347,6 +345,7 @@ class TestSessionUserBinding:
 
         db = tmp_db()
         try:
+            User.register(db, "valid@test.com", "pass123")
             fetched = db.query(AuthSession).filter(
                 AuthSession.id == "valid-user-token",
                 AuthSession.expires_at > datetime.now(timezone.utc),
@@ -355,7 +354,7 @@ class TestSessionUserBinding:
             assert fetched.user_id == 1
             user = db.query(User).filter(User.id == fetched.user_id).first()
             assert user is not None
-            assert user.email == "admin@basira.local"
+            assert user.email == "valid@test.com"
         finally:
             db.close()
 
@@ -442,12 +441,34 @@ class TestRegistrationWithInviteCode:
 
 
 class TestAuthBackwardCompat:
-    def test_seed_user_email_login_works(self, tmp_db):
+    def test_legacy_seed_user_is_quarantined(self, tmp_db):
         db: Session = tmp_db()
         try:
-            user = User.authenticate(db, "admin@basira.local", TEST_PASSWORD)
+            pwd_hash = __import__("bcrypt").hashpw(
+                __import__("hashlib").sha256(TEST_PASSWORD.encode()).digest(),
+                __import__("bcrypt").gensalt(rounds=12),
+            )
+            legacy = User(
+                email="admin@basira.local",
+                password_hash=pwd_hash.decode(),
+                display_name="Admin",
+                role="admin",
+                onboarding_done=True,
+            )
+            db.add(legacy)
+            db.commit()
+        finally:
+            db.close()
+
+        init_db()
+
+        db = tmp_db()
+        try:
+            user = db.query(User).filter(User.email == "admin@basira.local").first()
             assert user is not None
-            assert user.id == 1
+            assert user.onboarding_done is False
+            real_user = User.register(db, "real-admin@test.com", "pass123")
+            assert real_user.role == "admin"
         finally:
             db.close()
 
@@ -462,11 +483,17 @@ class TestAuthBackwardCompat:
             db.close()
 
     def test_init_db_idempotent_with_users(self, tmp_db):
+        db: Session = tmp_db()
+        try:
+            User.register(db, "admin@test.com", TEST_PASSWORD)
+        finally:
+            db.close()
+
         init_db()
         db: Session = tmp_db()
         try:
-            user = User.authenticate(db, "admin@basira.local", TEST_PASSWORD)
+            user = User.authenticate(db, "admin@test.com", TEST_PASSWORD)
             assert user is not None
-            assert user.email == "admin@basira.local"
+            assert user.email == "admin@test.com"
         finally:
             db.close()

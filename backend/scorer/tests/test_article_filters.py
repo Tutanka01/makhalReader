@@ -1022,7 +1022,12 @@ class TestInternalFeeds:
         feed3 = _make_feed(session, name="No Sub Feed")
         session.flush()
 
-        from database import UserFeedSubscription
+        from database import User, UserFeedSubscription
+        session.add_all([
+            User(id=1, email="u1@test.com", password_hash="x", onboarding_done=True),
+            User(id=2, email="u2@test.com", password_hash="x", onboarding_done=True),
+        ])
+        session.flush()
         session.add_all([
             UserFeedSubscription(user_id=1, feed_id=feed1.id),
             UserFeedSubscription(user_id=2, feed_id=feed1.id),
@@ -1036,7 +1041,7 @@ class TestInternalFeeds:
         sub_map = {d["name"]: d["subscriber_user_ids"] for d in data}
         assert sorted(sub_map["Multi Sub Feed"]) == [1, 2]
         assert sub_map["Single Sub Feed"] == [1]
-        assert sub_map["No Sub Feed"] == []
+        assert "No Sub Feed" not in sub_map
 
     def test_internal_feeds_requires_secret(self, client):
         c, _ = client
@@ -1050,7 +1055,9 @@ class TestInternalFeeds:
         inactive.active = False
         session.flush()
 
-        from database import UserFeedSubscription
+        from database import User, UserFeedSubscription
+        session.add(User(id=1, email="u1-active@test.com", password_hash="x", onboarding_done=True))
+        session.flush()
         session.add_all([
             UserFeedSubscription(user_id=1, feed_id=feed.id),
             UserFeedSubscription(user_id=1, feed_id=inactive.id),
@@ -1061,6 +1068,83 @@ class TestInternalFeeds:
         names = [d["name"] for d in resp.json()]
         assert "Active Feed" in names
         assert "Inactive Feed" not in names
+
+
+@SKIP_INTEGRATION
+class TestOnboardingPollGuards:
+    """First-run safety: no user-scoped polling before onboarding + subscriptions."""
+
+    def test_internal_feeds_only_returns_onboarded_subscribers(self, client):
+        c, session = client
+        from database import User, UserFeedSubscription
+
+        feed = _make_feed(session, name="Guarded Feed")
+        session.add_all([
+            User(id=1, email="onboarded@test.com", password_hash="x", onboarding_done=True),
+            User(id=2, email="pending@test.com", password_hash="x", onboarding_done=False),
+        ])
+        session.flush()
+        session.add_all([
+            UserFeedSubscription(user_id=1, feed_id=feed.id),
+            UserFeedSubscription(user_id=2, feed_id=feed.id),
+        ])
+        session.commit()
+
+        resp = c.get("/api/internal/feeds", headers={"X-Internal-Secret": "changeme"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        found = next(f for f in data if f["id"] == feed.id)
+        assert found["subscriber_user_ids"] == [1]
+
+    def test_internal_feeds_omits_feeds_with_no_onboarded_subscribers(self, client):
+        c, session = client
+        from database import User, UserFeedSubscription
+
+        feed = _make_feed(session, name="Pending Only Feed")
+        session.add(User(id=2, email="pending-only@test.com", password_hash="x", onboarding_done=False))
+        session.flush()
+        session.add(UserFeedSubscription(user_id=2, feed_id=feed.id))
+        session.commit()
+
+        resp = c.get("/api/internal/feeds", headers={"X-Internal-Secret": "changeme"})
+
+        assert resp.status_code == 200
+        assert feed.id not in {f["id"] for f in resp.json()}
+
+    def test_poll_trigger_rejects_user_before_onboarding(self, client):
+        c, session = client
+        from database import User
+
+        session.add(User(
+            id=1,
+            email="pending-trigger@test.com",
+            password_hash="x",
+            onboarding_done=False,
+        ))
+        session.commit()
+
+        resp = c.post("/api/poll/trigger")
+
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "Complete onboarding before polling"
+
+    def test_poll_trigger_rejects_onboarded_user_without_subscription(self, client):
+        c, session = client
+        from database import User
+
+        session.add(User(
+            id=1,
+            email="no-feed@test.com",
+            password_hash="x",
+            onboarding_done=True,
+        ))
+        session.commit()
+
+        resp = c.post("/api/poll/trigger")
+
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "Subscribe to at least one feed before polling"
 
 
 @SKIP_INTEGRATION
@@ -1231,7 +1315,12 @@ class TestPerUserScoringIsolation:
         feed = _make_feed(session, name="Isolated Feed")
         session.flush()
 
-        from database import UserFeedSubscription
+        from database import User, UserFeedSubscription
+        session.add_all([
+            User(id=1, email="u1-isolated@test.com", password_hash="x", onboarding_done=True),
+            User(id=2, email="u2-isolated@test.com", password_hash="x", onboarding_done=True),
+        ])
+        session.flush()
         session.add_all([
             UserFeedSubscription(user_id=1, feed_id=feed.id),
             UserFeedSubscription(user_id=2, feed_id=feed.id),

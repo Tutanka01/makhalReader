@@ -46,6 +46,7 @@ _TRACKING_PARAMS = frozenset({
 # Per-user scoring context cache (cleared each poll cycle).
 _user_context_cache: dict[int, dict] = {}
 _scheduler: Optional[AsyncIOScheduler] = None
+_user_poll_status: dict[int, dict] = {}
 
 
 async def fetch_user_scoring_context(client: httpx.AsyncClient, user_id: int) -> dict:
@@ -120,7 +121,7 @@ async def poll_provider_source(client: httpx.AsyncClient, source_id: int) -> dic
         headers={**INTERNAL_HEADERS, "Content-Type": "application/json"},
         timeout=60,
     )
-        resp.raise_for_status()
+    resp.raise_for_status()
     return resp.json()
 
 
@@ -244,7 +245,12 @@ def is_too_old(entry) -> bool:
 # Core polling logic
 # ---------------------------------------------------------------------------
 
-async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Optional[int] = None):
+async def process_feed(
+    client: httpx.AsyncClient,
+    feed: dict,
+    target_user_id: Optional[int] = None,
+    bootstrap: bool = False,
+):
     """Poll a single feed. If target_user_id is set, only score for that user."""
     feed_id = feed["id"]
     feed_url = feed["url"]
@@ -262,12 +268,15 @@ async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Op
     log.info(f"Feed has {len(all_entries)} entries in RSS")
 
     all_entries = sorted(all_entries, key=entry_recency_key, reverse=True)
-    fresh_entries = [e for e in all_entries if not is_too_old(e)]
+    fresh_entries = all_entries if bootstrap else [e for e in all_entries if not is_too_old(e)]
     skipped_old = len(all_entries) - len(fresh_entries)
-    if skipped_old:
+    if skipped_old and not bootstrap:
         log.info(f"Skipped {skipped_old} entries older than {MAX_ARTICLE_AGE_DAYS} days")
+    if bootstrap and all_entries:
+        log.info("Bootstrap poll includes latest entries regardless of age")
 
     new_count = 0
+    scored_count = 0
 
     for entry in fresh_entries:
         if new_count >= MAX_NEW_PER_FEED:
@@ -375,7 +384,10 @@ async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Op
         new_count += 1
         log.info("Article stored, sending to scorer", article_id=article_id, new_count=new_count)
 
-        subscriber_ids = feed.get("subscriber_user_ids", [1]) or [1]
+        subscriber_ids = feed.get("subscriber_user_ids", []) or []
+        if not subscriber_ids:
+            log.info("Skipping scoring — feed has no onboarded subscribers")
+            continue
         if target_user_id is not None:
             if target_user_id not in subscriber_ids:
                 log.info("Skipping scoring — user not subscribed", user_id=target_user_id)
@@ -395,6 +407,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Op
                     user_id=uid,
                     user_context=user_context,
                 )
+                scored_count += 1
                 log.info("Article scored for user", article_id=article_id, user_id=uid)
             except Exception as e:
                 log.error(
@@ -403,6 +416,7 @@ async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Op
                 )
 
     log.info(f"Feed done: {new_count} new articles ingested")
+    return {"created": new_count, "scored": scored_count}
 
 
 async def process_provider_source(
@@ -428,13 +442,17 @@ async def process_provider_source(
 
     log.info(f"Provider source produced {len(created)} new articles")
 
-    subscriber_ids = source.get("subscriber_user_ids", [1]) or [1]
+    subscriber_ids = source.get("subscriber_user_ids", []) or []
+    if not subscriber_ids:
+        log.info("Skipping provider scoring — source has no onboarded subscribers")
+        return {"created": len(created), "scored": 0}
     if target_user_id is not None:
         if target_user_id not in subscriber_ids:
             log.info("Skipping scoring — user not subscribed", user_id=target_user_id)
-            return
+            return {"created": len(created), "scored": 0}
         subscriber_ids = [target_user_id]
 
+    scored_count = 0
     for item in created:
         article_id = item["id"]
         title = item.get("title", "")
@@ -452,6 +470,7 @@ async def process_provider_source(
                     user_id=uid,
                     user_context=user_context,
                 )
+                scored_count += 1
                 log.info("Provider article scored for user", article_id=article_id, user_id=uid)
             except Exception as e:
                 log.error(
@@ -460,6 +479,7 @@ async def process_provider_source(
                 )
 
     log.info(f"Provider source done: {len(created)} articles scored")
+    return {"created": len(created), "scored": scored_count}
 
 
 async def poll_all_sources():
@@ -498,29 +518,91 @@ async def poll_all_feeds():
     logger.info("Poll cycle complete")
 
 
-async def poll_user_feeds(user_id: int):
-    """Poll all feeds + provider sources but only score for the given user."""
-    logger.info("Starting user poll", user_id=user_id)
-    async with httpx.AsyncClient() as client:
-        try:
-            feeds = await fetch_feeds(client)
-        except Exception as e:
-            logger.error("Failed to fetch feeds", error=str(e))
-            return
-        await asyncio.gather(
-            *[process_feed(client, feed, target_user_id=user_id) for feed in feeds],
-            return_exceptions=True,
+async def poll_user_feeds(user_id: int, bootstrap: bool = False):
+    """Poll feeds + provider sources but only score for the given user."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    _user_poll_status[user_id] = {
+        "status": "running",
+        "started_at": started_at,
+        "finished_at": None,
+        "error": None,
+        "articles_created": 0,
+        "articles_scored": 0,
+        "bootstrap": bootstrap,
+    }
+    logger.info("Starting user poll", user_id=user_id, bootstrap=bootstrap)
+    try:
+        async with httpx.AsyncClient() as client:
+            try:
+                feeds = await fetch_feeds(client)
+            except Exception as e:
+                logger.error("Failed to fetch feeds", error=str(e))
+                raise
+            results = await asyncio.gather(
+                *[
+                    process_feed(
+                        client,
+                        feed,
+                        target_user_id=user_id,
+                        bootstrap=bootstrap,
+                    )
+                    for feed in feeds
+                ],
+                return_exceptions=True,
+            )
+            articles_created = sum(
+                r.get("created", 0) for r in results if isinstance(r, dict)
+            )
+            articles_scored = sum(
+                r.get("scored", 0) for r in results if isinstance(r, dict)
+            )
+            try:
+                sources = await fetch_provider_sources(client)
+            except Exception as e:
+                logger.error("Failed to fetch provider sources", error=str(e))
+                sources = []
+            source_results = await asyncio.gather(
+                *[
+                    process_provider_source(
+                        client,
+                        source,
+                        target_user_id=user_id,
+                    )
+                    for source in sources
+                ],
+                return_exceptions=True,
+            )
+            articles_created += sum(
+                r.get("created", 0) for r in source_results if isinstance(r, dict)
+            )
+            articles_scored += sum(
+                r.get("scored", 0) for r in source_results if isinstance(r, dict)
+            )
+        _user_poll_status[user_id] = {
+            "status": "complete",
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+            "articles_created": articles_created,
+            "articles_scored": articles_scored,
+            "bootstrap": bootstrap,
+        }
+        logger.info(
+            "User poll complete",
+            user_id=user_id,
+            articles_created=articles_created,
+            articles_scored=articles_scored,
         )
-        try:
-            sources = await fetch_provider_sources(client)
-        except Exception as e:
-            logger.error("Failed to fetch provider sources", error=str(e))
-            return
-        await asyncio.gather(
-            *[process_provider_source(client, source, target_user_id=user_id) for source in sources],
-            return_exceptions=True,
-        )
-    logger.info("User poll complete", user_id=user_id)
+    except Exception as e:
+        _user_poll_status[user_id] = {
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(e),
+            "articles_created": 0,
+            "articles_scored": 0,
+            "bootstrap": bootstrap,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +611,7 @@ async def poll_user_feeds(user_id: int):
 
 class TriggerRequest(BaseModel):
     user_id: int
+    bootstrap: bool = False
 
 
 @asynccontextmanager
@@ -541,7 +624,6 @@ async def lifespan(app: FastAPI):
         "interval",
         minutes=FETCH_INTERVAL_MINUTES,
         id="poll_feeds",
-        next_run_time=datetime.now(),
     )
     _scheduler.start()
     logger.info(f"Scheduler running, interval={FETCH_INTERVAL_MINUTES}min")
@@ -556,9 +638,25 @@ app = FastAPI(title="Poller", lifespan=lifespan)
 @app.post("/trigger")
 async def trigger(body: TriggerRequest):
     user_id = body.user_id
-    logger.info("Trigger received", user_id=user_id)
-    asyncio.create_task(poll_user_feeds(user_id))
+    logger.info("Trigger received", user_id=user_id, bootstrap=body.bootstrap)
+    current = _user_poll_status.get(user_id)
+    if current and current.get("status") == "running":
+        return {"status": "accepted", "user_id": user_id, "poll_status": current}
+    asyncio.create_task(poll_user_feeds(user_id, bootstrap=body.bootstrap))
     return {"status": "accepted", "user_id": user_id}
+
+
+@app.get("/status/{user_id}")
+async def poll_status(user_id: int):
+    return _user_poll_status.get(user_id) or {
+        "status": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+        "articles_created": 0,
+        "articles_scored": 0,
+        "bootstrap": False,
+    }
 
 
 @app.get("/health")
