@@ -13,6 +13,7 @@ from database import Feed, ResearchProfile, SessionLocal, init_db
 from routers import (
     articles,
     auth,
+    discovery,
     feeds,
     highlights,
     ask,
@@ -76,6 +77,7 @@ app.include_router(research.router)
 app.include_router(onboarding.router)
 app.include_router(poll.router)
 app.include_router(sources.router)
+app.include_router(discovery.router)
 app.include_router(templates_router)
 
 # ---------------------------------------------------------------------------
