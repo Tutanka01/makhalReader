@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Plus, Trash2, Loader2, UserCircle2, BookOpen, Layers, Globe } from 'lucide-react'
+import { X, Plus, Trash2, Loader2, UserCircle2, BookOpen, Layers, Globe, RefreshCw } from 'lucide-react'
 import type { ProfileKind, ResearchProfileEntry, ClusterProposal, FacetSchema } from '../types'
 import { useResearchStore } from '../store/research'
 import FacetSchemaEditor from './FacetSchemaEditor'
+import RediscoverPanel from './RediscoverPanel'
 
 interface Props {
   open: boolean
@@ -148,6 +149,8 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
   const [clusters, setClusters] = useState<ClusterProposal[]>([])
   const [facetSchema, setFacetSchema] = useState<FacetSchema>({ version: 1, dimensions: [] })
   const [sources, setSources] = useState<string[]>([])
+  const [thesisQuestion, setThesisQuestion] = useState('')
+  const [showRediscover, setShowRediscover] = useState(false)
 
   // Load profile when panel opens
   useEffect(() => {
@@ -165,6 +168,7 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
         const data = await res.json()
         if (Array.isArray(data.scoring_clusters)) setClusters(data.scoring_clusters)
         if (data.facet_schema) setFacetSchema(data.facet_schema)
+        if (data.thesis_question) setThesisQuestion(data.thesis_question)
       }
     } catch { /* ignore */ }
     // Fetch subscribed feeds as sources
@@ -366,6 +370,21 @@ export default function ResearchProfileEditor({ open, onClose }: Props) {
                 <span className="text-xs text-text-primary">{name}</span>
               </div>
             ))}
+            {!configLoading && thesisQuestion && (
+              <button
+                onClick={() => setShowRediscover(v => !v)}
+                className="flex items-center gap-1.5 text-xs rounded bg-accent/10 text-accent px-3 py-1.5 font-medium hover:bg-accent/20 mt-2"
+              >
+                <RefreshCw size={12} />
+                Re-discover
+              </button>
+            )}
+            {showRediscover && thesisQuestion && (
+              <RediscoverPanel
+                thesisText={thesisQuestion}
+                onClose={() => setShowRediscover(false)}
+              />
+            )}
           </section>
         </div>
 

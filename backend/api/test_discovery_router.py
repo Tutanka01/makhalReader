@@ -44,7 +44,13 @@ from fastapi.testclient import TestClient
 
 
 def _reset_db():
-    Base.metadata.drop_all(bind=engine)
+    from sqlalchemy import text as _t
+    with engine.connect() as c:
+        c.execute(_t("PRAGMA foreign_keys = OFF"))
+        c.commit()
+        Base.metadata.drop_all(bind=c)
+        c.execute(_t("PRAGMA foreign_keys = ON"))
+        c.commit()
     init_db()
 
 
@@ -258,6 +264,122 @@ def test_resolve_returns_empty_on_no_results():
         source_discovery.resolve_verify_rank = original
 
 
+# ===========================================================================
+# Story 13-6 — GET /api/discovery/existing
+# ===========================================================================
+
+
+def _seed_source(name: str, canonical_id: str, provider: str = "openalex"):
+    from sqlalchemy import text
+    from database import engine as _eng
+    with _eng.connect() as c:
+        c.execute(
+            text("INSERT OR IGNORE INTO sources (name, provider, query_json, label, category, active, canonical_id, created_at) VALUES (:name, :provider, '{}', :label, 'Discovery', 1, :cid, datetime('now'))"),
+            {"name": name, "provider": provider, "label": name, "cid": canonical_id},
+        )
+        c.commit()
+        row = c.execute(text("SELECT id FROM sources WHERE canonical_id = :cid"), {"cid": canonical_id}).fetchone()
+        return row[0] if row else None
+
+
+def _seed_venue(user_id: int, venue_name: str):
+    from sqlalchemy import text
+    from database import engine as _eng
+    with _eng.connect() as c:
+        c.execute(
+            text("INSERT OR IGNORE INTO tracked_venues (user_id, venue_name) VALUES (:uid, :name)"),
+            {"uid": user_id, "name": venue_name},
+        )
+        c.commit()
+
+
+def _seed_author(user_id: int, name: str, openalex_id: str | None = None):
+    from sqlalchemy import text
+    from database import engine as _eng
+    from sqlalchemy import text as _text
+    with _eng.connect() as c:
+        ss_id = f"openalex:{openalex_id.split('/')[-1]}" if openalex_id else f"author:{hash(name) % 10**8}"
+        c.execute(
+            _text("INSERT OR IGNORE INTO tracked_authors (user_id, name, ss_author_id, openalex_id, paper_count, avg_score, alert_count, created_at) VALUES (:uid, :name, :ss_id, :oid, 0, 0.0, 0, datetime('now'))"),
+            {"uid": user_id, "name": name, "ss_id": ss_id, "oid": openalex_id},
+        )
+        c.commit()
+
+
+def _seed_subscription(user_id: int, source_id: int):
+    from sqlalchemy import text
+    from database import engine as _eng
+    with _eng.connect() as c:
+        c.execute(
+            text("INSERT OR IGNORE INTO user_source_subscriptions (user_id, source_id, created_at) VALUES (:uid, :sid, datetime('now'))"),
+            {"uid": user_id, "sid": source_id},
+        )
+        c.commit()
+
+
+def test_existing_returns_empty_for_new_user():
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client, 99)
+    resp = client.get("/api/discovery/existing", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source_canonical_ids"] == []
+    assert body["venue_names"] == []
+    assert body["author_openalex_ids"] == []
+    assert body["author_names"] == []
+
+
+def test_existing_returns_subscribed_data():
+    _reset_db()
+    sid = _seed_source("ACL Anthology", "openalex:acl", "openalex")
+    assert sid is not None
+    _seed_subscription(1, sid)
+    _seed_venue(1, "ACL")
+    _seed_venue(1, "EMNLP")
+    _seed_author(1, "Jane Doe", "https://openalex.org/A98765")
+    _seed_author(1, "John Smith")
+
+    client = _get_client()
+    headers = _auth_headers(client, 1)
+    resp = client.get("/api/discovery/existing", headers=headers)
+    assert resp.status_code == 200, f"Expected 200 got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["source_canonical_ids"] == ["openalex:acl"]
+    assert sorted(body["venue_names"]) == ["ACL", "EMNLP"]
+    assert body["author_openalex_ids"] == ["https://openalex.org/A98765"]
+    author_names = body["author_names"]
+    assert "Jane Doe" in author_names
+    assert "John Smith" in author_names
+
+
+def test_existing_isolation():
+    """User 2 should not see user 1's subscriptions."""
+    _reset_db()
+    sid = _seed_source("CVPR", "openalex:cvpr", "openalex")
+    assert sid is not None
+    _seed_subscription(1, sid)
+    _seed_venue(1, "CVPR")
+    _seed_author(1, "Alice", "https://openalex.org/A1")
+
+    client = _get_client()
+    headers = _auth_headers(client, 2)
+    resp = client.get("/api/discovery/existing", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source_canonical_ids"] == []
+    assert body["venue_names"] == []
+    assert body["author_openalex_ids"] == []
+    assert body["author_names"] == []
+
+
+def test_existing_requires_auth():
+    _reset_db()
+    client = _get_client()
+    resp = client.get("/api/discovery/existing")
+    assert resp.status_code in (401, 403)
+
+
 def run_tests():
     tests = [
         ("expand_returns_result", test_expand_returns_result),
@@ -269,6 +391,10 @@ def run_tests():
         ("resolve_graceful_on_bad_input", test_resolve_graceful_on_bad_input),
         ("resolve_graceful_on_service_failure", test_resolve_graceful_on_service_failure),
         ("resolve_returns_empty_on_no_results", test_resolve_returns_empty_on_no_results),
+        ("existing_returns_empty_for_new_user", test_existing_returns_empty_for_new_user),
+        ("existing_returns_subscribed_data", test_existing_returns_subscribed_data),
+        ("existing_isolation", test_existing_isolation),
+        ("existing_requires_auth", test_existing_requires_auth),
     ]
     passed = 0
     failed = 0

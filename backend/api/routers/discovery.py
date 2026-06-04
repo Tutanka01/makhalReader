@@ -117,6 +117,46 @@ async def post_resolve(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/discovery/existing
+# ---------------------------------------------------------------------------
+
+
+class ExistingResponse(BaseModel):
+    source_canonical_ids: list[str] = []
+    venue_names: list[str] = []
+    author_openalex_ids: list[str] = []
+    author_names: list[str] = []
+
+
+@router.get("/existing")
+async def get_existing(current_user: dict = Depends(require_session)):
+    user_id = current_user["id"]
+    from sqlalchemy import text
+    from database import engine as _engine
+
+    with _engine.connect() as conn:
+        source_rows = conn.execute(
+            text("SELECT s.canonical_id FROM sources s JOIN user_source_subscriptions uss ON s.id = uss.source_id WHERE uss.user_id = :uid"),
+            {"uid": user_id},
+        ).fetchall()
+        venue_rows = conn.execute(
+            text("SELECT venue_name FROM tracked_venues WHERE user_id = :uid"),
+            {"uid": user_id},
+        ).fetchall()
+        author_rows = conn.execute(
+            text("SELECT openalex_id, name FROM tracked_authors WHERE user_id = :uid"),
+            {"uid": user_id},
+        ).fetchall()
+
+    return ExistingResponse(
+        source_canonical_ids=[r[0] for r in source_rows if r[0]],
+        venue_names=[r[0] for r in venue_rows],
+        author_openalex_ids=[r[0] for r in author_rows if r[0]],
+        author_names=[r[1] for r in author_rows],
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /api/discovery/apply
 # ---------------------------------------------------------------------------
 
