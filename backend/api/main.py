@@ -23,6 +23,7 @@ from routers import (
     research,
     onboarding,
     poll,
+    sources,
 )
 from routers.profile import templates_router
 from routers.internal import cleanup_old_articles
@@ -74,6 +75,7 @@ app.include_router(profile.router)
 app.include_router(research.router)
 app.include_router(onboarding.router)
 app.include_router(poll.router)
+app.include_router(sources.router)
 app.include_router(templates_router)
 
 # ---------------------------------------------------------------------------
