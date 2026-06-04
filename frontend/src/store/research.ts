@@ -3,12 +3,18 @@ import apiClient from '../apiClient'
 import type {
   Cluster,
   ExternalReview,
+  FacetSchema,
   LiteratureReview,
   LiteratureReviewSummary,
   ResearchProfileEntry,
 } from '../types'
 
 interface ResearchStore {
+  // ── Facet Schema (Story 11-5) ────────────────────────────────────────────
+  facetSchema: FacetSchema | null
+  facetSchemaLoading: boolean
+  fetchFacetSchema: () => Promise<void>
+
   // ── Clusters ───────────────────────────────────────────────────────────────
   clusters: Cluster[] | null
   clustersLoading: boolean
@@ -44,6 +50,20 @@ interface ResearchStore {
 }
 
 export const useResearchStore = create<ResearchStore>((set) => ({
+  // ── Facet Schema (Story 11-5) ────────────────────────────────────────────
+  facetSchema: null,
+  facetSchemaLoading: false,
+
+  fetchFacetSchema: async () => {
+    set({ facetSchemaLoading: true })
+    try {
+      const data = await apiClient.get<{ facet_schema: FacetSchema }>('/api/profile/bootstrap')
+      set({ facetSchema: data.facet_schema, facetSchemaLoading: false })
+    } catch {
+      set({ facetSchemaLoading: false })
+    }
+  },
+
   // ── Clusters ───────────────────────────────────────────────────────────────
   clusters: null,
   clustersLoading: false,

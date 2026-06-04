@@ -105,6 +105,11 @@ export interface FacetSchema {
   dimensions: FacetDimension[]
 }
 
+export interface FacetValue {
+  dimensionId: string
+  value: string
+}
+
 export interface BootstrapResult {
   domain_label: string
   scoring_clusters: ClusterProposal[]
@@ -160,7 +165,8 @@ export interface Article {
   re_document_type: REDocType | null
   paper_meta: PaperMeta
   score_meta: ScoreMeta
-  embedding_indexed: number | null   // 1 = indexed in ChromaDB (Story 3.1)
+  embedding_indexed: number | null
+  facets_json: string | null
   tags: string[]
   summary_bullets: string[]
   images: string[]
@@ -279,6 +285,7 @@ export interface ArticleListItem {
   user_feedback: number | null
   contribution_type: ContribType | null
   re_document_type: REDocType | null
+  facets_json: string | null
   threat_overlap?: number | null
   threat_positioning_note?: string | null
   tracked_author_alert?: boolean | null

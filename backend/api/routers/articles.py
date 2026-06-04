@@ -96,6 +96,7 @@ def _row_to_list_item(article: Article, feed_name: str, article_score: Optional[
         threat_overlap=threat_overlap,
         threat_positioning_note=threat_positioning_note,
         tracked_author_alert=article.tracked_author_alert or None,
+        facets_json=article_score.facets_json if article_score else None,
     )
 
 

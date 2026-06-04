@@ -104,6 +104,7 @@ class ArticleListItem(BaseModel):
     threat_positioning_note: Optional[str] = None
     tracked_author_alert: Optional[bool] = None
     cited_by_corpus_count: int = 0
+    facets_json: Optional[str] = None
 
     # Computed fields
     tags: List[str] = []

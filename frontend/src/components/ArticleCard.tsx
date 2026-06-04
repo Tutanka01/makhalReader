@@ -1,12 +1,14 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
 import type { ArticleListItem } from '../types'
 import { ScoreBar } from './ScoreBar'
 import { ContribTypeBadge } from './ContribTypeBadge'
 import { ReDocTypeBadge } from './ReDocTypeBadge'
+import { FacetBadge } from './FacetBadge'
 import { ThreatBadge } from './ThreatBadge'
 import { useArticlesStore } from '../store/articles'
+import { useResearchStore } from '../store/research'
 
 interface ArticleCardProps {
   article: ArticleListItem
@@ -18,6 +20,11 @@ const SWIPE_THRESHOLD = 60
 
 export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
   const { markRead, toggleBookmark } = useArticlesStore()
+  const facetSchema = useResearchStore(s => s.facetSchema)
+  const fetchFacetSchema = useResearchStore(s => s.fetchFacetSchema)
+  useEffect(() => {
+    if (!facetSchema) fetchFacetSchema()
+  }, [facetSchema, fetchFacetSchema])
 
   const touchStartX = useRef<number>(0)
   const touchStartY = useRef<number>(0)
@@ -108,6 +115,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
             ))}
             <ContribTypeBadge type={article.contribution_type} />
             <ReDocTypeBadge type={article.re_document_type} />
+            <FacetBadge facetsJson={article.facets_json} schema={facetSchema} />
             <ThreatBadge overlap={article.threat_overlap ?? 0} positioningNote={article.threat_positioning_note} />
             {article.tracked_author_alert && (
               <span className="inline-flex items-center px-1.5 py-[1px] rounded-[4px] text-[10px] font-medium tracking-wide bg-accent-light text-accent">
