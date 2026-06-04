@@ -86,6 +86,34 @@ export interface ScoringCluster {
   id?: string
 }
 
+// ── Config Bootstrap (Story 11.4) ──────────────────────────────────────────
+export interface ClusterProposal {
+  name: string
+  description: string
+  reward_level: number
+}
+
+export interface FacetDimension {
+  id: string
+  label: string
+  type: string
+  values: string[]
+}
+
+export interface FacetSchema {
+  version: number
+  dimensions: FacetDimension[]
+}
+
+export interface BootstrapResult {
+  domain_label: string
+  scoring_clusters: ClusterProposal[]
+  facet_schema: FacetSchema
+  keywords: string[]
+  suggested_source_queries: string[]
+  degraded: boolean
+}
+
 export interface TenantConfig {
   user_id: number
   thesis_title: string
