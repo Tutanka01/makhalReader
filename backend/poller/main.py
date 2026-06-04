@@ -103,6 +103,31 @@ async def fetch_feeds(client: httpx.AsyncClient) -> list:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def fetch_provider_sources(client: httpx.AsyncClient) -> list:
+    resp = await client.get(
+        f"{API_BASE}/api/internal/provider-sources",
+        headers=INTERNAL_HEADERS,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def poll_provider_source(client: httpx.AsyncClient, source_id: int) -> dict:
+    resp = await client.post(
+        f"{API_BASE}/api/internal/sources/{source_id}/poll",
+        headers={**INTERNAL_HEADERS, "Content-Type": "application/json"},
+        timeout=60,
+    )
+        resp.raise_for_status()
+    return resp.json()
+
+
+
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def check_article_exists(client: httpx.AsyncClient, url: str) -> bool:
     resp = await client.get(
         f"{API_BASE}/api/internal/articles/exists",
@@ -380,6 +405,78 @@ async def process_feed(client: httpx.AsyncClient, feed: dict, target_user_id: Op
     log.info(f"Feed done: {new_count} new articles ingested")
 
 
+async def process_provider_source(
+    client: httpx.AsyncClient,
+    source: dict,
+    target_user_id: Optional[int] = None,
+):
+    source_id = source["id"]
+    source_name = source["name"]
+    log = logger.bind(source=source_name)
+
+    log.info("Polling provider source")
+    try:
+        result = await poll_provider_source(client, source_id)
+    except Exception as e:
+        log.error("Failed to poll provider source", error=str(e))
+        return
+
+    created = result.get("created", [])
+    if not created:
+        log.info("No new articles from provider source")
+        return
+
+    log.info(f"Provider source produced {len(created)} new articles")
+
+    subscriber_ids = source.get("subscriber_user_ids", [1]) or [1]
+    if target_user_id is not None:
+        if target_user_id not in subscriber_ids:
+            log.info("Skipping scoring — user not subscribed", user_id=target_user_id)
+            return
+        subscriber_ids = [target_user_id]
+
+    for item in created:
+        article_id = item["id"]
+        title = item.get("title", "")
+        summary = item.get("summary", "")
+        await asyncio.sleep(0.5)
+        for uid in subscriber_ids:
+            try:
+                user_context = await fetch_user_scoring_context(client, uid)
+                await score_article_rate_limited(
+                    client,
+                    article_id,
+                    title,
+                    summary,
+                    summary,
+                    user_id=uid,
+                    user_context=user_context,
+                )
+                log.info("Provider article scored for user", article_id=article_id, user_id=uid)
+            except Exception as e:
+                log.error(
+                    "Provider article scoring failed for user",
+                    article_id=article_id, user_id=uid, error=str(e),
+                )
+
+    log.info(f"Provider source done: {len(created)} articles scored")
+
+
+async def poll_all_sources():
+    logger.info("Starting provider source poll cycle")
+    async with httpx.AsyncClient() as client:
+        try:
+            sources = await fetch_provider_sources(client)
+        except Exception as e:
+            logger.error("Failed to fetch provider sources", error=str(e))
+            return
+        await asyncio.gather(
+            *[process_provider_source(client, source) for source in sources],
+            return_exceptions=True,
+        )
+    logger.info("Provider source poll cycle complete")
+
+
 async def poll_all_feeds():
     global _user_context_cache, _score_semaphores
     _user_context_cache = {}
@@ -397,11 +494,12 @@ async def poll_all_feeds():
             logger.error("Failed to fetch feeds", error=str(e))
             return
         await asyncio.gather(*[process_feed(client, feed) for feed in feeds], return_exceptions=True)
+    await poll_all_sources()
     logger.info("Poll cycle complete")
 
 
 async def poll_user_feeds(user_id: int):
-    """Poll all feeds but only score for the given user."""
+    """Poll all feeds + provider sources but only score for the given user."""
     logger.info("Starting user poll", user_id=user_id)
     async with httpx.AsyncClient() as client:
         try:
@@ -411,6 +509,15 @@ async def poll_user_feeds(user_id: int):
             return
         await asyncio.gather(
             *[process_feed(client, feed, target_user_id=user_id) for feed in feeds],
+            return_exceptions=True,
+        )
+        try:
+            sources = await fetch_provider_sources(client)
+        except Exception as e:
+            logger.error("Failed to fetch provider sources", error=str(e))
+            return
+        await asyncio.gather(
+            *[process_provider_source(client, source, target_user_id=user_id) for source in sources],
             return_exceptions=True,
         )
     logger.info("User poll complete", user_id=user_id)

@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import sys
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -8,16 +10,16 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from collections import defaultdict
-
 from database import (
     Article,
     ArticleScore,
     Feed,
     ResearchProfile,
     SessionLocal,
+    Source,
     UserConfig,
     UserFeedSubscription,
+    UserSourceSubscription,
     get_db,
     get_facet_schema,
 )
@@ -26,11 +28,151 @@ from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
 from sse import broadcast_new_article
 
+_extractor_dir = os.path.join(os.path.dirname(__file__), "..", "..", "extractor")
+if _extractor_dir not in sys.path:
+    sys.path.insert(0, _extractor_dir)
+
+from providers import PROVIDER_REGISTRY  # noqa: E402
+from providers.base import ResolvedSource  # noqa: E402
+
 router = APIRouter(prefix="/api/internal", tags=["internal"])
 
 API_SECRET = os.getenv("API_SECRET", "changeme")
 MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
 ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
+
+
+@router.get("/provider-sources")
+async def internal_list_provider_sources(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    results = (
+        db.query(Source, func.count(Article.id).label("article_count"))
+        .outerjoin(Article, Source.id == Article.source_id)
+        .filter(Source.active == True, Source.provider != "rss")
+        .group_by(Source.id)
+        .all()
+    )
+    subs = db.query(UserSourceSubscription).all()
+    sub_map: dict[int, list[int]] = defaultdict(list)
+    for s in subs:
+        sub_map[s.source_id].append(s.user_id)
+    return [
+        {
+            "id": source.id,
+            "name": source.name,
+            "provider": source.provider,
+            "category": source.category,
+            "query_json": source.query_json,
+            "active": source.active,
+            "last_fetched": source.last_fetched.isoformat() if source.last_fetched else None,
+            "subscriber_user_ids": sub_map.get(source.id, []),
+        }
+        for source, _ in results
+    ]
+
+
+@router.post("/sources/{source_id}/poll")
+async def internal_poll_provider_source(
+    source_id: int,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.provider == "rss":
+        raise HTTPException(status_code=400, detail="Use feed-based polling for RSS sources")
+
+    provider_cls = PROVIDER_REGISTRY.get(source.provider)
+    if not provider_cls:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {source.provider}")
+
+    provider = provider_cls()
+    query_json = json.loads(source.query_json) if isinstance(source.query_json, str) else (source.query_json or {})
+    resolved = ResolvedSource(
+        name=source.name,
+        provider=source.provider,
+        query_json=query_json,
+        label="",
+        category=source.category,
+    )
+
+    try:
+        fetched = await provider.fetch(resolved)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    if not fetched:
+        source.last_fetched = datetime.now(timezone.utc)
+        db.commit()
+        return {"created": [], "total": 0}
+
+    # Ensure a matching feed entry exists for FK
+    feed = db.query(Feed).filter(Feed.id == source_id).first()
+    if not feed:
+        feed = Feed(
+            id=source_id,
+            url=query_json.get("url", f"provider://{source.provider}/{source.id}"),
+            name=source.name,
+            category=source.category,
+            active=True,
+        )
+        db.add(feed)
+        db.flush()
+
+    created: list[dict] = []
+    for article_data in fetched:
+        existing = db.query(Article).filter(Article.url == article_data.url).first()
+        if existing:
+            continue
+
+        fp = _title_fingerprint(article_data.title)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+        title_dup = (
+            db.query(Article)
+            .filter(Article.title_fingerprint == fp, Article.created_at >= cutoff)
+            .first()
+        )
+        if title_dup:
+            continue
+
+        article = Article(
+            feed_id=source_id,
+            source_id=source_id,
+            title=article_data.title,
+            url=article_data.url,
+            published_at=(
+                datetime.fromisoformat(article_data.published_at) if article_data.published_at else None
+            ),
+            author=article_data.author,
+            content_text=article_data.summary,
+            created_at=datetime.now(timezone.utc),
+            title_fingerprint=fp,
+        )
+        db.add(article)
+        db.flush()
+        created.append({
+            "id": article.id,
+            "title": article_data.title,
+            "summary": article_data.summary,
+        })
+
+    source.last_fetched = datetime.now(timezone.utc)
+    db.commit()
+
+    return {
+        "created": created,
+        "total": len(created),
+        "feed_id": source_id,
+        "source_id": source_id,
+    }
 
 
 def _run_cleanup() -> int:
@@ -268,6 +410,7 @@ async def internal_create_article(
         re_document_type=article_data.re_document_type,
         tracked_author_alert=article_data.tracked_author_alert,
         ss_paper_id=article_data.ss_paper_id,
+        source_id=article_data.source_id,
     )
     db.add(article)
     db.commit()

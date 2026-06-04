@@ -143,6 +143,7 @@ class Article(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     feed_id = Column(Integer, ForeignKey("feeds.id"), nullable=False)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
     title = Column(String, nullable=False)
     url = Column(String, unique=True, nullable=False)
     published_at = Column(DateTime, nullable=True)
@@ -518,6 +519,8 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider VARCHAR(24) NOT NULL DEFAULT 'rss', query_json TEXT, label TEXT, category TEXT NOT NULL DEFAULT 'General', active BOOLEAN NOT NULL DEFAULT 1, last_fetched DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         # Story 12.1 — user_source_subscriptions (FR-MT-60)
         "CREATE TABLE IF NOT EXISTS user_source_subscriptions (user_id INTEGER NOT NULL REFERENCES users(id), source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE, created_at DATETIME NOT NULL, PRIMARY KEY (user_id, source_id))",
+        # Story 12.6 — provider-based article source link
+        "ALTER TABLE articles ADD COLUMN source_id INTEGER REFERENCES sources(id)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

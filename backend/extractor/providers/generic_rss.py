@@ -6,7 +6,7 @@ import httpx
 
 from net_guard import SSRFBlockedError, check_url
 
-from .base import ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
+from .base import FetchedArticle, ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
 
 
 class GenericRSSProvider(SourceProvider):
@@ -60,3 +60,42 @@ class GenericRSSProvider(SourceProvider):
             return VerifiedSource(verified=False, message="not a feed")
 
         return VerifiedSource(verified=True, sample_count=1, message="feed OK")
+
+    async def fetch(self, source: ResolvedSource) -> list[FetchedArticle]:
+        url = source.query_json.get("url", "")
+        if not url:
+            return []
+
+        try:
+            check_url(url)
+        except SSRFBlockedError:
+            return []
+
+        import feedparser
+
+        client = await self._get_client()
+        try:
+            resp = await client.get(url, follow_redirects=True, timeout=15)
+        except Exception:
+            return []
+
+        if resp.status_code != 200:
+            return []
+
+        feed = feedparser.parse(resp.text)
+        articles: list[FetchedArticle] = []
+        for entry in feed.entries[:50]:
+            article_url = entry.get("link", "")
+            if not article_url:
+                continue
+            articles.append(
+                FetchedArticle(
+                    external_id=entry.get("id", article_url),
+                    title=entry.get("title", ""),
+                    url=article_url,
+                    summary=entry.get("summary", entry.get("description", "")),
+                    author=entry.get("author"),
+                    published_at=entry.get("published"),
+                )
+            )
+        return articles

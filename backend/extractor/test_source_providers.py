@@ -32,7 +32,7 @@ _grss_mod.check_url = MagicMock()  # override local reference
 
 from providers import PROVIDER_REGISTRY
 from providers.arxiv import ArxivProvider, ARXIV_CATEGORY_MAP
-from providers.base import ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
+from providers.base import FetchedArticle, ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
 
 _PASS = 0
 _FAIL = 0
@@ -697,6 +697,170 @@ def test_openreview_verify_no_invitation() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# Story 12.6 — fetch() tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_provider_fetch_base_returns_empty():
+    """SourceProvider.fetch() default returns empty list."""
+    class _TestProvider(SourceProvider):
+        provider_id = "test"
+        async def resolve(self, intent): return []
+        async def verify(self, source): return VerifiedSource(verified=True)
+    p = _TestProvider()
+    src = ResolvedSource(name="x", provider="test", query_json={})
+    result = _run_async(p.fetch(src))
+    _assert_true("fetch_base_returns_empty", isinstance(result, list) and len(result) == 0)
+
+
+def test_generic_rss_fetch_returns_fetched_articles():
+    """GenericRSSProvider.fetch() returns FetchedArticle list from RSS XML."""
+    rss_xml = """<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <guid>https://example.com/1</guid>
+      <title>First Article</title>
+      <link>https://example.com/1</link>
+      <description>Summary 1</description>
+      <author>Author A</author>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <guid>https://example.com/2</guid>
+      <title>Second Article</title>
+      <link>https://example.com/2</link>
+      <description>Summary 2</description>
+      <pubDate>Tue, 02 Jan 2024 00:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>"""
+
+    client = MagicMock()
+    client.get = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.text = rss_xml
+    client.get.return_value = resp
+
+    from providers.generic_rss import GenericRSSProvider
+    p = GenericRSSProvider(client=client)
+    src = ResolvedSource(name="test-feed", provider="rss", query_json={"url": "https://example.com/feed"})
+
+    # Patch check_url to bypass SSRF guard for test
+    with patch.object(p, "_get_client", return_value=client):
+        result = _run_async(p.fetch(src))
+
+    _assert_true("rss_fetch_returns_list", isinstance(result, list))
+    _assert_eq("rss_fetch_len", len(result), 2)
+    if len(result) >= 2:
+        _assert_eq("rss_fetch_title_1", result[0].title, "First Article")
+        _assert_eq("rss_fetch_url_1", result[0].url, "https://example.com/1")
+        _assert_eq("rss_fetch_summary_1", result[0].summary, "Summary 1")
+        _assert_eq("rss_fetch_author_1", result[0].author, "Author A")
+        _assert_eq("rss_fetch_title_2", result[1].title, "Second Article")
+
+
+def test_generic_rss_fetch_no_url_returns_empty():
+    """GenericRSSProvider.fetch() returns empty list when no URL."""
+    from providers.generic_rss import GenericRSSProvider
+    p = GenericRSSProvider()
+    src = ResolvedSource(name="x", provider="rss", query_json={})
+    result = _run_async(p.fetch(src))
+    _assert_true("rss_fetch_no_url_empty", result == [])
+
+
+def test_generic_rss_fetch_http_error_returns_empty():
+    """GenericRSSProvider.fetch() returns empty on HTTP error."""
+    client = MagicMock()
+    client.get = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 500
+    resp.text = ""
+    client.get.return_value = resp
+
+    from providers.generic_rss import GenericRSSProvider
+    p = GenericRSSProvider(client=client)
+    src = ResolvedSource(name="x", provider="rss", query_json={"url": "https://example.com/feed"})
+
+    with patch.object(p, "_get_client", return_value=client):
+        result = _run_async(p.fetch(src))
+
+    _assert_true("rss_fetch_http_error_empty", result == [])
+
+
+def test_arxiv_fetch_returns_fetched_articles():
+    """ArxivProvider.fetch() returns FetchedArticle list from arXiv Atom API."""
+    atom_xml = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001</id>
+    <title>Test Paper One</title>
+    <summary>Abstract of paper one</summary>
+    <author><name>Alice</name></author>
+    <published>2024-01-01T00:00:00Z</published>
+    <link href="http://arxiv.org/abs/2401.00001" rel="alternate" type="text/html"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00002</id>
+    <title>Test Paper Two</title>
+    <summary>Abstract of paper two</summary>
+    <author><name>Bob</name></author>
+    <published>2024-01-02T00:00:00Z</published>
+    <link href="http://arxiv.org/abs/2401.00002" rel="alternate" type="text/html"/>
+  </entry>
+</feed>"""
+
+    client = MagicMock()
+    client.get = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.text = atom_xml
+    client.get.return_value = resp
+
+    p = ArxivProvider(client=client)
+    src = ResolvedSource(name="arxiv cs.AI", provider="arxiv", query_json={"search_query": "cat:cs.AI"})
+
+    with patch.object(p, "_get_client", return_value=client):
+        result = _run_async(p.fetch(src))
+
+    _assert_true("arxiv_fetch_returns_list", isinstance(result, list))
+    _assert_eq("arxiv_fetch_len", len(result), 2)
+    if len(result) >= 2:
+        _assert_eq("arxiv_fetch_title_1", result[0].title, "Test Paper One")
+        _assert_in("arxiv_fetch_url_1", "2401.00001", result[0].url)
+        _assert_eq("arxiv_fetch_author_1", result[0].author, "Alice")
+        _assert_eq("arxiv_fetch_title_2", result[1].title, "Test Paper Two")
+
+
+def test_arxiv_fetch_no_search_query_returns_empty():
+    """ArxivProvider.fetch() returns empty list with no search_query."""
+    p = ArxivProvider()
+    src = ResolvedSource(name="x", provider="arxiv", query_json={})
+    result = _run_async(p.fetch(src))
+    _assert_true("arxiv_fetch_empty_query", result == [])
+
+
+def test_arxiv_fetch_http_error_returns_empty():
+    """ArxivProvider.fetch() returns empty list on HTTP error."""
+    client = MagicMock()
+    client.get = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 500
+    resp.text = ""
+    client.get.return_value = resp
+
+    p = ArxivProvider(client=client)
+    src = ResolvedSource(name="x", provider="arxiv", query_json={"search_query": "cat:cs.AI"})
+
+    with patch.object(p, "_get_client", return_value=client):
+        result = _run_async(p.fetch(src))
+
+    _assert_true("arxiv_fetch_http_error_empty", result == [])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Runner
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -767,6 +931,14 @@ def _sorted() -> list[str]:
         "test_openreview_resolve_no_match",
         "test_openreview_verify_valid",
         "test_openreview_verify_no_invitation",
+        # 10. Story 12.6 — fetch()
+        "test_provider_fetch_base_returns_empty",
+        "test_generic_rss_fetch_returns_fetched_articles",
+        "test_generic_rss_fetch_no_url_returns_empty",
+        "test_generic_rss_fetch_http_error_returns_empty",
+        "test_arxiv_fetch_returns_fetched_articles",
+        "test_arxiv_fetch_no_search_query_returns_empty",
+        "test_arxiv_fetch_http_error_returns_empty",
     ]
 
 

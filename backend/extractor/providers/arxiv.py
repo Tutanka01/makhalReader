@@ -4,7 +4,7 @@ from typing import Optional
 
 import httpx
 
-from .base import ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
+from .base import FetchedArticle, ResolvedSource, SourceIntent, SourceProvider, VerifiedSource
 
 ARXIV_API_BASE = "http://export.arxiv.org/api/query"
 
@@ -93,3 +93,42 @@ class ArxivProvider(SourceProvider):
                 pass
 
         return VerifiedSource(verified=False)
+
+    async def fetch(self, source: ResolvedSource) -> list[FetchedArticle]:
+        sq = source.query_json.get("search_query", "")
+        max_results = source.query_json.get("max_results", "50")
+        if not sq:
+            return []
+
+        client = await self._get_client()
+        try:
+            resp = await client.get(
+                ARXIV_API_BASE,
+                params={"search_query": sq, "max_results": max_results, "sortBy": "submittedDate"},
+                timeout=15,
+            )
+        except Exception:
+            return []
+
+        if resp.status_code != 200:
+            return []
+
+        import feedparser
+
+        feed = feedparser.parse(resp.text)
+        articles: list[FetchedArticle] = []
+        for entry in feed.entries:
+            article_url = entry.get("link", "")
+            if not article_url:
+                continue
+            articles.append(
+                FetchedArticle(
+                    external_id=entry.get("id", article_url),
+                    title=entry.get("title", ""),
+                    url=article_url,
+                    summary=entry.get("summary", ""),
+                    author=entry.get("author"),
+                    published_at=entry.get("published"),
+                )
+            )
+        return articles

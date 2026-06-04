@@ -6,3 +6,4 @@ readability-lxml==0.8.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
 pydantic==2.7.1
+feedparser==6.0.11

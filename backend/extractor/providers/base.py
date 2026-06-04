@@ -29,6 +29,16 @@ class VerifiedSource:
     message: str = ""
 
 
+@dataclass
+class FetchedArticle:
+    external_id: str
+    title: str
+    url: str
+    summary: str = ""
+    author: Optional[str] = None
+    published_at: Optional[str] = None
+
+
 class SourceProvider(ABC):
     provider_id: str = ""
 
@@ -39,3 +49,6 @@ class SourceProvider(ABC):
     @abstractmethod
     async def verify(self, source: ResolvedSource) -> VerifiedSource:
         ...
+
+    async def fetch(self, source: ResolvedSource) -> list[FetchedArticle]:
+        return []

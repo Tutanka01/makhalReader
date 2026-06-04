@@ -358,6 +358,7 @@ class InternalArticleCreate(BaseModel):
     re_document_type: Optional[str] = None
     tracked_author_alert: bool = False
     ss_paper_id: Optional[str] = None
+    source_id: Optional[int] = None
 
 
 class InternalScoreUpdate(BaseModel):
