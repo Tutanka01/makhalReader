@@ -226,9 +226,12 @@ class TestInternalScoringContextFacetSchema:
         }
         try:
             with TestClient(app, raise_server_exceptions=True) as client:
+                # API_SECRET defaults to "changeme" but may be overridden by the
+                # container env; read it the same way the router does.
+                api_secret = os.getenv("API_SECRET", "changeme")
                 resp = client.get(
                     "/api/internal/users/7/scoring-context",
-                    headers={"X-Internal-Secret": "changeme"},
+                    headers={"X-Internal-Secret": api_secret},
                 )
         finally:
             app.dependency_overrides.clear()
