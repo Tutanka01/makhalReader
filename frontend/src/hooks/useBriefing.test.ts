@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { useBriefing } from './useBriefing'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks() })
 
 test('loads latest briefing on mount', async () => {
   const briefing = { id: 1, content_json: '{}', content: { intro: 'hi', sections: [], top_picks: [], articles: {} } }
