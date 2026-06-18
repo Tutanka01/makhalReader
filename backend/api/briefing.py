@@ -1,5 +1,16 @@
 import json
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from database import Article, Briefing, Feed
+from llm import complete_json
+
+BRIEFING_MIN_SCORE = float(os.getenv("BRIEFING_MIN_SCORE", "6.0"))
+BRIEFING_MAX_ARTICLES = int(os.getenv("BRIEFING_MAX_ARTICLES", "40"))
+BRIEFING_LANGUAGE = os.getenv("BRIEFING_LANGUAGE", "français")
 
 MAX_TITLE = 160
 MAX_BULLET = 180
@@ -121,3 +132,69 @@ def assemble_content(parsed: dict, articles_by_id: dict[int, dict]) -> dict:
         "top_picks": parsed["top_picks"],
         "articles": articles,
     }
+
+
+def select_articles(db: Session, hours: int) -> tuple[list[dict], datetime, datetime]:
+    """Fetch scored articles in the window as plain dicts (with feed name + parsed json)."""
+    window_end = datetime.now(timezone.utc)
+    window_start = window_end - timedelta(hours=hours)
+    rows = (
+        db.query(Article, Feed.name.label("feed_name"))
+        .join(Feed, Article.feed_id == Feed.id)
+        .filter(
+            Article.created_at >= window_start,
+            Article.score.isnot(None),
+            Article.score >= BRIEFING_MIN_SCORE,
+        )
+        .order_by(Article.score.desc())
+        .limit(BRIEFING_MAX_ARTICLES)
+        .all()
+    )
+    articles = []
+    for art, feed_name in rows:
+        articles.append({
+            "id": art.id,
+            "title": art.title,
+            "url": art.url,
+            "score": art.score,
+            "feed_name": feed_name or "",
+            "tags": json.loads(art.tags_json or "[]"),
+            "summary_bullets": json.loads(art.summary_bullets_json or "[]"),
+            "reading_time": art.reading_time,
+            "read_at": art.read_at.isoformat() if art.read_at else None,
+        })
+    return articles, window_start, window_end
+
+
+async def generate_briefing(db: Session, *, hours: int = 24, llm=complete_json) -> Optional[Briefing]:
+    """Build and persist a Briefing for the last `hours`. Returns the row, or None."""
+    articles, window_start, window_end = select_articles(db, hours)
+    if not articles:
+        return None
+
+    by_id = {a["id"]: a for a in articles}
+    messages = build_briefing_messages(compact_articles(articles), BRIEFING_LANGUAGE)
+    raw = await llm(messages, max_tokens=2000, temperature=0.4)
+    if raw is None:
+        return None
+
+    parsed = parse_briefing(raw, valid_ids=set(by_id))
+    if parsed is None:
+        return None
+
+    content = assemble_content(parsed, by_id)
+    model_used = os.getenv("QA_MODEL") if os.getenv("OPENROUTER_API_KEY", "").startswith("sk-") \
+        else os.getenv("OLLAMA_MODEL", "mistral")
+
+    briefing = Briefing(
+        generated_at=window_end,
+        window_start=window_start,
+        window_end=window_end,
+        model_used=model_used,
+        article_count=len(articles),
+        content_json=json.dumps(content, ensure_ascii=False),
+    )
+    db.add(briefing)
+    db.commit()
+    db.refresh(briefing)
+    return briefing

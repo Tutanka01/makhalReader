@@ -123,6 +123,28 @@ class FeedWithCount(FeedOut):
     article_count: int = 0
 
 
+class BriefingOut(BaseModel):
+    id: int
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    model_used: Optional[str] = None
+    article_count: int = 0
+    content_json: str = "{}"
+
+    content: Dict[str, Any] = {}
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def parse_content(self) -> "BriefingOut":
+        try:
+            self.content = json.loads(self.content_json or "{}")
+        except Exception:
+            self.content = {}
+        return self
+
+
 class InternalArticleCreate(BaseModel):
     feed_id: int
     title: str

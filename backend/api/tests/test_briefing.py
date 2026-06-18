@@ -50,3 +50,54 @@ def test_assemble_adds_denormalized_articles_map():
     content = assemble_content(parsed, {1: _row(1, "T", 8.0, ["ebpf"])})
     assert content["articles"]["1"]["title"] == "T"
     assert content["intro"] == "i"
+
+
+import asyncio
+from datetime import datetime, timezone
+
+import database as db_module
+from briefing import generate_briefing
+from database import Article, Base, Feed
+
+
+def _memory_session(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
+
+
+def test_generate_briefing_persists_row(monkeypatch):
+    db = _memory_session(monkeypatch)
+    db.add(Feed(id=1, url="http://f", name="Feed", category="Infra"))
+    for i in range(1, 4):
+        db.add(Article(id=i, feed_id=1, title=f"Art {i}", url=f"http://a/{i}",
+                       score=8.0, tags_json='["ebpf"]',
+                       summary_bullets_json='["b1"]',
+                       created_at=datetime.now(timezone.utc)))
+    db.commit()
+
+    async def fake_llm(messages, **kw):
+        return {"intro": "Salut", "sections": [
+            {"title": "eBPF", "synthesis": "s", "why_it_matters": "w",
+             "article_ids": [1, 2]}], "top_picks": [1]}
+
+    result = asyncio.get_event_loop().run_until_complete(
+        generate_briefing(db, hours=24, llm=fake_llm)
+    )
+    assert result is not None
+    assert result.article_count == 3
+    assert "eBPF" in result.content_json
+
+
+def test_generate_briefing_none_when_no_articles(monkeypatch):
+    db = _memory_session(monkeypatch)
+
+    async def fake_llm(messages, **kw):
+        raise AssertionError("LLM must not be called when there is nothing to synthesize")
+
+    result = asyncio.get_event_loop().run_until_complete(
+        generate_briefing(db, hours=24, llm=fake_llm)
+    )
+    assert result is None

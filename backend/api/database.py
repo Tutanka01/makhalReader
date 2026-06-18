@@ -100,6 +100,18 @@ class Highlight(Base):
     )
 
 
+class Briefing(Base):
+    __tablename__ = "briefings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    generated_at = Column(DateTime, nullable=False, index=True)
+    window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    model_used = Column(String, nullable=True)
+    article_count = Column(Integer, nullable=False, default=0)
+    content_json = Column(Text, nullable=False, default="{}")
+
+
 class AuthSession(Base):
     """Persistent login sessions. One row per active login."""
     __tablename__ = "auth_sessions"
@@ -166,6 +178,8 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN score_details_json TEXT NOT NULL DEFAULT '{}'",
         "CREATE TABLE IF NOT EXISTS highlights (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, selected_text TEXT NOT NULL, prefix_context TEXT NOT NULL DEFAULT '', suffix_context TEXT NOT NULL DEFAULT '', color VARCHAR(16) NOT NULL DEFAULT 'yellow', note TEXT, created_at DATETIME NOT NULL)",
         "CREATE INDEX IF NOT EXISTS ix_highlights_article_id ON highlights(article_id)",
+        "CREATE TABLE IF NOT EXISTS briefings (id INTEGER PRIMARY KEY AUTOINCREMENT, generated_at DATETIME NOT NULL, window_start DATETIME NOT NULL, window_end DATETIME NOT NULL, model_used VARCHAR, article_count INTEGER NOT NULL DEFAULT 0, content_json TEXT NOT NULL DEFAULT '{}')",
+        "CREATE INDEX IF NOT EXISTS ix_briefings_generated_at ON briefings(generated_at)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
