@@ -623,29 +623,6 @@ async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"added": added, "skipped": skipped, "total": len(feeds_to_add)}
 
 
-@app.get("/api/digest", response_model=List[ArticleListItem])
-async def get_digest(
-    hours: int = Query(24, ge=1, le=168),
-    limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
-    _: None = _auth,
-):
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    results = (
-        db.query(
-            Article,
-            Feed.name.label("feed_name"),
-            Feed.category.label("feed_category"),
-        )
-        .join(Feed, Article.feed_id == Feed.id)
-        .filter(Article.created_at >= cutoff, Article.score.isnot(None))
-        .order_by(Article.score.desc())
-        .limit(limit)
-        .all()
-    )
-    return [_row_to_list_item(row) for row in results]
-
-
 @app.get("/api/briefings/latest", response_model=BriefingOut)
 async def get_latest_briefing(response: Response, db: Session = Depends(get_db), _: None = _auth):
     briefing = db.query(Briefing).order_by(Briefing.generated_at.desc()).first()
