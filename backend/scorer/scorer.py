@@ -11,11 +11,25 @@ from prompt import SYSTEM_PROMPT
 
 app = FastAPI(title="MakhalReader Scorer")
 
+# Generic OpenAI-compatible endpoint (highest priority when set): point it at any
+# OpenAI-compatible server (vLLM, llama.cpp, LM Studio, Groq, Together, OpenAI…).
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").strip()
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 API_BASE = "http://api:8000"
+
+
+def _chat_completions_url(base: str) -> str:
+    """Build the chat-completions URL from a base, forgiving about how it's written."""
+    base = base.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
 API_SECRET = os.getenv("API_SECRET", "changeme")
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
@@ -352,6 +366,47 @@ def build_result_from_llm_content(
         return None
 
 
+async def score_with_openai_compatible(
+    client: httpx.AsyncClient,
+    user_message: str,
+    article_words: int,
+    summary_words: int,
+) -> Optional[ScoreResult]:
+    """Score via a generic OpenAI-compatible endpoint (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL)."""
+    if not LLM_BASE_URL:
+        return None
+
+    headers = {"Content-Type": "application/json", "X-Title": "MakhalReader"}
+    if LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+
+    try:
+        resp = await client.post(
+            _chat_completions_url(LLM_BASE_URL),
+            headers=headers,
+            json={
+                "model": LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 1200,
+            },
+            timeout=60,
+        )
+        if not resp.is_success:
+            print(f"OpenAI-compatible endpoint error {resp.status_code}: {resp.text[:500]}")
+            return None
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        return build_result_from_llm_content("OpenAI-compatible", content, article_words, summary_words)
+    except Exception as e:
+        print(f"OpenAI-compatible scoring failed: {e}")
+
+    return None
+
+
 async def score_with_openrouter(
     client: httpx.AsyncClient,
     user_message: str,
@@ -508,11 +563,15 @@ async def score_article(req: ScoreRequest):
         preference_block = await build_preference_block(client)
         user_message, article_words, summary_words = build_user_message(req, preference_block)
 
-        if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
-            result = await score_with_openrouter(client, user_message, article_words, summary_words)
+        if LLM_BASE_URL:
+            # Explicit OpenAI-compatible endpoint — used exclusively, no fallback.
+            result = await score_with_openai_compatible(client, user_message, article_words, summary_words)
+        else:
+            if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
+                result = await score_with_openrouter(client, user_message, article_words, summary_words)
 
-        if result is None:
-            result = await score_with_ollama(client, user_message, article_words, summary_words)
+            if result is None:
+                result = await score_with_ollama(client, user_message, article_words, summary_words)
 
         if result is None:
             raise HTTPException(

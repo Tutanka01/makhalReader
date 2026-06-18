@@ -34,6 +34,7 @@ from auth import (
 )
 from database import Article, Briefing, Feed, Highlight, SessionLocal, backfill_reading_time, get_db, init_db
 from briefing import generate_briefing
+from llm import resolve_provider
 from models import (
     ArticleListItem,
     ArticleOut,
@@ -1143,19 +1144,19 @@ async def ask_article(
 
     async def generate():
         async with _ask_semaphore:
-            use_openrouter = bool(OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"))
+            kind, url, api_key, model = resolve_provider()
             try:
-                if use_openrouter:
+                if kind == "openai":
+                    headers = {"Content-Type": "application/json"}
+                    if api_key:
+                        headers["Authorization"] = f"Bearer {api_key}"
                     async with httpx.AsyncClient(timeout=60) as client:
                         async with client.stream(
                             "POST",
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                                "Content-Type": "application/json",
-                            },
+                            url,
+                            headers=headers,
                             json={
-                                "model": QA_MODEL,
+                                "model": model,
                                 "messages": [
                                     {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": body.question},
@@ -1179,13 +1180,13 @@ async def ask_article(
                                 except Exception:
                                     pass
                 else:
-                    # Ollama fallback — streaming via /api/chat
+                    # Ollama — streaming via /api/chat
                     async with httpx.AsyncClient(timeout=60) as client:
                         async with client.stream(
                             "POST",
-                            f"{OLLAMA_URL}/api/chat",
+                            f"{url}/api/chat",
                             json={
-                                "model": OLLAMA_MODEL,
+                                "model": model,
                                 "messages": [
                                     {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": body.question},

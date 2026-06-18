@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from database import Article, Briefing, Feed
-from llm import complete_json
+from llm import complete_json, resolve_provider
 
 BRIEFING_MIN_SCORE = float(os.getenv("BRIEFING_MIN_SCORE", "6.0"))
 BRIEFING_MAX_ARTICLES = int(os.getenv("BRIEFING_MAX_ARTICLES", "40"))
@@ -183,8 +183,7 @@ async def generate_briefing(db: Session, *, hours: int = 24, llm=complete_json) 
         return None
 
     content = assemble_content(parsed, by_id)
-    model_used = os.getenv("QA_MODEL") if os.getenv("OPENROUTER_API_KEY", "").startswith("sk-") \
-        else os.getenv("OLLAMA_MODEL", "mistral")
+    _, _, _, model_used = resolve_provider()
 
     briefing = Briefing(
         generated_at=window_end,
