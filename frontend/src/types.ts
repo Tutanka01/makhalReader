@@ -98,3 +98,40 @@ export interface ArticleFilter {
   bookmarked: boolean
   minScore: number  // 0 = all, 6 = 6+, 8 = 8+
 }
+
+export interface BriefingArticle {
+  id: number
+  title: string
+  url: string
+  score: number | null
+  feed_name: string
+  tags: string[]
+  summary_bullets: string[]
+  reading_time: number | null
+  read_at: string | null
+}
+
+export interface BriefingSection {
+  title: string
+  synthesis: string
+  why_it_matters: string
+  article_ids: number[]
+}
+
+export interface BriefingContent {
+  intro: string
+  sections: BriefingSection[]
+  top_picks: number[]
+  articles: Record<string, BriefingArticle>
+}
+
+export interface Briefing {
+  id: number
+  generated_at: string
+  window_start: string
+  window_end: string
+  model_used: string | null
+  article_count: number
+  content_json: string
+  content: BriefingContent
+}
