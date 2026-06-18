@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ArticleList } from './components/ArticleList'
+import { BriefingView } from './components/briefing/BriefingView'
 import { ReaderView } from './components/ReaderView'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
 import { OfflineBanner } from './components/OfflineBanner'
@@ -58,7 +59,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats'>('feed')
+  const [appView, setAppView] = useState<'briefing' | 'feed' | 'stats'>('briefing')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -218,9 +219,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </div>
 
-        {/* Reader panel */}
+        {/* Main panel: briefing, reader, or empty */}
         <div className="flex-1 h-full overflow-hidden min-w-0">
-          {selectedId ? (
+          {appView === 'briefing' ? (
+            <BriefingView onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }} />
+          ) : selectedId ? (
             <ReaderView
               articleId={selectedId}
               sidebarOpen={sidebarOpen}
@@ -239,7 +242,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
       {/* ── Mobile layout ── */}
       <div className="flex lg:hidden w-full h-full">
-        {!showReader || !selectedId ? (
+        {appView === 'briefing' ? (
+          <div className="w-full h-full">
+            <BriefingView onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }} />
+          </div>
+        ) : !showReader || !selectedId ? (
           <div className="w-full h-full">
             <ArticleList
               feeds={feeds}

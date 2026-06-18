@@ -275,3 +275,26 @@ mark[data-hid].highlight-yellow { background: rgba(234, 179, 8, 0.32); border-bo
 mark[data-hid].highlight-green  { background: rgba(34, 197, 94, 0.25);  border-bottom: 2px solid rgba(34, 197, 94, 0.9); }
 mark[data-hid].highlight-blue   { background: rgba(68, 147, 248, 0.22); border-bottom: 2px solid rgba(68, 147, 248, 1.0); }
 mark[data-hid].highlight-purple { background: rgba(168, 85, 247, 0.25); border-bottom: 2px solid rgba(168, 85, 247, 0.9); }
+
+/* ── Briefing motion ──────────────────────────────────────────────────── */
+@keyframes briefing-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.briefing-rise {
+  opacity: 0;
+  animation: briefing-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .briefing-rise { animation: none; opacity: 1; }
+}
+
+@keyframes briefing-shimmer {
+  0% { background-position: -480px 0; }
+  100% { background-position: 480px 0; }
+}
+.briefing-shimmer {
+  background: linear-gradient(90deg, var(--color-bg-surface) 25%, var(--color-bg-elevated) 50%, var(--color-bg-surface) 75%);
+  background-size: 960px 100%;
+  animation: briefing-shimmer 1.4s infinite linear;
+}

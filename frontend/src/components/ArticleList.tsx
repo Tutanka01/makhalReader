@@ -3,7 +3,6 @@ import { Virtuoso } from 'react-virtuoso'
 import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
-import { DigestView } from './DigestView'
 import { StatsView } from './StatsView'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
@@ -13,8 +12,8 @@ interface ArticleListProps {
   onSelect: (id: number) => void
   selectedId: number | null
   onOpenFeedManager: () => void
-  currentView: 'feed' | 'digest' | 'stats'
-  onViewChange: (v: 'feed' | 'digest' | 'stats') => void
+  currentView: 'briefing' | 'feed' | 'stats'
+  onViewChange: (v: 'briefing' | 'feed' | 'stats') => void
   onLogout: () => void
 }
 
@@ -148,18 +147,14 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           <span className="text-xs font-semibold text-text-secondary tracking-wide">
             MakhalReader
           </span>
-          {/* Digest toggle */}
+          {/* Briefing toggle */}
           <button
-            onClick={() => onViewChange(currentView === 'digest' ? 'feed' : 'digest')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'digest'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Digest du jour"
+            onClick={() => onViewChange('briefing')}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            title="Le Briefing du jour"
           >
             <Sparkles className="w-3 h-3" />
-            Digest
+            Briefing
           </button>
           {/* Stats toggle */}
           <button
@@ -176,7 +171,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           </button>
         </div>
         <div className="flex items-center gap-0.5">
-          {/* Search — hidden in digest */}
+          {/* Search — feed view only */}
           {currentView === 'feed' && (
             <button
               onClick={openSearch}
@@ -186,7 +181,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               <Search className="w-3.5 h-3.5" />
             </button>
           )}
-          {/* Refresh — hidden in digest */}
+          {/* Refresh — feed view only */}
           {currentView === 'feed' && (
             <button
               onClick={() => fetchArticles(true)}
@@ -232,11 +227,6 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           </button>
         </div>
       </div>
-
-      {/* Digest view — replaces list when active */}
-      {currentView === 'digest' && (
-        <DigestView onSelect={onSelect} />
-      )}
 
       {/* Stats view — replaces list when active */}
       {currentView === 'stats' && (

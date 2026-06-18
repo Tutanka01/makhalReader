@@ -29,6 +29,9 @@ export function useSSE(onUnauthorized?: () => void) {
           const article = message.data as ArticleListItem
           prependArticle(article)
         }
+        if (message.type === 'briefing_ready') {
+          window.dispatchEvent(new CustomEvent('makhal:briefing-ready'))
+        }
       } catch (err) {
         console.error('Failed to parse SSE message:', err)
       }

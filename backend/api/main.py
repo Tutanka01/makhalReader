@@ -32,11 +32,13 @@ from auth import (
     set_session_cookie,
     verify_password,
 )
-from database import Article, Feed, Highlight, SessionLocal, backfill_reading_time, get_db, init_db
+from database import Article, Briefing, Feed, Highlight, SessionLocal, backfill_reading_time, get_db, init_db
+from briefing import generate_briefing
 from models import (
     ArticleListItem,
     ArticleOut,
     AskRequest,
+    BriefingOut,
     DailyReadCount,
     FeedCreate,
     FeedOut,
@@ -62,6 +64,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 
 # Semaphore to prevent concurrent LLM ask calls (cost protection)
 _ask_semaphore = asyncio.Semaphore(2)
+
+# Briefing regeneration cadence + concurrency guard
+BRIEFING_INTERVAL_HOURS = float(os.getenv("BRIEFING_INTERVAL_HOURS", "12"))
+_briefing_lock = asyncio.Lock()  # never generate two briefings at once
 
 # CORS: in production, lock to your actual domain.
 # Set CORS_ORIGIN=https://reader.yourdomain.com in .env
@@ -264,11 +270,33 @@ async def cleanup_old_articles():
             print(f"[cleanup] Nightly pass: deleted {deleted} old articles")
 
 
+async def briefing_scheduler():
+    """Generate a briefing at startup (if none today) then every BRIEFING_INTERVAL_HOURS."""
+    await asyncio.sleep(20)  # let the first poll/scoring settle
+    while True:
+        db = SessionLocal()
+        try:
+            today = datetime.now(timezone.utc).date()
+            latest = db.query(Briefing).order_by(Briefing.generated_at.desc()).first()
+            if latest is None or latest.generated_at.date() < today:
+                async with _briefing_lock:
+                    briefing = await generate_briefing(db, hours=24)
+                if briefing is not None:
+                    await _broadcast_briefing(briefing)
+                    print(f"[briefing] Generated briefing #{briefing.id} ({briefing.article_count} articles)")
+        except Exception as e:  # noqa: BLE001
+            print(f"[briefing] scheduler error: {e}")
+        finally:
+            db.close()
+        await asyncio.sleep(BRIEFING_INTERVAL_HOURS * 3600)
+
+
 @app.on_event("startup")
 async def startup():
     init_db()
     purge_expired_sessions()
     asyncio.create_task(cleanup_old_articles())
+    asyncio.create_task(briefing_scheduler())
 
     # Backfill reading_time for legacy articles (non-blocking)
     backfilled = await asyncio.to_thread(backfill_reading_time)
@@ -595,27 +623,26 @@ async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"added": added, "skipped": skipped, "total": len(feeds_to_add)}
 
 
-@app.get("/api/digest", response_model=List[ArticleListItem])
-async def get_digest(
+@app.get("/api/briefings/latest", response_model=BriefingOut)
+async def get_latest_briefing(response: Response, db: Session = Depends(get_db), _: None = _auth):
+    briefing = db.query(Briefing).order_by(Briefing.generated_at.desc()).first()
+    if not briefing:
+        raise HTTPException(status_code=404, detail="No briefing yet")
+    return BriefingOut.model_validate(briefing)
+
+
+@app.post("/api/briefings/generate", response_model=BriefingOut)
+async def generate_briefing_now(
     hours: int = Query(24, ge=1, le=168),
-    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
     _: None = _auth,
 ):
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    results = (
-        db.query(
-            Article,
-            Feed.name.label("feed_name"),
-            Feed.category.label("feed_category"),
-        )
-        .join(Feed, Article.feed_id == Feed.id)
-        .filter(Article.created_at >= cutoff, Article.score.isnot(None))
-        .order_by(Article.score.desc())
-        .limit(limit)
-        .all()
-    )
-    return [_row_to_list_item(row) for row in results]
+    async with _briefing_lock:
+        briefing = await generate_briefing(db, hours=hours)
+    if briefing is None:
+        raise HTTPException(status_code=404, detail="Nothing to synthesize for this window")
+    await _broadcast_briefing(briefing)
+    return BriefingOut.model_validate(briefing)
 
 
 @app.post("/api/feeds", response_model=FeedOut)
@@ -701,6 +728,16 @@ async def _broadcast_new_article(article_data: dict):
             dead_clients.append(client_id)
     for client_id in dead_clients:
         _sse_queues.pop(client_id, None)
+
+
+async def _broadcast_briefing(briefing: "Briefing"):
+    message = {"type": "briefing_ready",
+               "data": {"id": briefing.id, "generated_at": briefing.generated_at.isoformat()}}
+    for client_id, queue in list(_sse_queues.items()):
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            _sse_queues.pop(client_id, None)
 
 
 
