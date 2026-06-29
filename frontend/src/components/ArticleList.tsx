@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut, Newspaper } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { StatsView } from './StatsView'
@@ -147,10 +147,27 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           <span className="text-xs font-semibold text-text-secondary tracking-wide">
             MakhalReader
           </span>
+          {/* Feed toggle */}
+          <button
+            onClick={() => onViewChange('feed')}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+              currentView === 'feed'
+                ? 'bg-accent-blue/15 text-accent-blue'
+                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+            }`}
+            title="Articles"
+          >
+            <Newspaper className="w-3 h-3" />
+            Articles
+          </button>
           {/* Briefing toggle */}
           <button
             onClick={() => onViewChange('briefing')}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+              currentView === 'briefing'
+                ? 'bg-accent-blue/15 text-accent-blue'
+                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+            }`}
             title="Le Briefing du jour"
           >
             <Sparkles className="w-3 h-3" />

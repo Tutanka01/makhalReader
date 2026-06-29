@@ -29,6 +29,7 @@ const config: Config = {
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
         serif: ['Lora', 'Georgia', 'serif'],
+        mono: ['"JetBrains Mono"', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       fontSize: {
         'reader-body': ['17px', { lineHeight: '1.75' }],

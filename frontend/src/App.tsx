@@ -10,6 +10,8 @@ import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import type { Feed } from './types'
 
+type AppView = 'briefing' | 'feed' | 'stats'
+
 // ---------------------------------------------------------------------------
 // Auth gate — checks session on load, shows LoginView if unauthenticated
 // ---------------------------------------------------------------------------
@@ -59,7 +61,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
-  const [appView, setAppView] = useState<'briefing' | 'feed' | 'stats'>('briefing')
+  const [appView, setAppView] = useState<AppView>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -222,7 +224,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         {/* Main panel: briefing, reader, or empty */}
         <div className="flex-1 h-full overflow-hidden min-w-0">
           {appView === 'briefing' ? (
-            <BriefingView onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }} />
+            <BriefingView
+              onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }}
+              onBackToFeed={() => setAppView('feed')}
+            />
           ) : selectedId ? (
             <ReaderView
               articleId={selectedId}
@@ -244,7 +249,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       <div className="flex lg:hidden w-full h-full">
         {appView === 'briefing' ? (
           <div className="w-full h-full">
-            <BriefingView onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }} />
+            <BriefingView
+              onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }}
+              onBackToFeed={() => setAppView('feed')}
+            />
           </div>
         ) : !showReader || !selectedId ? (
           <div className="w-full h-full">
