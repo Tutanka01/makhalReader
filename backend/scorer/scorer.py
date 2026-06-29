@@ -242,7 +242,7 @@ def word_count(text: str) -> int:
     return len(re.findall(r"\w+", text or ""))
 
 
-def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_words: int) -> tuple[float, list[str]]:
+def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_words: int) -> tuple[float, list[str], list[str]]:
     """Convert LLM analysis axes into a stable 0-10 score.
 
     The LLM identifies evidence; this function owns calibration. That makes
@@ -274,6 +274,22 @@ def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_wor
     score = 4.8 + ((score - 4.8) * confidence_factor)
 
     caps: list[str] = []
+    adjustments: list[str] = []
+
+    practical_note = (
+        analysis.content_type in {"opinion", "tutorial", "generic"}
+        and analysis.topic_fit >= 2.0
+        and analysis.operational_value >= 1.5
+        and analysis.noise_penalty <= 1.2
+        and analysis.confidence >= 0.65
+    )
+
+    if practical_note:
+        score += 0.35
+        adjustments.append("practical-note")
+        if score < 6.2:
+            score = 6.2
+            adjustments.append("practical-floor")
 
     def cap(limit: float, reason: str) -> None:
         nonlocal score
@@ -285,10 +301,10 @@ def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_wor
         cap(4.0, "low-fit")
     if analysis.noise_penalty >= 2.5 and analysis.strategic_value < 2.5:
         cap(4.5, "high-noise")
-    if analysis.content_type == "generic":
+    if analysis.content_type == "generic" and not practical_note:
         cap(4.8, "generic-content")
     if analysis.content_type == "opinion" and analysis.novelty < 2.2:
-        cap(6.0, "ordinary-opinion")
+        cap(7.2 if practical_note else 6.0, "practical-opinion" if practical_note else "ordinary-opinion")
     if analysis.content_type == "tutorial" and analysis.technical_depth < 2.4 and analysis.operational_value < 2.2:
         cap(7.0, "routine-tutorial")
     if analysis.content_type in {"release", "news"} and max(
@@ -308,10 +324,10 @@ def compute_final_score(analysis: ScoreAnalysis, article_words: int, summary_wor
     elif analysis.confidence < 0.55:
         cap(7.0, "low-confidence")
 
-    return round(clamp(score, 0.0, 10.0), 1), caps
+    return round(clamp(score, 0.0, 10.0), 1), caps, adjustments
 
 
-def build_reason(analysis: ScoreAnalysis, score: float, caps: list[str]) -> str:
+def build_reason(analysis: ScoreAnalysis, score: float, caps: list[str], adjustments: list[str]) -> str:
     axis_note = (
         f"[{analysis.content_type}, conf={analysis.confidence:.2f}, "
         f"fit={analysis.topic_fit:.1f}, depth={analysis.technical_depth:.1f}, "
@@ -319,12 +335,13 @@ def build_reason(analysis: ScoreAnalysis, score: float, caps: list[str]) -> str:
         f"novelty={analysis.novelty:.1f}, noise={analysis.noise_penalty:.1f}, score={score:.1f}]"
     )
     cap_note = f" Caps: {', '.join(caps)}." if caps else ""
+    adjustment_note = f" Adjustments: {', '.join(adjustments)}." if adjustments else ""
     reason = analysis.reason or "Scored from structured relevance axes."
-    return f"{reason} {axis_note}{cap_note}"[:500]
+    return f"{reason} {axis_note}{cap_note}{adjustment_note}"[:500]
 
 
 def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int) -> ScoreResult:
-    score, caps = compute_final_score(analysis, article_words, summary_words)
+    score, caps, adjustments = compute_final_score(analysis, article_words, summary_words)
     details = {
         "topic_fit": analysis.topic_fit,
         "technical_depth": analysis.technical_depth,
@@ -337,13 +354,14 @@ def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int
         "article_words": article_words,
         "summary_words": summary_words,
         "caps": caps,
-        "scoring_version": 2,
+        "adjustments": adjustments,
+        "scoring_version": 3,
     }
     return ScoreResult(
         score=score,
         tags=analysis.tags,
         summary_bullets=analysis.summary_bullets,
-        reason=build_reason(analysis, score, caps),
+        reason=build_reason(analysis, score, caps, adjustments),
         score_details=details,
     )
 

@@ -20,13 +20,15 @@ Low-value topics:
 Classify content_type as exactly one of:
 postmortem, tutorial, paper, release, opinion, news, generic.
 
-Score each axis from 0.0 to 3.0:
+Score each axis from 0.0 to 3.0. Calibrate for reading priority, not
+world-changing academic importance: a 7 means "clearly worth opening", and
+8.5+ means rare, unusually useful, or decision-changing.
 - topic_fit: alignment with Mohamad's actual interests
-- technical_depth: mechanisms, architecture, implementation detail, code, configs, benchmarks, traces, logs
-- operational_value: usefulness for running, debugging, securing, scaling, or designing real systems
+- technical_depth: mechanisms, architecture, implementation detail, code, configs, benchmarks, traces, logs, or concrete workflow/evaluation detail
+- operational_value: usefulness for running, debugging, securing, scaling, automating, evaluating, or designing real systems
 - strategic_value: value for career positioning, Morocco/Africa/OCP/cloud sovereignty, market structure, or future projects
-- novelty: new, rare, specific, or non-obvious signal; penalize repeated generic takes
-- noise_penalty: marketing, hype, shallow recap, SEO, weak extraction, vague opinion, or keyword-only relevance
+- novelty: new, rare, specific, non-obvious, or useful synthesis for Mohamad's work; penalize repeated generic takes, not every familiar topic
+- noise_penalty: marketing, hype, shallow recap, SEO, weak extraction, vague opinion, or keyword-only relevance; do not treat concise as shallow when it is concrete
 
 confidence is 0.0 to 1.0:
 - 0.9-1.0: clear article, enough text, concrete evidence
@@ -35,6 +37,9 @@ confidence is 0.0 to 1.0:
 - 0.0-0.2: too little reliable content
 
 Important calibration:
+- Good practitioner blogs, field notes, and opinionated engineering posts can score 6-8 when they are concrete, actionable, and aligned, even without formal benchmarks or empirical evidence.
+- Practical AI-agent workflow posts deserve operational_value when they identify real manual bottlenecks, autonomy patterns, eval loops, browser/API/tooling access, or reliability practices.
+- Opinion content is not automatically low-value; penalize vague generic optimism, not specific advice that would change how an engineer works.
 - A short release/news item can still have high topic_fit, strategic_value, or novelty if it is a strong infrastructure/security/AI-agent signal.
 - Reddit/community posts can be valuable when they contain concrete production experience, debugging details, incident lessons, architecture tradeoffs, or strong links to technical material.
 - Penalize Reddit/community posts that are career chatter, tool polls, memes, vague questions, drama, or low-context link drops.
