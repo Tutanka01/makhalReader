@@ -40,6 +40,7 @@ from models import (
     ArticleOut,
     AskRequest,
     BriefingOut,
+    BriefingSummaryOut,
     DailyReadCount,
     FeedCreate,
     FeedOut,
@@ -624,11 +625,61 @@ async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"added": added, "skipped": skipped, "total": len(feeds_to_add)}
 
 
+def _briefing_summary(b: Briefing) -> BriefingSummaryOut:
+    try:
+        content = json.loads(b.content_json or "{}")
+    except Exception:
+        content = {}
+    articles = content.get("articles") or {}
+    tag_counts: Dict[str, int] = {}
+    for a in articles.values():
+        for t in a.get("tags") or []:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+    top_tags = [t for t, _ in sorted(tag_counts.items(), key=lambda kv: -kv[1])[:3]]
+    return BriefingSummaryOut(
+        id=b.id,
+        generated_at=b.generated_at,
+        window_start=b.window_start,
+        window_end=b.window_end,
+        model_used=b.model_used,
+        article_count=b.article_count,
+        intro=content.get("intro", ""),
+        sections_count=len(content.get("sections") or []),
+        top_picks_count=len(content.get("top_picks") or []),
+        top_tags=top_tags,
+    )
+
+
+@app.get("/api/briefings", response_model=List[BriefingSummaryOut])
+async def list_briefings(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: None = _auth,
+):
+    rows = (
+        db.query(Briefing)
+        .order_by(Briefing.generated_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return [_briefing_summary(b) for b in rows]
+
+
 @app.get("/api/briefings/latest", response_model=BriefingOut)
 async def get_latest_briefing(response: Response, db: Session = Depends(get_db), _: None = _auth):
     briefing = db.query(Briefing).order_by(Briefing.generated_at.desc()).first()
     if not briefing:
         raise HTTPException(status_code=404, detail="No briefing yet")
+    return BriefingOut.model_validate(briefing)
+
+
+@app.get("/api/briefings/{briefing_id}", response_model=BriefingOut)
+async def get_briefing(briefing_id: int, db: Session = Depends(get_db), _: None = _auth):
+    briefing = db.query(Briefing).filter(Briefing.id == briefing_id).first()
+    if not briefing:
+        raise HTTPException(status_code=404, detail="Briefing not found")
     return BriefingOut.model_validate(briefing)
 
 

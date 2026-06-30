@@ -135,3 +135,16 @@ export interface Briefing {
   content_json: string
   content: BriefingContent
 }
+
+export interface BriefingSummary {
+  id: number
+  generated_at: string
+  window_start: string
+  window_end: string
+  model_used: string | null
+  article_count: number
+  intro: string
+  sections_count: number
+  top_picks_count: number
+  top_tags: string[]
+}

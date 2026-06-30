@@ -17,7 +17,7 @@ const briefing = {
 
 test('renders intro, top pick, and section', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => briefing })))
-  render(<BriefingView onOpen={() => {}} />)
+  render(<BriefingView onOpen={() => {}} mode="live" onToggleMode={() => {}} />)
   await waitFor(() => expect(screen.getByText(/journée chargée côté eBPF/)).toBeInTheDocument())
   // The article is a top pick AND appears in its theme section, so it renders in both places.
   expect(screen.getAllByText('Cilium 1.16').length).toBeGreaterThan(0)
@@ -26,6 +26,6 @@ test('renders intro, top pick, and section', async () => {
 
 test('shows empty state with generate button when no briefing', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })))
-  render(<BriefingView onOpen={() => {}} />)
+  render(<BriefingView onOpen={() => {}} mode="live" onToggleMode={() => {}} />)
   await waitFor(() => expect(screen.getByRole('button', { name: /générer/i })).toBeInTheDocument())
 })

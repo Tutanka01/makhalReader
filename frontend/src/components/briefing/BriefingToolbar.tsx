@@ -1,4 +1,6 @@
-import { ArrowLeft, RefreshCw, Sparkles } from 'lucide-react'
+import { ArrowLeft, CalendarDays, RefreshCw, Sparkles } from 'lucide-react'
+
+type Mode = 'live' | 'history'
 
 interface Props {
   sidebarOpen?: boolean
@@ -8,6 +10,8 @@ interface Props {
   regenerating: boolean
   /** Only a briefing that exists (or is being generated) can be regenerated. */
   showRegenerate: boolean
+  mode: Mode
+  onToggleMode: () => void
 }
 
 export function BriefingToolbar({
@@ -17,6 +21,8 @@ export function BriefingToolbar({
   onRegenerate,
   regenerating,
   showRegenerate,
+  mode,
+  onToggleMode,
 }: Props) {
   return (
     <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3 py-2">
@@ -41,21 +47,34 @@ export function BriefingToolbar({
         )}
         <span className="ml-1 flex items-center gap-1.5 text-sm font-semibold text-text-primary">
           <Sparkles className="h-3.5 w-3.5 text-accent-blue" />
-          Briefing
+          {mode === 'history' ? 'Archive' : 'Briefing'}
         </span>
       </div>
 
-      {showRegenerate && (
+      <div className="flex items-center gap-1">
         <button
-          onClick={onRegenerate}
-          disabled={regenerating}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
-          title="Régénérer le briefing"
+          onClick={onToggleMode}
+          className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors hover:bg-bg-hover hover:text-text-primary ${
+            mode === 'history' ? 'bg-accent-blue/10 text-accent-blue' : 'text-text-secondary'
+          }`}
+          title={mode === 'history' ? "Revenir au briefing du jour" : "Voir l'historique des briefings"}
         >
-          <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">{regenerating ? 'Synthèse…' : 'Régénérer'}</span>
+          <CalendarDays className="h-4 w-4" />
+          <span className="hidden sm:inline">Archive</span>
         </button>
-      )}
+
+        {showRegenerate && (
+          <button
+            onClick={onRegenerate}
+            disabled={regenerating}
+            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+            title="Régénérer le briefing"
+          >
+            <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{regenerating ? 'Synthèse…' : 'Régénérer'}</span>
+          </button>
+        )}
+      </div>
     </div>
   )
 }

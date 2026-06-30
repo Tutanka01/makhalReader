@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ArticleList } from './components/ArticleList'
 import { BriefingView } from './components/briefing/BriefingView'
+import type { BriefingMode } from './components/briefing/BriefingView'
 import { ReaderView } from './components/ReaderView'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
 import { OfflineBanner } from './components/OfflineBanner'
@@ -62,6 +63,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [appView, setAppView] = useState<AppView>('feed')
+  const [briefingMode, setBriefingMode] = useState<BriefingMode>('live')
+  const toggleBriefingMode = useCallback(() => {
+    setBriefingMode(m => (m === 'live' ? 'history' : 'live'))
+  }, [])
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -229,6 +234,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               onOpen={handleSelectArticle}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen(v => !v)}
+              mode={briefingMode}
+              onToggleMode={toggleBriefingMode}
             />
           ) : selectedId ? (
             <ReaderView
@@ -254,6 +261,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
             <BriefingView
               onOpen={handleSelectArticle}
               onBack={() => setAppView('feed')}
+              mode={briefingMode}
+              onToggleMode={toggleBriefingMode}
             />
           </div>
         ) : !showReader || !selectedId ? (

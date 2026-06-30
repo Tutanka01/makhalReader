@@ -1,10 +1,11 @@
 import { Sparkles } from 'lucide-react'
 import { useBriefing } from '../../hooks/useBriefing'
-import { BriefingHero } from './BriefingHero'
-import { TopPicks } from './TopPicks'
-import { BriefingSection } from './BriefingSection'
+import { BriefingContentPane } from './BriefingContentPane'
 import { BriefingSkeleton } from './BriefingSkeleton'
 import { BriefingToolbar } from './BriefingToolbar'
+import { BriefingArchive } from './BriefingArchive'
+
+export type BriefingMode = 'live' | 'history'
 
 interface Props {
   onOpen: (id: number) => void
@@ -13,9 +14,16 @@ interface Props {
   onToggleSidebar?: () => void
   /** Mobile back-to-feed control — omitted on desktop, where the sidebar stays visible. */
   onBack?: () => void
+  /**
+   * Lifted to AuthenticatedApp (like sidebarOpen): App.tsx mounts a separate
+   * BriefingView per breakpoint tree, so local state here wouldn't survive
+   * a resize across the lg breakpoint.
+   */
+  mode: BriefingMode
+  onToggleMode: () => void
 }
 
-export function BriefingView({ onOpen, sidebarOpen, onToggleSidebar, onBack }: Props) {
+export function BriefingView({ onOpen, sidebarOpen, onToggleSidebar, onBack, mode, onToggleMode }: Props) {
   const { briefing, status, generate } = useBriefing()
 
   const isFirstGenerate = status === 'generating' && !briefing
@@ -29,46 +37,36 @@ export function BriefingView({ onOpen, sidebarOpen, onToggleSidebar, onBack }: P
         onBack={onBack}
         onRegenerate={generate}
         regenerating={status === 'generating'}
-        showRegenerate={status === 'ready' || status === 'generating'}
+        showRegenerate={mode === 'live' && (status === 'ready' || status === 'generating')}
+        mode={mode}
+        onToggleMode={onToggleMode}
       />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[980px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
-          {(status === 'loading' || isFirstGenerate) && <BriefingSkeleton />}
+      {mode === 'history' ? (
+        <BriefingArchive onOpen={onOpen} />
+      ) : (
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[980px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
+            {(status === 'loading' || isFirstGenerate) && <BriefingSkeleton />}
 
-          {(status === 'empty' || status === 'error') && (
-            <EmptyState status={status} onGenerate={generate} />
-          )}
+            {(status === 'empty' || status === 'error') && (
+              <EmptyState status={status} onGenerate={generate} />
+            )}
 
-          {briefing && status !== 'loading' && (
-            <div className="space-y-7">
-              {isRegenerating && (
-                <div className="briefing-rise flex items-center gap-2 rounded-md border border-accent-blue/30 bg-accent-blue/10 px-3 py-2 text-xs text-accent-blue">
-                  <Sparkles className="h-3.5 w-3.5 animate-pulse" />
-                  Régénération en cours — le briefing ci-dessous est encore le précédent.
-                </div>
-              )}
-              <BriefingHero
-                content={briefing.content}
-                generatedAt={briefing.generated_at}
-                articleCount={briefing.article_count}
-              />
-              <TopPicks ids={briefing.content.top_picks} articles={briefing.content.articles} onOpen={onOpen} />
-              <div className="space-y-6">
-                {briefing.content.sections.map((section, i) => (
-                  <BriefingSection
-                    key={i}
-                    section={section}
-                    articles={briefing.content.articles}
-                    index={i}
-                    onOpen={onOpen}
-                  />
-                ))}
+            {briefing && status !== 'loading' && (
+              <div className="space-y-7">
+                {isRegenerating && (
+                  <div className="briefing-rise flex items-center gap-2 rounded-md border border-accent-blue/30 bg-accent-blue/10 px-3 py-2 text-xs text-accent-blue">
+                    <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                    Régénération en cours — le briefing ci-dessous est encore le précédent.
+                  </div>
+                )}
+                <BriefingContentPane briefing={briefing} onOpen={onOpen} />
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

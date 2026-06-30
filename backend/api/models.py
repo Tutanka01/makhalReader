@@ -145,6 +145,24 @@ class BriefingOut(BaseModel):
         return self
 
 
+class BriefingSummaryOut(BaseModel):
+    """Lightweight list-row shape for browsing briefing history — omits the
+    per-article content snapshot that makes a full BriefingOut expensive."""
+
+    id: int
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    model_used: Optional[str] = None
+    article_count: int = 0
+    intro: str = ""
+    sections_count: int = 0
+    top_picks_count: int = 0
+    top_tags: List[str] = []
+
+    model_config = {"from_attributes": True}
+
+
 class InternalArticleCreate(BaseModel):
     feed_id: int
     title: str

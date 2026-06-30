@@ -9,3 +9,7 @@ frontend/dist/
 .claude/
 
 .ruff_cache/
+
+AGENTS.md
+
+CLAUDE.md
