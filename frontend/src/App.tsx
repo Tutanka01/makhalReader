@@ -82,6 +82,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const handleSelectArticle = useCallback((id: number) => {
     setSelectedId(id)
     setShowReader(true)
+    setAppView('feed')
   }, [setSelectedId])
 
   const handleBack = useCallback(() => {
@@ -225,8 +226,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         <div className="flex-1 h-full overflow-hidden min-w-0">
           {appView === 'briefing' ? (
             <BriefingView
-              onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }}
-              onBackToFeed={() => setAppView('feed')}
+              onOpen={handleSelectArticle}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen(v => !v)}
             />
           ) : selectedId ? (
             <ReaderView
@@ -250,8 +252,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         {appView === 'briefing' ? (
           <div className="w-full h-full">
             <BriefingView
-              onOpen={(id) => { setAppView('feed'); handleSelectArticle(id) }}
-              onBackToFeed={() => setAppView('feed')}
+              onOpen={handleSelectArticle}
+              onBack={() => setAppView('feed')}
             />
           </div>
         ) : !showReader || !selectedId ? (

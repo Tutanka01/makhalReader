@@ -127,6 +127,9 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
 
   const isSearchActive = Boolean(searchQuery.trim())
   const displayedArticles = isSearchActive ? searchResults : articles
+  // The article list is the persistent sidebar navigation — it stays visible for both
+  // the feed and the briefing tabs, and only steps aside for the dedicated Stats view.
+  const showArticleList = currentView !== 'stats'
 
   return (
     <div
@@ -188,8 +191,8 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           </button>
         </div>
         <div className="flex items-center gap-0.5">
-          {/* Search — feed view only */}
-          {currentView === 'feed' && (
+          {/* Search — hidden only in Stats */}
+          {showArticleList && (
             <button
               onClick={openSearch}
               className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
@@ -198,8 +201,8 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               <Search className="w-3.5 h-3.5" />
             </button>
           )}
-          {/* Refresh — feed view only */}
-          {currentView === 'feed' && (
+          {/* Refresh — hidden only in Stats */}
+          {showArticleList && (
             <button
               onClick={() => fetchArticles(true)}
               className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
@@ -209,7 +212,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             </button>
           )}
           {/* Mark all read */}
-          {currentView === 'feed' && filter.status !== 'read' && (
+          {showArticleList && filter.status !== 'read' && (
             <button
               onClick={handleMarkAllRead}
               className={`flex items-center gap-1 rounded-md transition-all duration-150 text-xs font-medium ${
@@ -251,7 +254,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
       )}
 
       {/* Search bar */}
-      {currentView === 'feed' && searchOpen && (
+      {showArticleList && searchOpen && (
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
           <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
           <input
@@ -274,11 +277,11 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
         </div>
       )}
 
-      {/* Category tabs — only in feed view */}
-      {currentView === 'feed' && <CategoryTabs feeds={feeds} />}
+      {/* Category tabs — hidden only in Stats */}
+      {showArticleList && <CategoryTabs feeds={feeds} />}
 
-      {/* Toolbar — only in feed view */}
-      {currentView === 'feed' && <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle flex-shrink-0 flex-wrap">
+      {/* Toolbar — hidden only in Stats */}
+      {showArticleList && <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle flex-shrink-0 flex-wrap">
         {/* Status toggle */}
         <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
           <button
@@ -345,8 +348,8 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
         )}
       </div>}
 
-      {/* Feed view: empty state + list */}
-      {currentView === 'feed' && (
+      {/* Article list — empty state + list, hidden only in Stats */}
+      {showArticleList && (
         <>
           {/* Empty state */}
           {!loading && !isSearching && displayedArticles.length === 0 && (
