@@ -45,6 +45,12 @@ class ArticleOut(BaseModel):
     created_at: datetime
     user_feedback: Optional[int] = None
     reading_time: Optional[int] = None
+    scoring_status: str = "queued"
+    score_attempts: int = 0
+    next_score_attempt_at: Optional[datetime] = None
+    score_last_error: Optional[str] = None
+    score_locked_at: Optional[datetime] = None
+    scored_at: Optional[datetime] = None
 
     # Computed fields
     tags: List[str] = []
@@ -94,6 +100,10 @@ class ArticleListItem(BaseModel):
     feed_category: str = ""
     user_feedback: Optional[int] = None
     reading_time: Optional[int] = None
+    scoring_status: str = "queued"
+    score_attempts: int = 0
+    next_score_attempt_at: Optional[datetime] = None
+    scored_at: Optional[datetime] = None
 
     # Computed fields
     tags: List[str] = []
@@ -182,6 +192,30 @@ class InternalScoreUpdate(BaseModel):
     summary_bullets: List[str] = []
     reason: Optional[str] = None
     score_details: Dict[str, Any] = {}
+
+
+class InternalScoringClaimRequest(BaseModel):
+    limit: int = 5
+
+    @field_validator("limit")
+    @classmethod
+    def validate_limit(cls, v: int) -> int:
+        return max(1, min(int(v), 50))
+
+
+class InternalScoreFailure(BaseModel):
+    error: str = ""
+
+    @field_validator("error")
+    @classmethod
+    def validate_error(cls, v: str) -> str:
+        return str(v or "").strip()[:2000]
+
+
+class InternalFeedFetched(BaseModel):
+    fetched_at: Optional[datetime] = None
+    entry_count: int = 0
+    status: str = "parsed"
 
 
 # ---------------------------------------------------------------------------

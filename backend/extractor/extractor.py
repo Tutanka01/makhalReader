@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import quote_plus, urlparse, urlunparse
 
 import httpx
+import bleach
 import trafilatura
 from bs4 import BeautifulSoup, Tag
 from fastapi import FastAPI
@@ -31,6 +32,86 @@ HEADERS = {
 }
 
 MIN_CONTENT_LENGTH = 300
+
+ALLOWED_HTML_TAGS = frozenset(
+    {
+        "a",
+        "abbr",
+        "article",
+        "aside",
+        "b",
+        "blockquote",
+        "br",
+        "caption",
+        "cite",
+        "code",
+        "dd",
+        "del",
+        "details",
+        "dfn",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "figcaption",
+        "figure",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "i",
+        "img",
+        "ins",
+        "kbd",
+        "li",
+        "main",
+        "mark",
+        "ol",
+        "p",
+        "pre",
+        "q",
+        "s",
+        "samp",
+        "section",
+        "small",
+        "span",
+        "strong",
+        "sub",
+        "summary",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "time",
+        "tr",
+        "u",
+        "ul",
+        "var",
+    }
+)
+ALLOWED_HTML_PROTOCOLS = frozenset({"http", "https", "mailto"})
+SAFE_LINK_TARGETS = frozenset({"_blank", "_self", "_parent", "_top"})
+SAFE_LINK_REL = ("noopener", "noreferrer")
+GLOBAL_HTML_ATTRS = frozenset({"class", "dir", "lang", "title"})
+TAG_HTML_ATTRS = {
+    "a": frozenset({"href", "rel", "target", "title"}),
+    "blockquote": frozenset({"cite"}),
+    "code": frozenset({"class"}),
+    "img": frozenset({"alt", "height", "loading", "src", "title", "width"}),
+    "pre": frozenset({"class"}),
+    "q": frozenset({"cite"}),
+    "td": frozenset({"colspan", "headers", "rowspan"}),
+    "th": frozenset({"colspan", "headers", "rowspan", "scope"}),
+    "time": frozenset({"datetime"}),
+}
+
+URL_ATTRS = frozenset({"cite", "href", "src"})
 
 ARXIV_ABS_RE = re.compile(
     r"arxiv\.org/abs/(?P<id>[0-9]{4}\.[0-9]+(v\d+)?|[a-z\-]+/\d{7})", re.I
@@ -203,7 +284,7 @@ def strip_html(text: str) -> str:
 
 def text_to_html(text: str) -> str:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    return "\n".join(f"<p>{p}</p>" for p in paragraphs)
+    return "\n".join(f"<p>{html_lib.escape(p)}</p>" for p in paragraphs)
 
 
 def html_to_text(html: str) -> str:
@@ -211,6 +292,60 @@ def html_to_text(html: str) -> str:
         return BeautifulSoup(html, "html.parser").get_text(separator="\n\n", strip=True)
     except Exception:
         return ""
+
+
+def is_safe_url_attr(attr: str, value: str) -> bool:
+    value = (value or "").strip()
+    if not value:
+        return False
+
+    parsed = urlparse(value)
+    if not parsed.scheme:
+        return True
+    if attr == "src":
+        return parsed.scheme.lower() in {"http", "https"}
+    return parsed.scheme.lower() in ALLOWED_HTML_PROTOCOLS
+
+
+def allow_article_attr(tag: str, attr: str, value: str) -> bool:
+    attr = attr.lower()
+    if attr.startswith("on") or attr == "style":
+        return False
+    if attr == "target" and value not in SAFE_LINK_TARGETS:
+        return False
+    if attr in URL_ATTRS and not is_safe_url_attr(attr, value):
+        return False
+    return attr in GLOBAL_HTML_ATTRS or attr in TAG_HTML_ATTRS.get(tag, frozenset())
+
+
+def sanitize_article_html(raw: str, base_url: str) -> str:
+    """Strip active/executable HTML while preserving normal article markup."""
+    try:
+        cleaner = bleach.Cleaner(
+            tags=ALLOWED_HTML_TAGS,
+            attributes=allow_article_attr,
+            protocols=ALLOWED_HTML_PROTOCOLS,
+            strip=True,
+            strip_comments=True,
+        )
+        cleaned = cleaner.clean(raw or "")
+        soup = BeautifulSoup(cleaned, "html.parser")
+
+        for link in soup.find_all("a"):
+            if not link.get("href"):
+                continue
+            raw_rel = link.get("rel") or []
+            rel = set(raw_rel.split()) if isinstance(raw_rel, str) else set(raw_rel)
+            rel.update(SAFE_LINK_REL)
+            link["rel"] = " ".join(sorted(rel))
+
+        for img in soup.find_all("img"):
+            if not img.get("src"):
+                img.decompose()
+
+        return str(soup)
+    except Exception:
+        return bleach.clean(raw or "", tags=[], strip=True, strip_comments=True)
 
 
 def clean_readability_html(raw: str, base_url: str) -> str:
@@ -237,11 +372,11 @@ def clean_readability_html(raw: str, base_url: str) -> str:
         # Unwrap outer readability div
         outer = soup.find("div", id=re.compile(r"readability"))
         if outer and isinstance(outer, Tag):
-            return outer.decode_contents()
+            return sanitize_article_html(outer.decode_contents(), base_url)
 
-        return str(soup)
+        return sanitize_article_html(str(soup), base_url)
     except Exception:
-        return raw
+        return sanitize_article_html(raw, base_url)
 
 
 def extract_images_from_html(
@@ -559,6 +694,7 @@ def extract_with_trafilatura(html: str, url: str) -> dict:
             output_format="html",
             favor_recall=True,
         ) or text_to_html(plain_text)
+        raw_html = clean_readability_html(raw_html, url)
 
         return {
             "title": clean_title(data.get("title")),
@@ -719,7 +855,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                 arxiv_data = extract_arxiv(html, req.url)
                 if arxiv_data.get("text"):
                     content_text = arxiv_data["text"]
-                    content_html = arxiv_data["raw_html"]
+                    content_html = sanitize_article_html(arxiv_data["raw_html"], req.url)
                     extracted_title = arxiv_data.get("title")
                     author = arxiv_data.get("author")
                     # Canonical: strip version suffix  (abs/2501.12345v2 → abs/2501.12345)
@@ -747,7 +883,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                 final_title = resolve_title(None, req.rss_title, abstract)
                 return ExtractResponse(
                     title=final_title,
-                    content_html=f"<p>{abstract}</p>",
+                    content_html=sanitize_article_html(text_to_html(abstract), req.url),
                     content_text=abstract,
                     images=[],
                     author=None,
@@ -767,7 +903,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                 reddit_data = extract_reddit_rss_context(req)
             if reddit_data.get("text"):
                 content_text = reddit_data["text"]
-                content_html = reddit_data["raw_html"]
+                content_html = sanitize_article_html(reddit_data["raw_html"], req.url)
                 extracted_title = reddit_data.get("title")
                 author = reddit_data.get("author")
                 final_title = resolve_title(extracted_title, req.rss_title, content_text)
@@ -890,6 +1026,9 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
             extraction_failed = True
 
         final_title = resolve_title(extracted_title, req.rss_title, content_text)
+        content_html = (
+            sanitize_article_html(content_html, req.url) if content_html else None
+        )
 
         return ExtractResponse(
             title=final_title,

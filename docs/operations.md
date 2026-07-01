@@ -20,9 +20,26 @@ docker compose -f docker-compose.yml -f docker-compose.npm.yml ps
 
 Attendu :
 
-- `/api/health` repond `200`.
+- `/api/health` repond `200` avec un JSON de sante. Si le contrat de metadata
+  est active, verifier aussi la presence de la version/build attendue; sinon le
+  payload minimal historique est `{"status":"ok"}`.
 - `/auth/status` repond `401` avant login.
 - Les services `api`, `frontend`, `web`, `poller`, `extractor`, `scorer` sont running.
+
+Checklist rebuild et derive de version :
+
+```bash
+docker compose up -d --build
+docker compose ps
+curl -s http://localhost/api/health
+docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read().decode())"
+docker compose logs --tail=50 api poller extractor scorer
+```
+
+Apres un rebuild, comparer le contenu de `/api/health`, l'heure de creation des
+conteneurs dans `docker compose ps` et les premieres lignes de logs. Si un
+service sert encore l'ancien comportement, reconstruire explicitement le service
+concerne, par exemple `docker compose up -d --build api scorer poller`.
 
 ## Logs utiles
 
@@ -45,9 +62,12 @@ docker compose -f docker-compose.yml -f docker-compose.npm.yml logs -f --tail=10
 Tout l'etat applicatif est dans SQLite sous `/data/makhal.db`, dans le volume Docker `data`.
 
 ```bash
-docker compose exec api sqlite3 /data/makhal.db ".backup /data/makhal.db.bak"
+docker compose exec api python -c "import sqlite3; src=sqlite3.connect('/data/makhal.db'); dst=sqlite3.connect('/data/makhal.db.bak'); src.backup(dst); dst.close(); src.close()"
 docker compose cp api:/data/makhal.db.bak ./makhal.db.bak
 ```
+
+Note : l'image `api` est basee sur `python:3.12-slim`; elle fournit le module
+Python `sqlite3`, mais pas forcement le binaire CLI `sqlite3`.
 
 Pour la production, ajouter `-f docker-compose.yml -f docker-compose.npm.yml` aux commandes Compose.
 
@@ -79,7 +99,7 @@ docker compose up -d api
 3. Optionnel : invalider toutes les sessions existantes.
 
 ```bash
-docker compose exec api sqlite3 /data/makhal.db "DELETE FROM auth_sessions;"
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/makhal.db'); db.execute('DELETE FROM auth_sessions'); db.commit(); db.close()"
 ```
 
 ## Depannage
@@ -102,6 +122,34 @@ Verifier :
 - `SCORER_MODEL`/`OLLAMA_MODEL`;
 - logs `scorer`;
 - logs `poller` pour voir si le scoring est appele.
+
+Inspecter la queue durable implicite, c'est-a-dire les articles deja stockes
+mais sans score :
+
+```bash
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/makhal.db'); print(db.execute(\"select count(*) from articles where score is null\").fetchone()[0])"
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/makhal.db'); rows=db.execute(\"select id, created_at, title, extraction_failed from articles where score is null order by created_at desc limit 20\").fetchall(); [print(r) for r in rows]"
+```
+
+Pour distinguer un retard normal d'un echec durable :
+
+- si `poller` journalise `Article stored for durable scoring`, l'article est en
+  file et sera traite par le worker de scoring;
+- si `poller` journalise `Claimed scoring batch` puis `Scoring completed`, le
+  pipeline fonctionne;
+- si `poller` journalise `Scoring failed`, regarder `score_last_error`, l'erreur
+  HTTP/LLM dans `scorer`, et le prochain `next_score_attempt_at`;
+- si `scorer` journalise `Failed to post score to API`, verifier `API_SECRET` et
+  la route interne `/api/internal/articles/{id}/score`;
+- si les articles restent `score IS NULL` apres redemarrage, verifier
+  `/api/internal/scoring/stats` via le reseau interne ou inspecter SQLite; ne pas
+  recreer les articles a la main.
+
+Voir les versions de calibration deja persistees :
+
+```bash
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/makhal.db'); rows=db.execute(\"select json_extract(score_details_json, '$.scoring_version') as version, count(*) from articles where score is not null group by version order by version\").fetchall(); [print(r) for r in rows]"
+```
 
 ### Trop d'articles ou cout LLM trop eleve
 
@@ -134,4 +182,3 @@ Puis adapter `docker-compose.npm.yml` ou connecter MakhalReader au bon reseau ex
 - `CORS_ORIGIN` exact, sans slash final.
 - NPM pointe vers `makhal-reader-web:80`.
 - Ports `8000`, `8001`, `8002` non exposes publiquement.
-

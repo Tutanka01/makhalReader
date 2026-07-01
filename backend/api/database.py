@@ -77,9 +77,17 @@ class Article(Base):
     title_fingerprint = Column(String(16), nullable=True, index=True)
     user_feedback = Column(Integer, nullable=True)  # 1=like, -1=dislike, NULL=no feedback
     reading_time = Column(Integer, nullable=True)   # minutes, computed from word count
+    scoring_status = Column(String(16), default="queued", nullable=False)
+    score_attempts = Column(Integer, default=0, nullable=False)
+    next_score_attempt_at = Column(DateTime, nullable=True)
+    score_last_error = Column(Text, nullable=True)
+    score_locked_at = Column(DateTime, nullable=True)
+    scored_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("ix_articles_title_fp_created", "title_fingerprint", "created_at"),
+        Index("ix_articles_scoring_queue", "scoring_status", "next_score_attempt_at", "created_at"),
+        Index("ix_articles_feed_created", "feed_id", "created_at"),
     )
 
 
@@ -176,10 +184,22 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN user_feedback INTEGER",
         "ALTER TABLE articles ADD COLUMN reading_time INTEGER",
         "ALTER TABLE articles ADD COLUMN score_details_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE articles ADD COLUMN scoring_status VARCHAR(16) NOT NULL DEFAULT 'queued'",
+        "ALTER TABLE articles ADD COLUMN score_attempts INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE articles ADD COLUMN next_score_attempt_at DATETIME",
+        "ALTER TABLE articles ADD COLUMN score_last_error TEXT",
+        "ALTER TABLE articles ADD COLUMN score_locked_at DATETIME",
+        "ALTER TABLE articles ADD COLUMN scored_at DATETIME",
+        "UPDATE articles SET scoring_status = 'queued' WHERE scoring_status IS NULL",
+        "UPDATE articles SET scoring_status = 'queued' WHERE score IS NULL AND scoring_status = 'done'",
+        "UPDATE articles SET scoring_status = 'done' WHERE score IS NOT NULL AND scoring_status IN ('queued', 'processing', 'retry')",
+        "UPDATE articles SET score_attempts = 0 WHERE score_attempts IS NULL",
         "CREATE TABLE IF NOT EXISTS highlights (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE, selected_text TEXT NOT NULL, prefix_context TEXT NOT NULL DEFAULT '', suffix_context TEXT NOT NULL DEFAULT '', color VARCHAR(16) NOT NULL DEFAULT 'yellow', note TEXT, created_at DATETIME NOT NULL)",
         "CREATE INDEX IF NOT EXISTS ix_highlights_article_id ON highlights(article_id)",
         "CREATE TABLE IF NOT EXISTS briefings (id INTEGER PRIMARY KEY AUTOINCREMENT, generated_at DATETIME NOT NULL, window_start DATETIME NOT NULL, window_end DATETIME NOT NULL, model_used VARCHAR, article_count INTEGER NOT NULL DEFAULT 0, content_json TEXT NOT NULL DEFAULT '{}')",
         "CREATE INDEX IF NOT EXISTS ix_briefings_generated_at ON briefings(generated_at)",
+        "CREATE INDEX IF NOT EXISTS ix_articles_scoring_queue ON articles(scoring_status, next_score_attempt_at, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_articles_feed_created ON articles(feed_id, created_at)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

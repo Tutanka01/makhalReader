@@ -100,6 +100,10 @@ Message SSE :
 }
 ```
 
+Les evenements `new_article` sont emis apres persistance du score par la route
+interne de scoring. Un article cree mais encore `score IS NULL` ne doit pas etre
+interprete comme un nouvel article score par le flux temps reel.
+
 ## Highlights
 
 | Methode | Chemin | Description |
@@ -133,7 +137,36 @@ Ces routes doivent toujours recevoir `X-Internal-Secret: <API_SECRET>`.
 | `GET` | `/api/internal/feedback-examples` | `scorer` |
 | `GET` | `/api/internal/articles/exists` | `poller` |
 | `POST` | `/api/internal/articles` | `poller` |
+| `POST` | `/api/internal/feeds/{feed_id}/fetched` | `poller` |
+| `POST` | `/api/internal/scoring/claim` | `poller` scoring worker |
+| `POST` | `/api/internal/articles/{article_id}/score-failed` | `poller` scoring worker |
+| `GET` | `/api/internal/scoring/stats` | operations |
+| `POST` | `/api/internal/scoring/requeue-failed` | operations |
 | `POST` | `/api/internal/articles/{article_id}/score` | `scorer` |
+
+Contrats internes :
+
+- `POST /api/internal/articles` cree l'article avant le scoring et retourne
+  `{"id": ..., "created": false}` pour les doublons URL/titre recent. Les
+  nouveaux articles sont initialises avec `scoring_status="queued"`.
+- `POST /api/internal/scoring/claim` reclame un lot d'articles `queued`/`retry`
+  ou `processing` avec lock expire. La route passe les lignes en
+  `processing`, incremente `score_attempts`, pose `score_locked_at`, puis
+  retourne `{"items": [...]}`.
+- `POST /api/internal/articles/{article_id}/score-failed` nettoie le lock et
+  passe l'article en `retry` avec `next_score_attempt_at`, ou `failed` apres
+  `SCORING_MAX_ATTEMPTS`.
+- `POST /api/internal/scoring/requeue-failed?limit=100` remet des articles
+  `failed` sans score en `queued` apres correction de configuration ou de
+  modele LLM.
+- `POST /api/internal/articles/{article_id}/score` est idempotent pour le meme
+  article : il remplace `score`, `score_details_json`, `tags_json`,
+  `summary_bullets_json` et `reason`, marque `scoring_status="done"`, renseigne
+  `scored_at`, puis diffuse le SSE `new_article`.
+- `score IS NULL` est le signal d'un article non score ou a relancer. Les clients
+  ne doivent pas assimiler cette valeur a `0`.
+- Les workers doivent journaliser leurs echecs et compter sur une relance/requeue
+  plutot que recreer l'article.
 
 ## Services internes
 
@@ -143,6 +176,23 @@ Ces routes doivent toujours recevoir `X-Internal-Secret: <API_SECRET>`.
 | `scorer` | `POST` | `/score` | Score un article puis poste le resultat a l'API |
 | `scorer` | `GET` | `/health` | Sante du service scorer |
 
+Contrat `extractor /extract` :
+
+- `content_text` est le champ canonique pour scoring et recherche.
+- `content_html` est du HTML de lecture non fiable cote navigateur; il doit etre
+  rendu seulement par les composants prevus pour cela.
+- `extraction_failed=true` indique un fallback faible, pas une erreur HTTP du
+  endpoint.
+
+Contrat health/version :
+
+- `/api/health` est public et doit rester utilisable par Docker sans auth.
+- Le payload minimal historique est `{"status":"ok"}`.
+- `scorer /health` expose `scoring_version`; c'est le point rapide pour verifier
+  qu'un rebuild du scorer a bien pris le code de calibration courant.
+- Si des metadata de build/runtime sont ajoutees, les docs operations doivent
+  verifier leur coherence apres `docker compose up -d --build`.
+
 ## Routes admin
 
 | Methode | Chemin | Description |
@@ -151,4 +201,3 @@ Ces routes doivent toujours recevoir `X-Internal-Secret: <API_SECRET>`.
 | `POST` | `/api/admin/normalize-urls` | Normalise les URLs existantes et fusionne des doublons |
 
 Ces routes sont protegees par session, mais pas par role distinct. A utiliser avec prudence.
-

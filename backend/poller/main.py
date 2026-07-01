@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -24,6 +25,10 @@ MAX_NEW_PER_FEED = int(os.getenv("MAX_NEW_ARTICLES_PER_FEED", "5"))
 MAX_ARTICLE_AGE_DAYS = int(os.getenv("MAX_ARTICLE_AGE_DAYS", "7"))
 # Minimum seconds between two consecutive LLM scoring calls (global, all feeds).
 SCORE_DELAY_SECONDS = float(os.getenv("SCORE_DELAY_SECONDS", "2.0"))
+# Durable scoring worker controls how many queued articles are claimed per pass.
+SCORING_CLAIM_BATCH_SIZE = int(os.getenv("SCORING_CLAIM_BATCH_SIZE", "5"))
+SCORING_WORKER_IDLE_SECONDS = float(os.getenv("SCORING_WORKER_IDLE_SECONDS", "15"))
+SCORING_WORKER_ERROR_SECONDS = float(os.getenv("SCORING_WORKER_ERROR_SECONDS", "30"))
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
 
@@ -121,6 +126,51 @@ async def create_article(client: httpx.AsyncClient, payload: dict) -> dict:
     return resp.json()
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def mark_feed_fetched(
+    client: httpx.AsyncClient,
+    feed_id: int,
+    entry_count: int,
+    fetched_at: str,
+) -> dict:
+    resp = await client.post(
+        f"{API_BASE}/api/internal/feeds/{feed_id}/fetched",
+        json={
+            "fetched_at": fetched_at,
+            "entry_count": entry_count,
+            "status": "parsed",
+        },
+        headers=INTERNAL_HEADERS,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def claim_scoring_batch(client: httpx.AsyncClient, limit: int) -> dict | list:
+    resp = await client.post(
+        f"{API_BASE}/api/internal/scoring/claim",
+        json={"limit": limit},
+        headers=INTERNAL_HEADERS,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def report_score_failed(client: httpx.AsyncClient, article_id: int, error: str) -> dict:
+    resp = await client.post(
+        f"{API_BASE}/api/internal/articles/{article_id}/score-failed",
+        json={"error": error[:2000]},
+        headers=INTERNAL_HEADERS,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def score_article_rate_limited(
     client: httpx.AsyncClient,
     article_id: int,
@@ -142,9 +192,120 @@ async def score_article_rate_limited(
                 timeout=120,
             )
             resp.raise_for_status()
+            return resp.json()
         finally:
             # Always wait, even on error, to avoid hammering the LLM on retries.
             await asyncio.sleep(SCORE_DELAY_SECONDS)
+
+
+def claim_items_from_response(data: dict | list) -> list[dict]:
+    """Accept the planned claim response, plus common aliases during API rollout."""
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = (
+            data.get("items")
+            or data.get("articles")
+            or data.get("claimed")
+            or data.get("claims")
+            or []
+        )
+    else:
+        items = []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def compact_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response is None:
+            return str(exc)[:500]
+        response_text = exc.response.text[:500]
+        return f"HTTP {exc.response.status_code}: {response_text}"
+    return str(exc)[:500]
+
+
+def scoring_item_article_id(item: dict) -> int | None:
+    article_id = item.get("article_id", item.get("id"))
+    try:
+        return int(article_id)
+    except (TypeError, ValueError):
+        return None
+
+
+async def process_scoring_item(client: httpx.AsyncClient, item: dict):
+    article_id = scoring_item_article_id(item)
+    if article_id is None:
+        logger.warning("Skipping malformed scoring claim", item=item)
+        return
+
+    attempts = item.get("attempts", item.get("scoring_attempts"))
+    next_retry_at = item.get("next_retry_at", item.get("next_retry"))
+    log = logger.bind(article_id=article_id, attempts=attempts, next_retry_at=next_retry_at)
+
+    log.info("Scoring claimed article", status=item.get("status", "claimed"))
+    try:
+        result = await score_article_rate_limited(
+            client,
+            article_id,
+            item.get("title") or "",
+            item.get("content_text") or "",
+            item.get("rss_summary") or item.get("summary") or "",
+        )
+        log.info("Scoring completed", status=result.get("status", "ok") if isinstance(result, dict) else "ok")
+    except Exception as exc:
+        error = compact_error(exc)
+        try:
+            failure = await report_score_failed(client, article_id, error)
+        except Exception as report_exc:
+            log.error(
+                "Scoring failed and failure report failed",
+                status="report_failed",
+                error=error,
+                report_error=compact_error(report_exc),
+            )
+            return
+
+        if isinstance(failure, dict):
+            attempts = failure.get("attempts", attempts)
+            next_retry_at = failure.get("next_retry_at", failure.get("next_retry", next_retry_at))
+            status = failure.get("status", "failed")
+        else:
+            status = "failed"
+
+        log.error(
+            "Scoring failed",
+            status=status,
+            error=error,
+            attempts=attempts,
+            next_retry_at=next_retry_at,
+        )
+
+
+async def scoring_worker_loop():
+    logger.info(
+        "Scoring worker running",
+        claim_batch_size=SCORING_CLAIM_BATCH_SIZE,
+        score_delay_s=SCORE_DELAY_SECONDS,
+    )
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                claimed = await claim_scoring_batch(client, SCORING_CLAIM_BATCH_SIZE)
+                items = claim_items_from_response(claimed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Failed to claim scoring batch", error=compact_error(exc))
+                await asyncio.sleep(SCORING_WORKER_ERROR_SECONDS)
+                continue
+
+            if not items:
+                await asyncio.sleep(SCORING_WORKER_IDLE_SECONDS)
+                continue
+
+            logger.info("Claimed scoring batch", count=len(items))
+            for item in items:
+                await process_scoring_item(client, item)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +372,15 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
     all_entries = parsed.entries
     log.info(f"Feed has {len(all_entries)} entries in RSS")
+    try:
+        await mark_feed_fetched(
+            client,
+            feed_id,
+            len(all_entries),
+            datetime.now(tz=timezone.utc).isoformat(),
+        )
+    except Exception as e:
+        log.warning("Failed to mark feed fetched", feed_id=feed_id, error=str(e))
 
     # 1. Sort entries newest-first BEFORE any filtering.
     #    This is critical: it ensures MAX_NEW_PER_FEED always captures the
@@ -314,19 +484,14 @@ async def process_feed(client: httpx.AsyncClient, feed: dict):
 
         article_id = result["id"]
         new_count += 1
-        log.info("Article stored, sending to scorer", article_id=article_id, new_count=new_count)
-
-        try:
-            await score_article_rate_limited(
-                client,
-                article_id,
-                extracted.get("title") or rss_title,
-                extracted.get("content_text") or rss_summary,
-                rss_summary,
-            )
-            log.info("Article scored", article_id=article_id)
-        except Exception as e:
-            log.error("Scoring failed", article_id=article_id, error=str(e))
+        log.info(
+            "Article stored for durable scoring",
+            article_id=article_id,
+            new_count=new_count,
+            status=result.get("scoring_status", "queued"),
+            attempts=result.get("scoring_attempts"),
+            next_retry_at=result.get("scoring_next_retry_at"),
+        )
 
     log.info(f"Feed done: {new_count} new articles ingested")
 
@@ -345,8 +510,14 @@ async def poll_all_feeds():
             logger.error("Failed to fetch feeds", error=str(e))
             return
 
-        # Process feeds concurrently — scoring is serialised by _score_semaphore.
-        await asyncio.gather(*[process_feed(client, feed) for feed in feeds], return_exceptions=True)
+        # Process feeds concurrently; durable scoring runs in its own worker loop.
+        results = await asyncio.gather(
+            *[process_feed(client, feed) for feed in feeds],
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("Feed processing task failed", error=compact_error(result))
 
     logger.info("Poll cycle complete")
 
@@ -385,12 +556,18 @@ async def main():
     )
     scheduler.start()
     logger.info(f"Scheduler running, interval={FETCH_INTERVAL_MINUTES}min")
+    scoring_task = asyncio.create_task(scoring_worker_loop(), name="scoring_worker")
 
     try:
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
         scheduler.shutdown()
+        scoring_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scoring_task
 
 
 if __name__ == "__main__":
