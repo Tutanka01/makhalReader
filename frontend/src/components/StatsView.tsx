@@ -87,7 +87,7 @@ export function StatsView({ onClose }: StatsViewProps) {
       <div className="px-4 py-4 space-y-6">
 
         {/* Streak */}
-        <div className="flex items-center justify-center py-4 bg-bg-surface rounded-xl border border-border-subtle">
+        <div className="flex items-center justify-center rounded-md bg-bg-surface py-4">
           <div className="text-center">
             <div className="flex items-center justify-center gap-2 mb-1">
               <Flame className={`w-6 h-6 ${(s?.streak_days ?? 0) > 0 ? 'text-accent-yellow' : 'text-text-muted'}`} />
@@ -103,17 +103,17 @@ export function StatsView({ onClose }: StatsViewProps) {
 
         {/* Summary pills */}
         <div className="grid grid-cols-3 gap-2">
-          <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
+          <div className="rounded-md bg-bg-surface p-3 text-center">
             <BookOpen className="w-4 h-4 text-accent-blue mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">{s?.total_read ?? 0}</div>
             <div className="text-xs text-text-muted">lus</div>
           </div>
-          <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
+          <div className="rounded-md bg-bg-surface p-3 text-center">
             <Bookmark className="w-4 h-4 text-accent-blue mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">{s?.total_bookmarked ?? 0}</div>
             <div className="text-xs text-text-muted">bookmarks</div>
           </div>
-          <div className="bg-bg-surface rounded-xl border border-border-subtle p-3 text-center">
+          <div className="rounded-md bg-bg-surface p-3 text-center">
             <Star className="w-4 h-4 text-accent-yellow mx-auto mb-1" />
             <div className="text-xl font-bold text-text-primary tabular-nums">
               {s?.avg_score_read != null ? s.avg_score_read.toFixed(1) : '—'}
@@ -124,7 +124,7 @@ export function StatsView({ onClose }: StatsViewProps) {
 
         {/* Highlights count */}
         {(s?.total_highlights ?? 0) > 0 && (
-          <div className="flex items-center justify-between bg-bg-surface rounded-xl border border-border-subtle px-4 py-3">
+          <div className="flex items-center justify-between rounded-md bg-bg-surface px-4 py-3">
             <span className="text-xs text-text-secondary">Surlignages enregistrés</span>
             <span className="text-sm font-semibold text-accent-yellow">{s?.total_highlights}</span>
           </div>
@@ -133,7 +133,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         {/* 7-day bar chart */}
         <div>
           <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">7 derniers jours</h3>
-          <div className="bg-bg-surface rounded-xl border border-border-subtle p-4">
+          <div className="rounded-md bg-bg-surface p-4">
             <div className="flex items-end justify-between gap-1.5 h-20">
               {last7.map((day) => (
                 <div key={day.date} className="flex flex-col items-center flex-1 gap-1">
@@ -158,7 +158,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         {topTags.length > 0 && (
           <div>
             <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Top tags lus</h3>
-            <div className="bg-bg-surface rounded-xl border border-border-subtle p-4">
+            <div className="rounded-md bg-bg-surface p-4">
               <div className="flex flex-wrap gap-2">
                 {topTags.map((t, i) => (
                   <span
@@ -178,7 +178,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         {catEntries.length > 0 && (
           <div>
             <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Par catégorie</h3>
-            <div className="bg-bg-surface rounded-xl border border-border-subtle p-4 space-y-2.5">
+            <div className="space-y-2.5 rounded-md bg-bg-surface p-4">
               {catEntries.map(([cat, count]) => (
                 <div key={cat} className="flex items-center gap-3">
                   <span className="text-xs text-text-secondary w-24 flex-shrink-0 truncate">{cat}</span>

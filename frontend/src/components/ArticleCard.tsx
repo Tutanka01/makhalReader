@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Bookmark, BookmarkCheck } from 'lucide-react'
+import { fr } from 'date-fns/locale'
+import { AlertTriangle, Bookmark, BookmarkCheck, ThumbsDown, ThumbsUp } from 'lucide-react'
 import type { ArticleListItem } from '../types'
-import { ScoreBar } from './ScoreBar'
 import { ReadTimeBadge } from './ReadTimeBadge'
 import { useArticlesStore } from '../store/articles'
+import { ScoreBadge } from './ui'
 
 interface ArticleCardProps {
   article: ArticleListItem
@@ -51,20 +52,20 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
   }
 
   const relativeDate = article.published_at
-    ? formatDistanceToNow(new Date(article.published_at), { addSuffix: true })
-    : formatDistanceToNow(new Date(article.created_at), { addSuffix: true })
+    ? formatDistanceToNow(new Date(article.published_at), { addSuffix: true, locale: fr })
+    : formatDistanceToNow(new Date(article.created_at), { addSuffix: true, locale: fr })
 
   const isRead = Boolean(article.read_at)
 
   return (
     <div
       className={`
-        relative overflow-hidden cursor-pointer select-none
+        group relative cursor-pointer select-none overflow-hidden
         border-b border-border-subtle
-        transition-colors duration-150
+        transition-all duration-150
         ${selected
-          ? 'bg-bg-elevated border-l-2 border-l-accent-blue'
-          : 'hover:bg-bg-hover'
+          ? 'bg-accent-blue/8 shadow-[inset_3px_0_0_var(--color-accent-blue)]'
+          : 'hover:bg-bg-hover/80'
         }
         ${isRead ? 'opacity-60' : ''}
       `}
@@ -90,27 +91,20 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         </div>
       )}
 
-      <div className="p-3">
-        <ScoreBar score={article.score} />
-
-        {/* Tags */}
-        {article.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-2">
-            {article.tags.slice(0, 3).map(tag => (
-              <span
-                key={tag}
-                className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs text-text-muted font-medium"
-              >
-                {tag}
-              </span>
-            ))}
+      <div className="p-3.5">
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <div className="min-w-0 text-[11px] leading-5 text-text-muted">
+            <span className="font-semibold text-text-secondary">{article.feed_name}</span>
+            <span className="px-1.5 text-border-default">/</span>
+            <span>{relativeDate}</span>
           </div>
-        )}
+          <ScoreBadge score={article.score} compact />
+        </div>
 
         {/* Title */}
         <h3
           className={`
-            text-sm font-semibold leading-snug mb-1 line-clamp-2
+            mb-2 line-clamp-2 text-[15px] font-semibold leading-snug
             ${isRead ? 'text-text-secondary' : 'text-text-primary'}
           `}
         >
@@ -119,36 +113,48 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
 
         {/* Summary bullets */}
         {article.summary_bullets.length > 0 && (
-          <ul className="mb-2 space-y-0.5">
+          <ul className="mb-2.5 space-y-1">
             {article.summary_bullets.slice(0, 2).map((bullet, i) => (
-              <li key={i} className="text-xs text-text-secondary leading-relaxed flex gap-1">
-                <span className="text-text-muted flex-shrink-0">•</span>
+              <li key={i} className="flex gap-1.5 text-xs leading-relaxed text-text-secondary">
+                <span className="mt-[0.55em] h-1 w-1 flex-shrink-0 rounded-full bg-accent-blue/70" />
                 <span className="line-clamp-1">{bullet}</span>
               </li>
             ))}
           </ul>
         )}
 
+        {/* Tags */}
+        {article.tags.length > 0 && (
+          <div className="mb-2.5 flex flex-wrap gap-1">
+            {article.tags.slice(0, 4).map(tag => (
+              <span
+                key={tag}
+                className="rounded bg-bg-elevated/80 px-1.5 py-0.5 text-[10px] font-medium text-text-muted"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Meta */}
-        <div className="flex items-center justify-between mt-1">
+        <div className="mt-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-text-muted min-w-0">
-            <span className="truncate font-medium">{article.feed_name}</span>
-            <span className="flex-shrink-0">·</span>
-            <span className="flex-shrink-0">{relativeDate}</span>
             <ReadTimeBadge minutes={article.reading_time} />
+            {isRead && <span className="rounded bg-bg-elevated/80 px-1.5 py-0.5 text-[10px]">Lu</span>}
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
             {article.user_feedback === 1 && (
-              <span className="text-xs text-accent-green" title="Liked">👍</span>
+              <ThumbsUp className="h-3.5 w-3.5 text-accent-green" />
             )}
             {article.user_feedback === -1 && (
-              <span className="text-xs text-red-400" title="Disliked">👎</span>
+              <ThumbsDown className="h-3.5 w-3.5 text-accent-red" />
             )}
             {article.bookmarked && (
               <BookmarkCheck className="w-3.5 h-3.5 text-accent-blue" />
             )}
             {article.extraction_failed && (
-              <span className="text-xs text-accent-yellow" title="Extraction failed">⚠</span>
+              <AlertTriangle className="h-3.5 w-3.5 text-accent-yellow" />
             )}
           </div>
         </div>

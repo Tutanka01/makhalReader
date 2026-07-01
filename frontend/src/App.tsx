@@ -10,6 +10,8 @@ import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import type { Feed } from './types'
+import { Inbox, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { IconButton, Kbd } from './components/ui'
 
 type AppView = 'briefing' | 'feed' | 'stats'
 
@@ -175,7 +177,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           onClick={() => setShowHelp(false)}
         >
           <div
-            className="bg-bg-surface border border-border-default rounded-2xl p-6 w-80 shadow-2xl"
+            className="bg-bg-surface rounded-2xl p-6 w-80 shadow-2xl"
             onClick={e => e.stopPropagation()}
           >
             <h2 className="text-sm font-semibold text-text-primary mb-4 text-center tracking-wide">Raccourcis clavier</h2>
@@ -192,9 +194,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center justify-between">
                   <span className="text-xs text-text-muted">{desc}</span>
-                  <kbd className="px-2 py-0.5 bg-bg-elevated rounded text-xs font-mono text-text-secondary border border-border-subtle">
-                    {key}
-                  </kbd>
+                  <Kbd>{key}</Kbd>
                 </div>
               ))}
             </div>
@@ -305,39 +305,29 @@ function EmptyReaderState({
     <div className="flex flex-col h-full">
       {/* Toolbar stub to align with ReaderView toolbar */}
       <div className="flex items-center px-3 py-3 border-b border-border-subtle bg-bg-surface flex-shrink-0">
-        <button
+        <IconButton
           onClick={onToggleSidebar}
-          className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
-          title={sidebarOpen ? 'Hide sidebar  [' : 'Show sidebar  ['}
-        >
-          {sidebarOpen ? (
-            // PanelLeftClose
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>
-            </svg>
-          ) : (
-            // PanelLeftOpen
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>
-            </svg>
-          )}
-        </button>
+          icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
+          label={sidebarOpen ? 'Masquer la sidebar  [' : 'Afficher la sidebar  ['}
+        />
       </div>
       <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
-        <div className="text-5xl mb-4 opacity-30">◉</div>
-        <h2 className="text-base font-semibold text-text-secondary mb-1">
-          Select an article
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-md bg-bg-surface text-accent-blue">
+          <Inbox className="h-6 w-6" />
+        </div>
+        <h2 className="text-base font-semibold text-text-primary mb-1">
+          Sélectionne un article
         </h2>
         <p className="text-xs text-text-muted max-w-xs leading-relaxed">
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">j</kbd>
+          <Kbd>j</Kbd>
           {' / '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">k</kbd>
-          {' '}navigate{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">r</kbd>
-          {' '}read{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">b</kbd>
-          {' '}bookmark{'  ·  '}
-          <kbd className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs font-mono">[</kbd>
+          <Kbd>k</Kbd>
+          {' '}naviguer{'  ·  '}
+          <Kbd>r</Kbd>
+          {' '}lu{'  ·  '}
+          <Kbd>b</Kbd>
+          {' '}favori{'  ·  '}
+          <Kbd>[</Kbd>
           {' '}sidebar
         </p>
       </div>

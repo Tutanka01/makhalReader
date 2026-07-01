@@ -74,7 +74,7 @@ export function BriefingView({ onOpen, sidebarOpen, onToggleSidebar, onBack, mod
 function EmptyState({ status, onGenerate }: { status: 'empty' | 'error'; onGenerate: () => void }) {
   return (
     <div className="mx-auto flex max-w-sm flex-col items-center justify-center py-24 text-center">
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-md border border-border-default bg-bg-surface text-accent-blue">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-bg-surface text-accent-blue">
         <Sparkles className="h-5 w-5" />
       </div>
       <h2 className="text-base font-semibold text-text-primary">

@@ -86,7 +86,7 @@ function DetailPane({
   if (selectedId === null) {
     return (
       <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center">
-        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-border-default bg-bg-surface text-accent-blue">
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-bg-surface text-accent-blue">
           <Sparkles className="h-4 w-4" />
         </div>
         <p className="text-xs leading-relaxed text-text-muted">

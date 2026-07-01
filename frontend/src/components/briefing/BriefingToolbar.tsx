@@ -1,4 +1,5 @@
-import { ArrowLeft, CalendarDays, RefreshCw, Sparkles } from 'lucide-react'
+import { ArrowLeft, CalendarDays, PanelLeftClose, PanelLeftOpen, RefreshCw, Sparkles } from 'lucide-react'
+import { IconButton } from '../ui'
 
 type Mode = 'live' | 'history'
 
@@ -25,25 +26,22 @@ export function BriefingToolbar({
   onToggleMode,
 }: Props) {
   return (
-    <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3 py-2">
+    <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface/95 px-3 py-2">
       <div className="flex items-center gap-1">
         {onToggleSidebar && (
-          <button
+          <IconButton
             onClick={onToggleSidebar}
-            className="hidden p-1.5 rounded-lg text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary lg:flex"
-            title={sidebarOpen ? 'Hide sidebar  [' : 'Show sidebar  ['}
-          >
-            {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
-          </button>
+            icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
+            label={sidebarOpen ? 'Masquer la sidebar  [' : 'Afficher la sidebar  ['}
+            className="hidden lg:inline-flex"
+          />
         )}
         {onBack && (
-          <button
+          <IconButton
             onClick={onBack}
-            className="p-1.5 rounded-lg text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-            aria-label="Retour aux articles"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
+            icon={ArrowLeft}
+            label="Retour aux articles"
+          />
         )}
         <span className="ml-1 flex items-center gap-1.5 text-sm font-semibold text-text-primary">
           <Sparkles className="h-3.5 w-3.5 text-accent-blue" />
@@ -76,28 +74,5 @@ export function BriefingToolbar({
         )}
       </div>
     </div>
-  )
-}
-
-// Mirrors the inline panel icons used by ReaderView's toolbar for visual consistency.
-function PanelLeftCloseIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2"/>
-      <path d="M9 3v18"/>
-      <path d="m16 15-3-3 3-3"/>
-    </svg>
-  )
-}
-
-function PanelLeftOpenIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2"/>
-      <path d="M9 3v18"/>
-      <path d="m14 9 3 3-3 3"/>
-    </svg>
   )
 }
