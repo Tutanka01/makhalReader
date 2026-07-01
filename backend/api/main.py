@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -49,6 +49,9 @@ from models import (
     HighlightOut,
     HighlightUpdate,
     InternalArticleCreate,
+    InternalFeedFetched,
+    InternalScoreFailure,
+    InternalScoringClaimRequest,
     InternalScoreUpdate,
     StatsOut,
     TagFrequency,
@@ -57,6 +60,10 @@ from models import (
 API_SECRET = os.getenv("API_SECRET", "changeme")
 MAX_ARTICLES_PER_FEED = int(os.getenv("MAX_ARTICLES_PER_FEED", "200"))
 ARTICLE_RETENTION_DAYS = int(os.getenv("ARTICLE_RETENTION_DAYS", "90"))
+SCORING_MAX_ATTEMPTS = int(os.getenv("SCORING_MAX_ATTEMPTS", "5"))
+SCORING_LOCK_TIMEOUT_MINUTES = int(os.getenv("SCORING_LOCK_TIMEOUT_MINUTES", "20"))
+SCORING_RETRY_BASE_MINUTES = int(os.getenv("SCORING_RETRY_BASE_MINUTES", "5"))
+SCORING_RETRY_MAX_MINUTES = int(os.getenv("SCORING_RETRY_MAX_MINUTES", "360"))
 
 # LLM config (shared with scorer service)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -330,7 +337,7 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/auth/login")
-async def login(body: LoginRequest, request: Request, response: Response):
+def login(body: LoginRequest, request: Request, response: Response):
     ip = _client_ip(request)
     _check_rate_limit(ip)
 
@@ -348,7 +355,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
 
 @app.post("/auth/logout")
-async def logout(request: Request, response: Response):
+def logout(request: Request, response: Response):
     token = request.cookies.get(COOKIE_NAME)
     if token:
         delete_session(token)
@@ -357,7 +364,7 @@ async def logout(request: Request, response: Response):
 
 
 @app.get("/auth/status")
-async def auth_status(request: Request):
+def auth_status(request: Request):
     from auth import validate_session
     token = request.cookies.get(COOKIE_NAME)
     if not token or not validate_session(token):
@@ -471,6 +478,10 @@ def _row_to_list_item(row) -> ArticleListItem:
         feed_category=feed_category or "",
         user_feedback=article.user_feedback,
         reading_time=article.reading_time,
+        scoring_status=article.scoring_status or ("done" if article.score is not None else "queued"),
+        score_attempts=article.score_attempts or 0,
+        next_score_attempt_at=article.next_score_attempt_at,
+        scored_at=article.scored_at,
     )
 
 
@@ -794,7 +805,7 @@ async def _broadcast_briefing(briefing: "Briefing"):
 
 
 @app.get("/api/internal/feeds")
-async def internal_list_feeds(
+def internal_list_feeds(
     x_internal_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
@@ -814,7 +825,7 @@ async def internal_list_feeds(
 
 
 @app.get("/api/internal/feedback-examples")
-async def internal_feedback_examples(
+def internal_feedback_examples(
     x_internal_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
@@ -889,7 +900,7 @@ async def internal_feedback_examples(
 
 
 @app.get("/api/internal/articles/exists")
-async def internal_article_exists(
+def internal_article_exists(
     url: str = Query(...),
     x_internal_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -900,8 +911,32 @@ async def internal_article_exists(
     return {"exists": exists}
 
 
+@app.post("/api/internal/feeds/{feed_id}/fetched")
+def internal_mark_feed_fetched(
+    feed_id: int,
+    fetched: InternalFeedFetched,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    feed = db.query(Feed).filter(Feed.id == feed_id).first()
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+
+    feed.last_fetched = fetched.fetched_at or datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "status": "ok",
+        "feed_id": feed.id,
+        "last_fetched": feed.last_fetched.isoformat() if feed.last_fetched else None,
+        "entry_count": fetched.entry_count,
+    }
+
+
 @app.post("/api/internal/articles")
-async def internal_create_article(
+def internal_create_article(
     article_data: InternalArticleCreate,
     x_internal_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -944,11 +979,181 @@ async def internal_create_article(
         created_at=datetime.now(timezone.utc),
         title_fingerprint=fp,
         reading_time=article_data.reading_time,
+        scoring_status="queued",
+        score_attempts=0,
     )
     db.add(article)
     db.commit()
     db.refresh(article)
-    return {"id": article.id, "created": True}
+    return {
+        "id": article.id,
+        "created": True,
+        "scoring_status": article.scoring_status,
+        "scoring_attempts": article.score_attempts,
+        "scoring_next_retry_at": article.next_score_attempt_at.isoformat() if article.next_score_attempt_at else None,
+    }
+
+
+def _score_retry_delay(attempts: int) -> timedelta:
+    attempts = max(1, attempts)
+    minutes = min(
+        SCORING_RETRY_BASE_MINUTES * (2 ** (attempts - 1)),
+        SCORING_RETRY_MAX_MINUTES,
+    )
+    return timedelta(minutes=minutes)
+
+
+def _score_claim_payload(article: Article) -> dict:
+    return {
+        "article_id": article.id,
+        "id": article.id,
+        "title": article.title,
+        "content_text": article.content_text or "",
+        "rss_summary": "",
+        "status": article.scoring_status,
+        "attempts": article.score_attempts or 0,
+        "next_retry_at": article.next_score_attempt_at.isoformat() if article.next_score_attempt_at else None,
+        "created_at": article.created_at.isoformat() if article.created_at else None,
+    }
+
+
+@app.post("/api/internal/scoring/claim")
+def internal_claim_scoring_batch(
+    claim: InternalScoringClaimRequest,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    now = datetime.now(timezone.utc)
+    stale_lock_cutoff = now - timedelta(minutes=SCORING_LOCK_TIMEOUT_MINUTES)
+    eligible = or_(
+        Article.scoring_status.is_(None),
+        Article.scoring_status.in_(("queued", "retry")),
+        and_(
+            Article.scoring_status == "processing",
+            Article.score_locked_at.isnot(None),
+            Article.score_locked_at < stale_lock_cutoff,
+        ),
+    )
+    due = or_(Article.next_score_attempt_at.is_(None), Article.next_score_attempt_at <= now)
+
+    articles = (
+        db.query(Article)
+        .filter(Article.score.is_(None), eligible, due)
+        .order_by(Article.score_attempts.asc(), Article.created_at.asc())
+        .limit(claim.limit)
+        .all()
+    )
+
+    for article in articles:
+        article.scoring_status = "processing"
+        article.score_attempts = (article.score_attempts or 0) + 1
+        article.score_locked_at = now
+        article.next_score_attempt_at = None
+        article.score_last_error = None
+
+    db.commit()
+    for article in articles:
+        db.refresh(article)
+
+    return {"items": [_score_claim_payload(article) for article in articles]}
+
+
+@app.post("/api/internal/articles/{article_id}/score-failed")
+def internal_score_article_failed(
+    article_id: int,
+    failure: InternalScoreFailure,
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    now = datetime.now(timezone.utc)
+    attempts = max(article.score_attempts or 1, 1)
+    article.score_last_error = failure.error or "Scoring failed"
+    article.score_locked_at = None
+
+    if attempts >= SCORING_MAX_ATTEMPTS:
+        article.scoring_status = "failed"
+        article.next_score_attempt_at = None
+    else:
+        article.scoring_status = "retry"
+        article.next_score_attempt_at = now + _score_retry_delay(attempts)
+
+    db.commit()
+    return {
+        "status": article.scoring_status,
+        "attempts": attempts,
+        "next_retry_at": article.next_score_attempt_at.isoformat() if article.next_score_attempt_at else None,
+        "max_attempts": SCORING_MAX_ATTEMPTS,
+    }
+
+
+@app.get("/api/internal/scoring/stats")
+def internal_scoring_stats(
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    status_rows = (
+        db.query(Article.scoring_status, func.count(Article.id))
+        .group_by(Article.scoring_status)
+        .all()
+    )
+    by_status = {(status or "queued"): count for status, count in status_rows}
+    unscored = db.query(Article).filter(Article.score.is_(None)).count()
+    ready = (
+        db.query(Article)
+        .filter(
+            Article.score.is_(None),
+            Article.scoring_status.in_(("queued", "retry")),
+            or_(Article.next_score_attempt_at.is_(None), Article.next_score_attempt_at <= datetime.now(timezone.utc)),
+        )
+        .count()
+    )
+    return {
+        "total": db.query(Article).count(),
+        "unscored": unscored,
+        "ready": ready,
+        "by_status": by_status,
+        "max_attempts": SCORING_MAX_ATTEMPTS,
+    }
+
+
+@app.post("/api/internal/scoring/requeue-failed")
+def internal_requeue_failed_scoring(
+    limit: int = Query(100, ge=1, le=1000),
+    x_internal_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    articles = (
+        db.query(Article)
+        .filter(Article.score.is_(None), Article.scoring_status == "failed")
+        .order_by(Article.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+    for article in articles:
+        article.scoring_status = "queued"
+        article.score_attempts = 0
+        article.next_score_attempt_at = None
+        article.score_last_error = None
+        article.score_locked_at = None
+
+    db.commit()
+    return {"status": "ok", "requeued": len(articles)}
 
 
 @app.delete("/api/admin/articles/broken")
@@ -1411,6 +1616,11 @@ async def internal_score_article(
     article.tags_json = json.dumps(score_data.tags)
     article.summary_bullets_json = json.dumps(score_data.summary_bullets)
     article.reason = score_data.reason
+    article.scoring_status = "done"
+    article.next_score_attempt_at = None
+    article.score_last_error = None
+    article.score_locked_at = None
+    article.scored_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(article)
 
@@ -1435,6 +1645,9 @@ async def internal_score_article(
         "feed_category": feed.category if feed else "",
         "user_feedback": article.user_feedback,
         "reading_time": article.reading_time,
+        "scoring_status": article.scoring_status,
+        "score_attempts": article.score_attempts,
+        "scored_at": article.scored_at.isoformat() if article.scored_at else None,
     }
     await _broadcast_new_article(article_dict)
 

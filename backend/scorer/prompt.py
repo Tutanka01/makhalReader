@@ -64,3 +64,28 @@ Return exactly this JSON shape:
   "summary_bullets": ["2 to 3 short factual bullets grounded in the article"],
   "reason": "one concise sentence explaining the strongest positive signal and the main limitation"
 }"""
+
+
+JSON_RETRY_PROMPT = """You are MakhalReader's scoring repair pass.
+
+The previous response was malformed, incomplete, or not valid JSON.
+Return one valid JSON object only. No markdown, no prose outside JSON.
+
+Use the article context and the previous malformed response as evidence. If the
+article context is thin or the malformed response is ambiguous, choose
+conservative axis values and lower confidence.
+
+Return exactly this JSON shape:
+{
+  "topic_fit": 0.0,
+  "technical_depth": 0.0,
+  "operational_value": 0.0,
+  "strategic_value": 0.0,
+  "novelty": 0.0,
+  "noise_penalty": 0.0,
+  "confidence": 0.0,
+  "content_type": "release",
+  "tags": ["1 to 5 precise English technical tags"],
+  "summary_bullets": ["2 to 3 short factual bullets grounded in the article"],
+  "reason": "one concise sentence explaining the strongest positive signal and the main limitation"
+}"""

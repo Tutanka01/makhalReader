@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -7,15 +9,18 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from prompt import SYSTEM_PROMPT
+from prompt import JSON_RETRY_PROMPT, SYSTEM_PROMPT
 
 app = FastAPI(title="MakhalReader Scorer")
+
+SCORING_VERSION = 3
 
 # Generic OpenAI-compatible endpoint (highest priority when set): point it at any
 # OpenAI-compatible server (vLLM, llama.cpp, LM Studio, Groq, Together, OpenAI…).
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").strip()
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+LLM_DISABLE_FALLBACK = os.getenv("LLM_DISABLE_FALLBACK", "").strip().lower() in {"1", "true", "yes", "on"}
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
@@ -30,6 +35,8 @@ def _chat_completions_url(base: str) -> str:
     if base.endswith("/chat/completions"):
         return base
     return f"{base}/chat/completions"
+
+
 API_SECRET = os.getenv("API_SECRET", "changeme")
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
@@ -48,6 +55,206 @@ NUMERIC_FIELDS = AXIS_FIELDS | {"confidence"}
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def provider_metadata(
+    provider: str,
+    model: str,
+    *,
+    response_model: Optional[str] = None,
+    finish_reason: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> dict[str, str]:
+    metadata = {
+        "provider": provider,
+        "provider_model": response_model or model or "unknown",
+    }
+    if model and response_model and response_model != model:
+        metadata["provider_configured_model"] = model
+    if finish_reason:
+        metadata["provider_finish_reason"] = finish_reason
+    if base_url:
+        metadata["provider_base_url"] = base_url
+    return metadata
+
+
+def add_provider_metadata(result: ScoreResult, metadata: dict[str, str]) -> ScoreResult:
+    result.score_details.update(metadata)
+    return result
+
+
+def normalize_llm_content(content: Any) -> Optional[str]:
+    """Normalize common chat content shapes into text without raising."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        for key in ("text", "content"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+        return json.dumps(content)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "content"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+                        break
+        text = "\n".join(part for part in parts if part.strip()).strip()
+        return text or None
+    return None
+
+
+def parse_response_json(provider: str, resp: httpx.Response) -> Optional[dict]:
+    try:
+        data = resp.json()
+    except Exception as e:
+        print(f"{provider}: response was not valid JSON: {e}; body={resp.text[:300]}")
+        return None
+    if not isinstance(data, dict):
+        print(f"{provider}: response JSON was not an object: {str(data)[:300]}")
+        return None
+    return data
+
+
+def extract_openai_chat_content(data: dict, provider: str, configured_model: str = "") -> tuple[Optional[str], dict[str, str]]:
+    response_model = data.get("model") if isinstance(data.get("model"), str) else None
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        print(f"{provider}: malformed response without choices: {str(data)[:300]}")
+        return None, provider_metadata(provider, configured_model, response_model=response_model)
+
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        print(f"{provider}: malformed first choice: {str(choice)[:300]}")
+        return None, provider_metadata(provider, configured_model, response_model=response_model)
+
+    finish_reason = choice.get("finish_reason") if isinstance(choice.get("finish_reason"), str) else None
+    message = choice.get("message")
+    content = message.get("content") if isinstance(message, dict) else choice.get("text")
+    normalized = normalize_llm_content(content)
+    metadata = provider_metadata(provider, configured_model, response_model=response_model, finish_reason=finish_reason)
+    if normalized is None:
+        print(f"{provider}: response content was not usable text: {str(content)[:300]}")
+    return normalized, metadata
+
+
+def extract_ollama_chat_content(data: dict) -> tuple[Optional[str], dict[str, str]]:
+    response_model = data.get("model") if isinstance(data.get("model"), str) else OLLAMA_MODEL
+    message = data.get("message")
+    content = message.get("content") if isinstance(message, dict) else data.get("response")
+    normalized = normalize_llm_content(content)
+    metadata = provider_metadata("Ollama", OLLAMA_MODEL, response_model=response_model)
+    if normalized is None:
+        print(f"Ollama: response content was not usable text: {str(content)[:300]}")
+    return normalized, metadata
+
+
+def build_retry_message(user_message: str, bad_content: str) -> str:
+    clipped_bad_content = bad_content.strip()[:1800]
+    return (
+        f"{user_message}\n\n"
+        "Previous malformed response to repair or replace:\n"
+        f"{clipped_bad_content or '(empty response)'}"
+    )
+
+
+async def post_openai_chat(
+    client: httpx.AsyncClient,
+    *,
+    provider: str,
+    url: str,
+    headers: dict[str, str],
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    timeout: float,
+) -> Optional[dict]:
+    try:
+        resp = await client.post(
+            url,
+            headers=headers,
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 1200,
+            },
+            timeout=timeout,
+        )
+    except Exception as e:
+        print(f"{provider} scoring request failed: {e}")
+        return None
+
+    if not resp.is_success:
+        print(f"{provider} error {resp.status_code}: {resp.text[:500]}")
+        return None
+    return parse_response_json(provider, resp)
+
+
+async def score_openai_chat_provider(
+    client: httpx.AsyncClient,
+    *,
+    provider: str,
+    url: str,
+    headers: dict[str, str],
+    model: str,
+    user_message: str,
+    article_words: int,
+    summary_words: int,
+    timeout: float = 60,
+    base_url: Optional[str] = None,
+) -> Optional[ScoreResult]:
+    data = await post_openai_chat(
+        client,
+        provider=provider,
+        url=url,
+        headers=headers,
+        model=model,
+        system_prompt=SYSTEM_PROMPT,
+        user_message=user_message,
+        timeout=timeout,
+    )
+    if not data:
+        return None
+
+    content, metadata = extract_openai_chat_content(data, provider, model)
+    if base_url:
+        metadata["provider_base_url"] = base_url
+    if not content:
+        return None
+
+    result = build_result_from_llm_content(provider, content, article_words, summary_words, metadata)
+    if result is not None:
+        return result
+
+    retry_data = await post_openai_chat(
+        client,
+        provider=f"{provider} JSON retry",
+        url=url,
+        headers=headers,
+        model=model,
+        system_prompt=JSON_RETRY_PROMPT,
+        user_message=build_retry_message(user_message, content),
+        timeout=timeout,
+    )
+    if not retry_data:
+        return None
+
+    retry_content, retry_metadata = extract_openai_chat_content(retry_data, provider, model)
+    if base_url:
+        retry_metadata["provider_base_url"] = base_url
+    retry_metadata["provider_retry"] = "json-only"
+    if not retry_content:
+        return None
+    return build_result_from_llm_content(provider, retry_content, article_words, summary_words, retry_metadata)
 
 
 class ScoreRequest(BaseModel):
@@ -165,11 +372,45 @@ def json_candidates(text: str) -> list[str]:
         else:
             candidates.append(text[first_brace:].strip())
 
+    candidates.extend(balanced_json_objects(text))
+
     unique: list[str] = []
     for candidate in candidates:
         if candidate and candidate not in unique:
             unique.append(candidate)
     return unique
+
+
+def balanced_json_objects(text: str) -> list[str]:
+    objects: list[str] = []
+    start: Optional[int] = None
+    depth = 0
+    in_string = False
+    escape = False
+
+    for idx, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                objects.append(text[start : idx + 1].strip())
+                start = None
+
+    return objects
 
 
 def extract_partial_analysis(text: str) -> Optional[dict]:
@@ -355,7 +596,7 @@ def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int
         "summary_words": summary_words,
         "caps": caps,
         "adjustments": adjustments,
-        "scoring_version": 3,
+        "scoring_version": SCORING_VERSION,
     }
     return ScoreResult(
         score=score,
@@ -371,6 +612,7 @@ def build_result_from_llm_content(
     content: str,
     article_words: int,
     summary_words: int,
+    metadata: Optional[dict[str, str]] = None,
 ) -> Optional[ScoreResult]:
     parsed = extract_json_from_text(content)
     if not parsed:
@@ -378,7 +620,10 @@ def build_result_from_llm_content(
         return None
 
     try:
-        return build_result(validate_analysis(parsed), article_words, summary_words)
+        result = build_result(validate_analysis(parsed), article_words, summary_words)
+        if metadata:
+            add_provider_metadata(result, metadata)
+        return result
     except Exception as e:
         print(f"{provider}: invalid score payload after JSON parse: {e}; response={content[:300]}")
         return None
@@ -398,31 +643,18 @@ async def score_with_openai_compatible(
     if LLM_API_KEY:
         headers["Authorization"] = f"Bearer {LLM_API_KEY}"
 
-    try:
-        resp = await client.post(
-            _chat_completions_url(LLM_BASE_URL),
-            headers=headers,
-            json={
-                "model": LLM_MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.0,
-                "max_tokens": 1200,
-            },
-            timeout=60,
-        )
-        if not resp.is_success:
-            print(f"OpenAI-compatible endpoint error {resp.status_code}: {resp.text[:500]}")
-            return None
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return build_result_from_llm_content("OpenAI-compatible", content, article_words, summary_words)
-    except Exception as e:
-        print(f"OpenAI-compatible scoring failed: {e}")
-
-    return None
+    return await score_openai_chat_provider(
+        client,
+        provider="OpenAI-compatible",
+        url=_chat_completions_url(LLM_BASE_URL),
+        headers=headers,
+        model=LLM_MODEL,
+        user_message=user_message,
+        article_words=article_words,
+        summary_words=summary_words,
+        timeout=60,
+        base_url=LLM_BASE_URL,
+    )
 
 
 async def score_with_openrouter(
@@ -434,36 +666,22 @@ async def score_with_openrouter(
     if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.startswith("sk-"):
         return None
 
-    try:
-        resp = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/makhalreader",
-                "X-Title": "MakhalReader",
-            },
-            json={
-                "model": SCORER_MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.0,
-                "max_tokens": 1200,
-            },
-            timeout=60,
-        )
-        if not resp.is_success:
-            print(f"OpenRouter error {resp.status_code}: {resp.text[:500]}")
-            return None
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return build_result_from_llm_content("OpenRouter", content, article_words, summary_words)
-    except Exception as e:
-        print(f"OpenRouter scoring failed: {e}")
-
-    return None
+    return await score_openai_chat_provider(
+        client,
+        provider="OpenRouter",
+        url="https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/makhalreader",
+            "X-Title": "MakhalReader",
+        },
+        model=SCORER_MODEL,
+        user_message=user_message,
+        article_words=article_words,
+        summary_words=summary_words,
+        timeout=60,
+    )
 
 
 async def score_with_ollama(
@@ -496,9 +714,50 @@ async def score_with_ollama(
         if not resp.is_success:
             print(f"Ollama error {resp.status_code}: {resp.text[:300]}")
             return None
-        data = resp.json()
-        content = data["message"]["content"]
-        return build_result_from_llm_content("Ollama", content, article_words, summary_words)
+        data = parse_response_json("Ollama", resp)
+        if not data:
+            return None
+        content, metadata = extract_ollama_chat_content(data)
+        if not content:
+            return None
+        result = build_result_from_llm_content("Ollama", content, article_words, summary_words, metadata)
+        if result is not None:
+            return result
+
+        retry_resp = await client.post(
+            f"{OLLAMA_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": JSON_RETRY_PROMPT},
+                    {"role": "user", "content": build_retry_message(user_message, content)},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": 900,
+                },
+            },
+            timeout=120,
+        )
+        if not retry_resp.is_success:
+            print(f"Ollama JSON retry error {retry_resp.status_code}: {retry_resp.text[:300]}")
+            return None
+        retry_data = parse_response_json("Ollama JSON retry", retry_resp)
+        if not retry_data:
+            return None
+        retry_content, retry_metadata = extract_ollama_chat_content(retry_data)
+        retry_metadata["provider_retry"] = "json-only"
+        if not retry_content:
+            return None
+        return build_result_from_llm_content(
+            "Ollama",
+            retry_content,
+            article_words,
+            summary_words,
+            retry_metadata,
+        )
     except Exception as e:
         print(f"Ollama scoring failed: {e}")
 
@@ -582,14 +841,16 @@ async def score_article(req: ScoreRequest):
         user_message, article_words, summary_words = build_user_message(req, preference_block)
 
         if LLM_BASE_URL:
-            # Explicit OpenAI-compatible endpoint — used exclusively, no fallback.
             result = await score_with_openai_compatible(client, user_message, article_words, summary_words)
-        else:
+
+        if result is None and not (LLM_BASE_URL and LLM_DISABLE_FALLBACK):
             if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
                 result = await score_with_openrouter(client, user_message, article_words, summary_words)
 
             if result is None:
                 result = await score_with_ollama(client, user_message, article_words, summary_words)
+        elif result is None:
+            print("Scoring fallback disabled by LLM_DISABLE_FALLBACK after LLM_BASE_URL failure.")
 
         if result is None:
             raise HTTPException(
@@ -620,7 +881,11 @@ async def score_article(req: ScoreRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "scoring_version": SCORING_VERSION,
+        "llm_fallback_disabled": LLM_DISABLE_FALLBACK,
+    }
 
 
 if __name__ == "__main__":

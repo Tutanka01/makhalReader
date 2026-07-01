@@ -162,13 +162,16 @@ All state lives in SQLite under the Docker volume mounted at `/data`.
 
 ```bash
 # Backup
-docker compose exec api sqlite3 /data/makhal.db ".backup /data/makhal.db.bak"
+docker compose exec api python -c "import sqlite3; src=sqlite3.connect('/data/makhal.db'); dst=sqlite3.connect('/data/makhal.db.bak'); src.backup(dst); dst.close(); src.close()"
 docker compose cp api:/data/makhal.db.bak ./makhal.db.bak
 
 # Restore
 docker compose cp ./makhal.db.bak api:/data/makhal.db
 docker compose restart api
 ```
+
+The `api` image is based on `python:3.12-slim`; use Python's `sqlite3` module
+unless the image is explicitly changed to install the `sqlite3` CLI.
 
 For production, use the same commands with `-f docker-compose.yml -f docker-compose.npm.yml`.
 
@@ -185,7 +188,7 @@ docker compose up -d api
 To invalidate all active sessions:
 
 ```bash
-docker compose exec api sqlite3 /data/makhal.db "DELETE FROM auth_sessions;"
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/makhal.db'); db.execute('DELETE FROM auth_sessions'); db.commit(); db.close()"
 ```
 
 ---
