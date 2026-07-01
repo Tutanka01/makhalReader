@@ -1,4 +1,4 @@
-import { Bookmark } from 'lucide-react'
+import { Bookmark, Library } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 
@@ -9,8 +9,8 @@ interface CategoryTabsProps {
 export function CategoryTabs({ feeds }: CategoryTabsProps) {
   const { filter, setFilter, articles } = useArticlesStore()
 
-  const categories = ['All', ...Array.from(new Set(feeds.map(f => f.category))).sort()]
-  const activeCategory = filter.bookmarked ? 'Bookmarks' : (filter.category ?? 'All')
+  const categories = ['Tous', ...Array.from(new Set(feeds.map(f => f.category))).sort()]
+  const activeCategory = filter.bookmarked ? 'Favoris' : (filter.category ?? 'Tous')
 
   // Compute unread counts per category from currently loaded articles.
   // Only shown in unread/all modes (not when already filtering to read-only).
@@ -26,9 +26,9 @@ export function CategoryTabs({ feeds }: CategoryTabsProps) {
   const totalCount = [...categoryCounts.values()].reduce((s, n) => s + n, 0)
 
   const handleCategoryClick = (cat: string) => {
-    if (cat === 'Bookmarks') {
+    if (cat === 'Favoris') {
       setFilter({ bookmarked: true, category: null })
-    } else if (cat === 'All') {
+    } else if (cat === 'Tous') {
       setFilter({ bookmarked: false, category: null })
     } else {
       setFilter({ bookmarked: false, category: cat })
@@ -38,25 +38,26 @@ export function CategoryTabs({ feeds }: CategoryTabsProps) {
   return (
     <div className="flex items-center gap-1 px-3 py-2 overflow-x-auto scrollbar-hide border-b border-border-subtle">
       {categories.map(cat => {
-        const count = cat === 'All' ? totalCount : (categoryCounts.get(cat) ?? 0)
+        const count = cat === 'Tous' ? totalCount : (categoryCounts.get(cat) ?? 0)
         const isActive = activeCategory === cat
         return (
           <button
             key={cat}
             onClick={() => handleCategoryClick(cat)}
             className={`
-              flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap
+              flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
               ${isActive
-                ? 'bg-accent-blue text-white'
-                : 'bg-bg-elevated text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                ? 'bg-accent-blue/12 text-accent-blue'
+                : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
               }
             `}
           >
+            {cat === 'Tous' && <Library className="h-3 w-3" />}
             {cat}
             {count > 0 && filter.status !== 'read' && (
               <span className={`
                 text-[10px] font-semibold tabular-nums leading-none px-1 py-0.5 rounded-full min-w-[16px] text-center
-                ${isActive ? 'bg-white/25 text-white' : 'bg-bg-surface text-text-muted'}
+                ${isActive ? 'bg-accent-blue/18 text-accent-blue' : 'bg-bg-elevated text-text-muted'}
               `}>
                 {count > 99 ? '99+' : count}
               </span>
@@ -65,21 +66,21 @@ export function CategoryTabs({ feeds }: CategoryTabsProps) {
         )
       })}
       <button
-        onClick={() => handleCategoryClick('Bookmarks')}
+        onClick={() => handleCategoryClick('Favoris')}
         className={`
-          flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap
-          ${activeCategory === 'Bookmarks'
-            ? 'bg-accent-blue text-white'
-            : 'bg-bg-elevated text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+          flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
+          ${activeCategory === 'Favoris'
+            ? 'bg-accent-blue/12 text-accent-blue'
+            : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
           }
         `}
       >
         <Bookmark className="w-3 h-3" />
-        Bookmarks
+        Favoris
         {bookmarkCount > 0 && (
           <span className={`
             text-[10px] font-semibold tabular-nums leading-none px-1 py-0.5 rounded-full min-w-[16px] text-center
-            ${activeCategory === 'Bookmarks' ? 'bg-white/25 text-white' : 'bg-bg-surface text-text-muted'}
+            ${activeCategory === 'Favoris' ? 'bg-accent-blue/18 text-accent-blue' : 'bg-bg-elevated text-text-muted'}
           `}>
             {bookmarkCount > 99 ? '99+' : bookmarkCount}
           </span>

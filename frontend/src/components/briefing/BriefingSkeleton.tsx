@@ -15,7 +15,7 @@ export function BriefingSkeleton() {
         {[0, 1].map(i => <div key={i} className="briefing-shimmer h-28 rounded-md" />)}
       </div>
       {[0, 1].map(i => (
-        <div key={i} className="space-y-3 rounded-md border border-border-subtle bg-bg-surface p-4">
+        <div key={i} className="space-y-3 rounded-md bg-bg-surface p-4">
           <div className="briefing-shimmer h-6 w-1/2 rounded-md" />
           <div className="briefing-shimmer h-16 w-full rounded-md" />
           <div className="briefing-shimmer h-12 w-full rounded-md" />

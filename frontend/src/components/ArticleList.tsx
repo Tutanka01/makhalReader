@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings, Sparkles, LogOut, Newspaper } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings2, Sparkles, LogOut, Newspaper, Inbox, SlidersHorizontal } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { StatsView } from './StatsView'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
+import { IconButton, SegmentedControl } from './ui'
 
 interface ArticleListProps {
   feeds: Feed[]
@@ -124,6 +125,11 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
   }, [loading, hasMore, articles.length])
 
   const unreadCount = filter.status === 'unread' ? articles.length : null
+  const viewOptions = [
+    { value: 'briefing' as const, label: 'Briefing', icon: Sparkles },
+    { value: 'feed' as const, label: 'Articles', icon: Newspaper },
+    { value: 'stats' as const, label: 'Stats', icon: BarChart2 },
+  ]
 
   const isSearchActive = Boolean(searchQuery.trim())
   const displayedArticles = isSearchActive ? searchResults : articles
@@ -145,71 +151,35 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle flex-shrink-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-text-secondary tracking-wide">
-            MakhalReader
-          </span>
-          {/* Feed toggle */}
-          <button
-            onClick={() => onViewChange('feed')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'feed'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Articles"
-          >
-            <Newspaper className="w-3 h-3" />
-            Articles
-          </button>
-          {/* Briefing toggle */}
-          <button
-            onClick={() => onViewChange('briefing')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'briefing'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Le Briefing du jour"
-          >
-            <Sparkles className="w-3 h-3" />
-            Briefing
-          </button>
-          {/* Stats toggle */}
-          <button
-            onClick={() => onViewChange(currentView === 'stats' ? 'feed' : 'stats')}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              currentView === 'stats'
-                ? 'bg-accent-blue/15 text-accent-blue'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
-            }`}
-            title="Statistiques de lecture"
-          >
-            <BarChart2 className="w-3 h-3" />
-            Stats
-          </button>
-        </div>
-        <div className="flex items-center gap-0.5">
+      <div className="border-b border-border-subtle bg-bg-surface/95 px-3 py-3 flex-shrink-0">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent-blue/12 text-accent-blue">
+                <Inbox className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="truncate text-sm font-semibold leading-5 text-text-primary">MakhalReader</h1>
+                <p className="truncate text-[11px] text-text-muted">Moins lire. Plus savoir.</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
           {/* Search — hidden only in Stats */}
           {showArticleList && (
-            <button
+            <IconButton
               onClick={openSearch}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Search  /"
-            >
-              <Search className="w-3.5 h-3.5" />
-            </button>
+              icon={Search}
+              label="Rechercher  /"
+            />
           )}
           {/* Refresh — hidden only in Stats */}
           {showArticleList && (
-            <button
+            <IconButton
               onClick={() => fetchArticles(true)}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-              title="Refresh"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+              icon={RefreshCw}
+              label="Actualiser"
+            />
           )}
           {/* Mark all read */}
           {showArticleList && filter.status !== 'read' && (
@@ -217,35 +187,40 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               onClick={handleMarkAllRead}
               className={`flex items-center gap-1 rounded-md transition-all duration-150 text-xs font-medium ${
                 confirmingReadAll
-                  ? 'px-2 py-1 bg-red-500/15 text-red-400 hover:bg-red-500/25 ring-1 ring-red-500/40'
-                  : 'p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                  ? 'h-8 px-2 border border-accent-red/40 bg-accent-red/12 text-accent-red'
+                  : 'h-8 w-8 justify-center border border-transparent bg-transparent text-text-muted hover:bg-bg-hover hover:text-text-primary'
               }`}
-              title={confirmingReadAll ? 'Tap again to confirm' : 'Mark all as read'}
+              title={confirmingReadAll ? 'Confirmer' : 'Tout marquer comme lu'}
             >
-              <CheckCheck className="w-3.5 h-3.5 flex-shrink-0" />
-              {confirmingReadAll && <span>Confirm?</span>}
+              <CheckCheck className="w-4 h-4 flex-shrink-0" />
+              {confirmingReadAll && <span>Confirmer</span>}
             </button>
           )}
           {/* Feed manager */}
-          <button
+          <IconButton
             onClick={onOpenFeedManager}
-            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
-            title="Gérer les feeds"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </button>
+            icon={Settings2}
+            label="Gérer les feeds"
+          />
           {/* Logout */}
-          <button
+          <IconButton
             onClick={async () => {
               await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
               onLogout()
             }}
-            className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-red-400"
-            title="Se déconnecter"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-          </button>
+            icon={LogOut}
+            label="Se déconnecter"
+            className="hover:text-accent-red"
+          />
+          </div>
         </div>
+
+        <SegmentedControl
+          value={currentView}
+          options={viewOptions}
+          onChange={onViewChange}
+          className="grid w-full grid-cols-3"
+        />
       </div>
 
       {/* Stats view — replaces list when active */}
@@ -255,7 +230,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
 
       {/* Search bar */}
       {showArticleList && searchOpen && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
+        <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-base px-3 py-2.5 flex-shrink-0">
           <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
           <input
             ref={searchInputRef}
@@ -263,7 +238,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') closeSearch() }}
-            placeholder="Search title, feed, tag…"
+            placeholder="Titre, source, tag..."
             className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
           />
           {isSearchActive && (
@@ -281,35 +256,48 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
       {showArticleList && <CategoryTabs feeds={feeds} />}
 
       {/* Toolbar — hidden only in Stats */}
-      {showArticleList && <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle flex-shrink-0 flex-wrap">
+      {showArticleList && <div className="flex flex-col gap-2 border-b border-border-subtle bg-bg-base/70 px-3 py-2.5 flex-shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Triage
+          </div>
+          {unreadCount !== null && unreadCount > 0 && (
+          <span className="rounded bg-bg-elevated px-2 py-0.5 text-[11px] text-text-muted tabular-nums">
+              {unreadCount} à lire
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
         {/* Status toggle */}
-        <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
+        <div className="flex rounded-md overflow-hidden bg-bg-elevated/70 p-0.5 text-xs">
           <button
             onClick={() => setFilter({ status: 'unread', bookmarked: false })}
-            className={`px-2 py-1 transition-colors ${
+            className={`rounded px-2 py-1 transition-colors ${
               filter.status === 'unread' && !filter.bookmarked
-                ? 'bg-accent-blue text-white'
+                ? 'bg-accent-blue text-bg-base font-semibold'
                 : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
             }`}
           >
-            Unread
+            Non lus
           </button>
           <button
             onClick={() => setFilter({ status: 'all', bookmarked: false })}
-            className={`px-2 py-1 border-l border-border-default transition-colors ${
+            className={`rounded px-2 py-1 transition-colors ${
               filter.status === 'all' && !filter.bookmarked
-                ? 'bg-accent-blue text-white'
+                ? 'bg-accent-blue text-bg-base font-semibold'
                 : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
             }`}
           >
-            All
+            Tous
           </button>
         </div>
 
         {/* Sort toggle */}
         <button
           onClick={() => setFilter({ sort: filter.sort === 'score' ? 'date' : 'score' })}
-          className="flex items-center gap-1 px-2 py-1 rounded-md border border-border-default text-xs text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
           title={filter.sort === 'score' ? 'Sorted by score — click for date' : 'Sorted by date — click for score'}
         >
           {filter.sort === 'score'
@@ -321,12 +309,12 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
         </button>
 
         {/* Min score filter */}
-        <div className="flex rounded-md overflow-hidden border border-border-default text-xs">
+        <div className="flex rounded-md overflow-hidden bg-bg-elevated/70 p-0.5 text-xs">
           {([0, 6, 8] as const).map(s => (
             <button
               key={s}
               onClick={() => setFilter({ minScore: s })}
-              className={`px-2 py-1 transition-colors ${s > 0 ? 'border-l border-border-default' : ''} ${
+              className={`rounded px-2 py-1 transition-colors ${
                 filter.minScore === s
                   ? s === 0 ? 'bg-bg-elevated text-text-primary'
                     : s === 6 ? 'bg-accent-yellow/20 text-accent-yellow'
@@ -335,17 +323,11 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               }`}
               title={s === 0 ? 'All scores' : `Score ≥ ${s}`}
             >
-              {s === 0 ? 'All' : `${s}+`}
+              {s === 0 ? 'Tous' : `${s}+`}
             </button>
           ))}
         </div>
-
-        {/* Unread count */}
-        {unreadCount !== null && unreadCount > 0 && (
-          <span className="ml-auto text-xs text-text-muted tabular-nums">
-            {unreadCount}
-          </span>
-        )}
+        </div>
       </div>}
 
       {/* Article list — empty state + list, hidden only in Stats */}
@@ -354,7 +336,9 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
           {/* Empty state */}
           {!loading && !isSearching && displayedArticles.length === 0 && (
             <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
-              <div className="text-4xl mb-3 opacity-20">◎</div>
+              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-md bg-bg-surface text-text-muted">
+                <Inbox className="h-5 w-5" />
+              </div>
               <p className="text-sm font-medium text-text-secondary mb-1">
                 {isSearchActive ? 'Aucun résultat' : 'Aucun article'}
               </p>

@@ -1,6 +1,7 @@
 import { ArrowUpRight, Check, Hash, Lightbulb } from 'lucide-react'
 import type { BriefingArticle, BriefingSection as Section } from '../../types'
-import { fmtScore, scoreColor, topTags } from './format'
+import { topTags } from './format'
+import { ScoreBadge } from '../ui'
 
 interface Props {
   section: Section
@@ -15,7 +16,7 @@ export function BriefingSection({ section, articles, index, onOpen }: Props) {
 
   return (
     <section
-      className="briefing-rise rounded-md border border-border-subtle bg-bg-surface"
+      className="briefing-rise rounded-md bg-bg-surface/80"
       style={{ animationDelay: `${130 + index * 60}ms` }}
     >
       <div className="border-b border-border-subtle px-4 py-4 sm:px-5">
@@ -40,7 +41,7 @@ export function BriefingSection({ section, articles, index, onOpen }: Props) {
                 {tags.map((t) => (
                   <span
                     key={t}
-                    className="inline-flex items-center gap-1 rounded bg-bg-elevated px-1.5 py-0.5 text-[10px] text-text-muted"
+                    className="inline-flex items-center gap-1 rounded bg-bg-elevated/80 px-1.5 py-0.5 text-[10px] text-text-muted"
                   >
                     <Hash className="h-2.5 w-2.5" />
                     {t}
@@ -58,7 +59,7 @@ export function BriefingSection({ section, articles, index, onOpen }: Props) {
         </p>
 
         {section.why_it_matters && (
-          <div className="mt-4 flex gap-3 rounded-md border border-[rgba(210,153,34,0.35)] bg-[rgba(210,153,34,0.06)] p-3">
+          <div className="mt-4 flex gap-3 rounded-md bg-[rgba(210,153,34,0.08)] p-3">
             <Lightbulb className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent-yellow" />
             <div>
               <div className="text-xs font-semibold text-accent-yellow">Pourquoi ça compte</div>
@@ -74,13 +75,11 @@ export function BriefingSection({ section, articles, index, onOpen }: Props) {
                 <li key={a.id}>
                   <button
                     onClick={() => onOpen(a.id)}
-                    className={`group grid w-full grid-cols-[44px_minmax(0,1fr)_auto] items-start gap-3 py-3 text-left transition-colors hover:bg-bg-hover ${
+                    className={`group grid w-full grid-cols-[52px_minmax(0,1fr)_auto] items-start gap-3 rounded-md px-2 py-3 text-left transition-colors hover:bg-bg-hover ${
                       a.read_at ? 'opacity-55' : ''
                     }`}
                   >
-                    <span className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${scoreColor(a.score)}`}>
-                      {fmtScore(a.score)}
-                    </span>
+                    <ScoreBadge score={a.score} compact className="mt-0.5" />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium leading-snug text-text-primary transition-colors group-hover:text-accent-blue">
                         {a.title}

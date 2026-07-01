@@ -14,16 +14,18 @@ import {
   AArrowUp,
   ThumbsUp,
   ThumbsDown,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
 import { useHighlightsStore } from '../store/highlights'
 import type { Highlight } from '../types'
-import { ScoreBar } from './ScoreBar'
 import { ReadTimeBadge } from './ReadTimeBadge'
 import { PaperView } from './PaperView'
 import { HighlightPopover } from './HighlightPopover'
 import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
+import { Eyebrow, IconButton, ScoreBadge } from './ui'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -320,139 +322,117 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
+      <div className="flex items-center justify-between border-b border-border-subtle bg-bg-surface/95 px-3 py-2 flex-shrink-0">
         <div className="flex items-center gap-1">
           {/* Sidebar toggle (desktop only) */}
-          <button
+          <IconButton
             onClick={onToggleSidebar}
-            className="hidden lg:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
-            title={sidebarOpen ? 'Hide sidebar  [' : 'Show sidebar  ['}
-          >
-            {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
-          </button>
+            icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
+            label={sidebarOpen ? 'Masquer la sidebar  [' : 'Afficher la sidebar  ['}
+            className="hidden lg:inline-flex"
+          />
 
           {/* Back button (mobile) */}
           {onBack && (
-            <button
+            <IconButton
               onClick={onBack}
-              className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
-              aria-label="Back"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
+              icon={ArrowLeft}
+              label="Retour"
+            />
           )}
 
-          <div className="w-32">
-            <ScoreBar score={article.score} />
-          </div>
+          <ScoreBadge score={article.score} />
         </div>
 
         <div className="flex items-center gap-0.5">
           {/* Font size — hidden on small screens to avoid clipping feedback buttons */}
-          <button
+          <IconButton
             onClick={() => adjustFontSize(-1)}
             disabled={fontSize <= FONT_SIZE_MIN}
-            className="hidden sm:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
-            title="Decrease font size"
-          >
-            <AArrowDown className="w-4 h-4" />
-          </button>
+            icon={AArrowDown}
+            label="Réduire la police"
+            className="hidden sm:inline-flex"
+          />
           <span className="hidden sm:inline text-xs text-text-muted tabular-nums w-6 text-center">{fontSize}</span>
-          <button
+          <IconButton
             onClick={() => adjustFontSize(1)}
             disabled={fontSize >= FONT_SIZE_MAX}
-            className="hidden sm:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary disabled:opacity-30"
-            title="Increase font size"
-          >
-            <AArrowUp className="w-4 h-4" />
-          </button>
+            icon={AArrowUp}
+            label="Agrandir la police"
+            className="hidden sm:inline-flex"
+          />
 
           <div className="hidden sm:block w-px h-4 bg-border-default mx-1" />
 
           {/* Read/unread toggle */}
-          <button
+          <IconButton
             onClick={() => article.read_at ? markUnread(article.id) : markRead(article.id)}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.read_at ? 'text-accent-green' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title={article.read_at ? 'Mark unread' : 'Mark read'}
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
+            icon={RotateCcw}
+            label={article.read_at ? 'Marquer non lu' : 'Marquer lu'}
+            active={Boolean(article.read_at)}
+            tone={article.read_at ? 'success' : 'default'}
+          />
 
           {/* Bookmark */}
-          <button
+          <IconButton
             onClick={() => toggleBookmark(article.id)}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.bookmarked ? 'text-accent-blue' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title="Bookmark"
-          >
-            {article.bookmarked ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
-          </button>
+            icon={article.bookmarked ? BookmarkCheck : Bookmark}
+            label={article.bookmarked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+            active={article.bookmarked}
+          />
 
           {/* Feedback */}
           <div className="w-px h-4 bg-border-default mx-0.5" />
-          <button
+          <IconButton
             onClick={() => submitFeedback(article.id, article.user_feedback === 1 ? 0 : 1)}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.user_feedback === 1 ? 'text-accent-green' : 'text-text-secondary hover:text-accent-green'
-            }`}
-            title={article.user_feedback === 1 ? 'Remove like' : 'Like — improve future scoring'}
-          >
-            <ThumbsUp className="w-4 h-4" />
-          </button>
-          <button
+            icon={ThumbsUp}
+            label={article.user_feedback === 1 ? 'Retirer le like' : 'Aimer pour améliorer le scoring'}
+            active={article.user_feedback === 1}
+            tone={article.user_feedback === 1 ? 'success' : 'default'}
+            className="hover:text-accent-green"
+          />
+          <IconButton
             onClick={() => submitFeedback(article.id, article.user_feedback === -1 ? 0 : -1)}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              article.user_feedback === -1 ? 'text-red-400' : 'text-text-secondary hover:text-red-400'
-            }`}
-            title={article.user_feedback === -1 ? 'Remove dislike' : 'Dislike — improve future scoring'}
-          >
-            <ThumbsDown className="w-4 h-4" />
-          </button>
+            icon={ThumbsDown}
+            label={article.user_feedback === -1 ? 'Retirer le dislike' : 'Ne pas aimer pour améliorer le scoring'}
+            active={article.user_feedback === -1}
+            tone={article.user_feedback === -1 ? 'danger' : 'default'}
+            className="hover:text-accent-red"
+          />
 
           {/* Highlight list */}
           <div className="w-px h-4 bg-border-default mx-0.5" />
-          <button
+          <IconButton
             onClick={() => { setShowHighlightList((v) => !v); setShowAskPanel(false) }}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              showHighlightList ? 'text-accent-yellow' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title={`Surlignages (${articleHighlights.length})`}
-          >
-            <Highlighter className="w-4 h-4" />
-          </button>
+            icon={Highlighter}
+            label={`Surlignages (${articleHighlights.length})`}
+            active={showHighlightList}
+            tone={showHighlightList ? 'warning' : 'default'}
+          />
 
           {/* Ask AI */}
-          <button
+          <IconButton
             onClick={() => { setShowAskPanel((v) => !v); setShowHighlightList(false) }}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              showAskPanel ? 'text-accent-blue' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title="Poser une question à l'IA"
-          >
-            <Bot className="w-4 h-4" />
-          </button>
+            icon={Bot}
+            label="Poser une question à l'IA"
+            active={showAskPanel}
+          />
 
           {/* Copy link */}
-          <button
+          <IconButton
             onClick={copyLink}
-            className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors ${
-              copied ? 'text-accent-green' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title={copied ? 'Copied!' : 'Copy link'}
-          >
-            <Link className="w-4 h-4" />
-          </button>
+            icon={Link}
+            label={copied ? 'Lien copié' : 'Copier le lien'}
+            tone={copied ? 'success' : 'default'}
+          />
 
           {/* Open original */}
           <a
             href={article.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
-            title="Open original"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+            title="Ouvrir l'original"
           >
             <ExternalLink className="w-4 h-4" />
           </a>
@@ -481,13 +461,13 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             className="flex-1 overflow-y-auto min-h-0"
             onScroll={handleScroll}
           >
-          <article className="max-w-2xl mx-auto px-5 py-8 pb-20">
+          <article className="mx-auto max-w-3xl px-5 py-9 pb-20 sm:px-8 lg:px-10">
 
             {/* Tags */}
             {article.tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {article.tags.map(tag => (
-                  <span key={tag} className="px-2 py-0.5 bg-bg-elevated rounded-full text-xs text-text-muted font-medium">
+                  <span key={tag} className="rounded-md bg-bg-elevated/80 px-2 py-1 text-xs font-medium text-text-muted">
                     {tag}
                   </span>
                 ))}
@@ -495,12 +475,12 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             )}
 
             {/* Title */}
-            <h1 className="text-2xl font-bold leading-tight text-text-primary mb-3">
+            <h1 className="mb-4 max-w-[44rem] text-3xl font-semibold leading-tight text-text-primary sm:text-4xl">
               {article.title}
             </h1>
 
             {/* Meta */}
-            <div className="flex flex-wrap items-center gap-1.5 text-sm text-text-muted mb-5 pb-5 border-b border-border-subtle">
+            <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-border-subtle pb-5 text-sm text-text-muted">
               {article.author && (
                 <span className="font-medium text-text-secondary">{article.author}</span>
               )}
@@ -519,20 +499,21 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
             {/* AI Summary */}
             {article.summary_bullets.length > 0 && (
-              <div className="mb-6 p-4 bg-bg-surface rounded-xl border border-border-subtle">
-                <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-                  AI Summary
-                </p>
-                <ul className="space-y-1.5">
+              <div className="mb-7 rounded-md bg-accent-blue/8 p-4 sm:p-5">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <Eyebrow>Résumé IA</Eyebrow>
+                  <ScoreBadge score={article.score} compact />
+                </div>
+                <ul className="space-y-2">
                   {article.summary_bullets.map((bullet, i) => (
-                    <li key={i} className="text-sm text-text-secondary leading-relaxed flex gap-2">
-                      <span className="text-accent-blue flex-shrink-0 mt-0.5">›</span>
+                    <li key={i} className="flex gap-2 text-sm leading-relaxed text-text-secondary">
+                      <span className="mt-[0.55em] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-blue" />
                       <span>{bullet}</span>
                     </li>
                   ))}
                 </ul>
                 {article.reason && (
-                  <p className="mt-3 pt-3 border-t border-border-subtle text-xs text-text-muted italic">
+                  <p className="mt-4 border-t border-accent-blue/18 pt-3 text-xs leading-relaxed text-text-muted">
                     {article.reason}
                   </p>
                 )}
@@ -541,7 +522,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
             {/* Hero image */}
             {heroImage && (
-              <div className="mb-6 rounded-xl overflow-hidden">
+              <div className="mb-7 overflow-hidden rounded-md bg-bg-surface">
                 <img
                   src={heroImage}
                   alt=""
@@ -610,7 +591,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             {hasNext && onNext && scrollProgress >= 80 && (
               <button
                 onClick={onNext}
-                className="mt-6 w-full flex items-center justify-between px-4 py-3 rounded-xl bg-bg-surface border border-border-subtle hover:border-accent-blue/40 hover:bg-bg-elevated transition-all duration-200 group"
+                className="group mt-6 flex w-full items-center justify-between rounded-md bg-bg-surface px-4 py-3 transition-all duration-200 hover:bg-bg-elevated"
               >
                 <span className="text-xs text-text-muted group-hover:text-text-secondary transition-colors">
                   Article suivant
@@ -701,41 +682,16 @@ function Toolbar({
   return (
     <div className="flex items-center px-3 py-2 border-b border-border-subtle bg-bg-surface flex-shrink-0">
       <div className="flex items-center gap-1">
-        <button
+        <IconButton
           onClick={onToggleSidebar}
-          className="hidden lg:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary"
-        >
-          {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
-        </button>
+          icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
+          label={sidebarOpen ? 'Masquer la sidebar' : 'Afficher la sidebar'}
+          className="hidden lg:inline-flex"
+        />
         {onBack && (
-          <button onClick={onBack} className="p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
+          <IconButton onClick={onBack} icon={ArrowLeft} label="Retour" />
         )}
       </div>
     </div>
-  )
-}
-
-// Inline SVG icons (avoids adding lucide-react panel icons that may not exist in older versions)
-function PanelLeftCloseIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2"/>
-      <path d="M9 3v18"/>
-      <path d="m16 15-3-3 3-3"/>
-    </svg>
-  )
-}
-
-function PanelLeftOpenIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2"/>
-      <path d="M9 3v18"/>
-      <path d="m14 9 3 3-3 3"/>
-    </svg>
   )
 }
