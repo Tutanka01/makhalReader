@@ -20,6 +20,16 @@ Low-value topics:
 Classify content_type as exactly one of:
 postmortem, tutorial, paper, release, opinion, news, generic.
 
+Also assign reading_lenses as a small routing layer for how the item should be
+read. Use 0 to 4 values from this exact set:
+latest, opinion, contrarian, debate, community-signal, practical, deep-dive,
+weak-signal, release-signal.
+
+Important: reading_lenses are not a quality score. A low-rigor rant, personal
+blog, or "AI is broken" style post can be weak as a serious source but still
+belong in opinion, contrarian, debate, or weak-signal if it helps Mohamad see
+what people are saying right now.
+
 Score each axis from 0.0 to 3.0. Calibrate for reading priority, not
 world-changing academic importance: a 7 means "clearly worth opening", and
 8.5+ means rare, unusually useful, or decision-changing.
@@ -40,6 +50,9 @@ Important calibration:
 - Good practitioner blogs, field notes, and opinionated engineering posts can score 6-8 when they are concrete, actionable, and aligned, even without formal benchmarks or empirical evidence.
 - Practical AI-agent workflow posts deserve operational_value when they identify real manual bottlenecks, autonomy patterns, eval loops, browser/API/tooling access, or reliability practices.
 - Opinion content is not automatically low-value; penalize vague generic optimism, not specific advice that would change how an engineer works.
+- Preserve curiosity signals: a strong personal stance, backlash post, rant, or
+  simple blog explaining a position can be routed to opinion/debate even when
+  technical_depth and final score should remain modest.
 - A short release/news item can still have high topic_fit, strategic_value, or novelty if it is a strong infrastructure/security/AI-agent signal.
 - Reddit/community posts can be valuable when they contain concrete production experience, debugging details, incident lessons, architecture tradeoffs, or strong links to technical material.
 - Penalize Reddit/community posts that are career chatter, tool polls, memes, vague questions, drama, or low-context link drops.
@@ -60,6 +73,7 @@ Return exactly this JSON shape:
   "noise_penalty": 0.0,
   "confidence": 0.0,
   "content_type": "release",
+  "reading_lenses": ["opinion", "debate"],
   "tags": ["1 to 5 precise English technical tags"],
   "summary_bullets": ["2 to 3 short factual bullets grounded in the article"],
   "reason": "one concise sentence explaining the strongest positive signal and the main limitation"
@@ -85,6 +99,7 @@ Return exactly this JSON shape:
   "noise_penalty": 0.0,
   "confidence": 0.0,
   "content_type": "release",
+  "reading_lenses": ["opinion", "debate"],
   "tags": ["1 to 5 precise English technical tags"],
   "summary_bullets": ["2 to 3 short factual bullets grounded in the article"],
   "reason": "one concise sentence explaining the strongest positive signal and the main limitation"

@@ -69,6 +69,10 @@ Contrats importants :
   `score_last_error` servent au diagnostic et au retry.
 - `score_details_json.scoring_version`, quand present, indique la calibration du
   scorer qui a produit le score.
+- `score_details_json.reading_lenses`, quand present, route l'article vers des
+  intentions de lecture comme `opinion`, `debate`, `practical`, `deep-dive` ou
+  `weak-signal`. Ce n'est pas un score qualite : un article peut rester bas en
+  score global et rester interessant comme signal d'opinion ou de debat.
 
 Index important :
 

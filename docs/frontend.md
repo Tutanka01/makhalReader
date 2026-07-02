@@ -29,7 +29,7 @@ Le frontend est une application React sans routeur URL. La navigation est geree 
 ## Vues principales
 
 - `LoginView` : formulaire de login.
-- `ArticleList` : sidebar, filtres, recherche, digest/stats.
+- `ArticleList` : sidebar, filtres, lenses de lecture, recherche, digest/stats.
 - `ReaderView` : lecture, progression, police, read/unread, bookmark, feedback, highlights, Ask AI.
 - `DigestView` : articles recents par tiers de score.
 - `StatsView` : statistiques de lecture.
@@ -41,7 +41,7 @@ Le frontend est une application React sans routeur URL. La navigation est geree 
 `useArticlesStore` gere :
 
 - pagination avec `PAGE_SIZE=50`;
-- filtres `category`, `sort`, `status`, `bookmarked`, `minScore`;
+- filtres `category`, `sort`, `status`, `bookmarked`, `minScore`, `lens`;
 - recherche;
 - selection et detail article;
 - mutations optimistes read/unread/bookmark/feedback;
@@ -102,4 +102,3 @@ Attention : le proxy Vite cible `http://api:8000`, ce qui est naturel dans Docke
 - `ReaderView` manipule du HTML extrait et applique les highlights dans ce HTML.
 - Les mutations optimistes doivent rester coherentes avec les reponses serveur.
 - Les textes et l'encodage doivent etre verifies en UTF-8, certains affichages PowerShell montrent du mojibake dans les fichiers racine.
-

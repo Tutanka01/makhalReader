@@ -9,6 +9,7 @@ import { LoginView } from './components/LoginView'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
+import { useTheme } from './hooks/useTheme'
 import type { Feed } from './types'
 import { Inbox, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { IconButton, Kbd } from './components/ui'
@@ -59,6 +60,7 @@ export default function App() {
 }
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+  const { theme, toggleTheme } = useTheme()
   const [feeds, setFeeds] = useState<Feed[]>([])
   const [showReader, setShowReader] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -173,7 +175,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       {/* Keyboard shortcuts help overlay */}
       {showHelp && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm"
+          style={{ background: 'var(--color-overlay)' }}
           onClick={() => setShowHelp(false)}
         >
           <div
@@ -223,6 +226,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               currentView={appView}
               onViewChange={setAppView}
               onLogout={onLogout}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           </div>
         </div>
@@ -275,6 +280,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               currentView={appView}
               onViewChange={setAppView}
               onLogout={onLogout}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           </div>
         ) : (

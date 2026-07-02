@@ -273,6 +273,7 @@ class ScoreAnalysis(BaseModel):
     noise_penalty: float = Field(ge=0.0, le=3.0)
     confidence: float = Field(ge=0.0, le=1.0)
     content_type: str
+    reading_lenses: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     summary_bullets: list[str] = Field(default_factory=list)
     reason: str = ""
@@ -306,6 +307,29 @@ class ScoreAnalysis(BaseModel):
     def normalize_content_type(cls, value: str) -> str:
         normalized = str(value or "").strip().lower()
         return normalized if normalized in CONTENT_TYPES else "generic"
+
+    @field_validator("reading_lenses", mode="before")
+    @classmethod
+    def normalize_reading_lenses(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        allowed = {
+            "latest",
+            "opinion",
+            "contrarian",
+            "debate",
+            "community-signal",
+            "practical",
+            "deep-dive",
+            "weak-signal",
+            "release-signal",
+        }
+        lenses: list[str] = []
+        for item in value[:5]:
+            lens = re.sub(r"[^a-z0-9._+-]+", "-", str(item).strip().lower()).strip("-")
+            if lens in allowed and lens not in lenses:
+                lenses.append(lens)
+        return lenses
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -472,6 +496,7 @@ def validate_analysis(data: dict) -> ScoreAnalysis:
             "noise_penalty": max(0.0, 3.0 - axis),
             "confidence": 0.35,
             "content_type": "generic",
+            "reading_lenses": data.get("reading_lenses", []),
             "tags": data.get("tags", []),
             "summary_bullets": data.get("summary_bullets", []),
             "reason": data.get("reason", "Legacy score-only response."),
@@ -592,6 +617,7 @@ def build_result(analysis: ScoreAnalysis, article_words: int, summary_words: int
         "noise_penalty": analysis.noise_penalty,
         "confidence": analysis.confidence,
         "content_type": analysis.content_type,
+        "reading_lenses": analysis.reading_lenses,
         "article_words": article_words,
         "summary_words": summary_words,
         "caps": caps,

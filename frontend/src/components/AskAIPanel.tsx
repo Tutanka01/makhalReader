@@ -24,8 +24,7 @@ function renderInline(text: string): React.ReactNode[] {
       return <em key={i} className="italic">{part.slice(1, -1)}</em>
     if (part.startsWith('`') && part.endsWith('`'))
       return (
-        <code key={i} className="px-1 py-0.5 rounded text-[11px] text-accent-blue font-mono"
-          style={{ background: '#0E1117', border: '1px solid #2A3341' }}>
+        <code key={i} className="px-1 py-0.5 rounded text-[11px] text-accent-blue font-mono bg-bg-elevated border border-border-subtle">
           {part.slice(1, -1)}
         </code>
       )
@@ -45,8 +44,7 @@ function MiniMarkdown({ text }: { text: string }) {
     if (lines.every(l => l.trimStart().startsWith('>'))) {
       nodes.push(
         <blockquote key={bi}
-          className="pl-3 my-1 italic text-text-secondary text-[12px] leading-relaxed"
-          style={{ borderLeft: '2px solid rgba(68,147,248,0.5)' }}>
+          className="pl-3 my-1 italic text-text-secondary text-[12px] leading-relaxed border-l-2 border-accent-blue/50">
           {renderInline(lines.map(l => l.replace(/^\s*>\s?/, '')).join(' '))}
         </blockquote>
       )
@@ -59,7 +57,7 @@ function MiniMarkdown({ text }: { text: string }) {
         <ul key={bi} className="space-y-1 my-0.5">
           {lines.map((l, li) => (
             <li key={li} className="flex gap-1.5 items-start leading-relaxed">
-              <span className="flex-shrink-0 mt-0.5 text-[10px]" style={{ color: 'rgba(68,147,248,0.8)' }}>●</span>
+              <span className="flex-shrink-0 mt-0.5 text-[10px] text-accent-blue/80">●</span>
               <span>{renderInline(l.replace(/^[-*•]\s+/, ''))}</span>
             </li>
           ))}
@@ -74,7 +72,7 @@ function MiniMarkdown({ text }: { text: string }) {
         <ol key={bi} className="space-y-1 my-0.5">
           {lines.map((l, li) => (
             <li key={li} className="flex gap-1.5 items-start leading-relaxed">
-              <span className="flex-shrink-0 tabular-nums text-[11px] font-semibold" style={{ color: 'rgba(68,147,248,0.8)' }}>{li + 1}.</span>
+              <span className="flex-shrink-0 tabular-nums text-[11px] font-semibold text-accent-blue/80">{li + 1}.</span>
               <span>{renderInline(l.replace(/^\d+[.)]\s+/, ''))}</span>
             </li>
           ))}
@@ -198,12 +196,11 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
 
   return (
     <div
-      className="fixed z-[55] bottom-6 right-6 flex flex-col rounded-2xl shadow-2xl overflow-hidden"
+      className="fixed z-[55] bottom-6 right-6 flex flex-col rounded-2xl overflow-hidden border border-border-default bg-bg-surface"
       style={{
         width: 'min(440px, calc(100vw - 2rem))',
         height: 'min(540px, calc(100vh - 5rem))',
-        background: '#161B22',
-        border: '1px solid #2A3341',
+        boxShadow: 'var(--shadow-elevated)',
         opacity: visible ? 1 : 0,
         transform: visible ? 'translateY(0)' : 'translateY(14px)',
         transition: 'opacity 0.2s ease, transform 0.2s ease',
@@ -211,14 +208,10 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
       onClick={e => e.stopPropagation()}
     >
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
-        style={{ background: '#1E2430', borderBottom: '1px solid #2A3341' }}
-      >
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 bg-bg-elevated border-b border-border-subtle">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-            style={{ background: 'rgba(68,147,248,0.15)', border: '1px solid rgba(68,147,248,0.2)' }}>
-            <Bot className="w-4 h-4" style={{ color: '#4493F8' }} />
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-accent-blue/15 border border-accent-blue/20">
+            <Bot className="w-4 h-4 text-accent-blue" />
           </div>
           <div>
             <p className="text-xs font-semibold text-text-primary leading-tight">Ask AI</p>
@@ -227,10 +220,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg transition-colors text-text-muted hover:text-text-secondary"
-          style={{ background: 'transparent' }}
-          onMouseEnter={e => (e.currentTarget.style.background = '#232B39')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+          className="p-1.5 rounded-lg transition-colors text-text-muted hover:text-text-secondary hover:bg-bg-hover"
         >
           <X className="w-4 h-4" />
         </button>
@@ -240,9 +230,8 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 pb-4">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
-              style={{ background: 'rgba(68,147,248,0.08)', border: '1px solid rgba(68,147,248,0.15)' }}>
-              <Sparkles className="w-5 h-5" style={{ color: '#4493F8' }} />
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-accent-blue/8 border border-accent-blue/15">
+              <Sparkles className="w-5 h-5 text-accent-blue" />
             </div>
             <div>
               <p className="text-sm font-medium text-text-secondary">Posez une question</p>
@@ -255,8 +244,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
                 <button
                   key={q}
                   onClick={() => { setInput(q); inputRef.current?.focus() }}
-                  className="text-[11px] px-2.5 py-1 rounded-full text-text-muted hover:text-text-secondary transition-colors"
-                  style={{ background: '#1E2430', border: '1px solid #2A3341' }}
+                  className="text-[11px] px-2.5 py-1 rounded-full text-text-muted hover:text-text-secondary transition-colors bg-bg-elevated border border-border-subtle hover:bg-bg-hover"
                 >
                   {q}
                 </button>
@@ -268,20 +256,21 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
         {messages.map((msg, i) => (
           <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
             {msg.role === 'assistant' && (
-              <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                style={{ background: 'rgba(68,147,248,0.15)' }}>
-                <Bot className="w-3.5 h-3.5" style={{ color: '#4493F8' }} />
+              <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 bg-accent-blue/15">
+                <Bot className="w-3.5 h-3.5 text-accent-blue" />
               </div>
             )}
 
             <div
               className={`max-w-[80%] px-3 py-2.5 rounded-2xl ${
-                msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'
+                msg.role === 'user'
+                  ? 'rounded-tr-sm'
+                  : 'rounded-tl-sm bg-bg-elevated border border-border-subtle'
               }`}
               style={
                 msg.role === 'user'
-                  ? { background: '#4493F8', color: '#fff' }
-                  : { background: '#1E2430', border: '1px solid #2A3341' }
+                  ? { background: 'var(--color-accent-blue)', color: '#fff' }
+                  : undefined
               }
             >
               {msg.role === 'user' ? (
@@ -292,7 +281,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
                   {msg.streaming && (
                     <span
                       className="inline-block w-1 h-3.5 rounded-sm align-middle animate-pulse ml-0.5"
-                      style={{ background: '#4493F8', verticalAlign: 'text-bottom' }}
+                      style={{ background: 'var(--color-accent-blue)', verticalAlign: 'text-bottom' }}
                     />
                   )}
                 </>
@@ -302,8 +291,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
         ))}
 
         {error && (
-          <div className="text-xs rounded-xl px-3 py-2"
-            style={{ background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.2)', color: '#F85149' }}>
+          <div className="text-xs rounded-xl px-3 py-2 bg-accent-red/10 border border-accent-red/20 text-accent-red">
             ⚠ {error}
           </div>
         )}
@@ -312,9 +300,8 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
       </div>
 
       {/* Input area */}
-      <div className="px-3 pb-3 pt-2 flex-shrink-0" style={{ borderTop: '1px solid #2A3341' }}>
-        <div className="flex items-end gap-2 rounded-xl px-3 py-2"
-          style={{ background: '#1E2430', border: '1px solid #2A3341' }}>
+      <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-border-subtle">
+        <div className="flex items-end gap-2 rounded-xl px-3 py-2 bg-bg-elevated border border-border-default">
           <textarea
             ref={inputRef}
             value={input}
@@ -330,7 +317,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
             onClick={submit}
             disabled={!input.trim() || loading}
             className="p-2 rounded-lg transition-all duration-150 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: input.trim() && !loading ? '#4493F8' : 'rgba(68,147,248,0.15)' }}
+            style={{ background: input.trim() && !loading ? 'var(--color-accent-blue)' : 'color-mix(in srgb, var(--color-accent-blue) 15%, transparent)' }}
             title="Envoyer (Entrée)"
           >
             <Send className="w-3.5 h-3.5 text-white" />

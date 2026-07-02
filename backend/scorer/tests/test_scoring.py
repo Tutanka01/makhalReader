@@ -51,6 +51,7 @@ class ScoringCalibrationTest(unittest.TestCase):
             noise_penalty=2.4,
             confidence=0.8,
             content_type="opinion",
+            reading_lenses=["opinion", "debate", "weak-signal"],
             tags=["ai"],
             summary_bullets=["Argues AI agents will improve productivity."],
             reason="Generic AI-agent optimism with little concrete engineering advice.",
@@ -60,6 +61,7 @@ class ScoringCalibrationTest(unittest.TestCase):
 
         self.assertLess(result.score, 5.0)
         self.assertEqual(result.score_details["adjustments"], [])
+        self.assertEqual(result.score_details["reading_lenses"], ["opinion", "debate", "weak-signal"])
 
     def test_health_exposes_scoring_version(self):
         payload = asyncio.run(health())

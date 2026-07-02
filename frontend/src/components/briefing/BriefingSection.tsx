@@ -59,7 +59,7 @@ export function BriefingSection({ section, articles, index, onOpen }: Props) {
         </p>
 
         {section.why_it_matters && (
-          <div className="mt-4 flex gap-3 rounded-md bg-[rgba(210,153,34,0.08)] p-3">
+          <div className="mt-4 flex gap-3 rounded-md bg-accent-yellow/8 p-3">
             <Lightbulb className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent-yellow" />
             <div>
               <div className="text-xs font-semibold text-accent-yellow">Pourquoi ça compte</div>

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, CheckCheck, Star, Search, X, Settings2, Sparkles, LogOut, Newspaper, Inbox, SlidersHorizontal } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowUpDown, BarChart2, Clock, Clock3, CheckCheck, Star, Search, X, Settings2, Sparkles, LogOut, Newspaper, Inbox, SlidersHorizontal, Radar, MessageSquare, Flame, Wrench, BookOpen } from 'lucide-react'
 import { ArticleCard } from './ArticleCard'
 import { CategoryTabs } from './CategoryTabs'
 import { StatsView } from './StatsView'
 import { useArticlesStore } from '../store/articles'
-import type { Feed } from '../types'
+import type { Feed, ReadingLensKey } from '../types'
+import type { Theme } from '../theme'
 import { IconButton, SegmentedControl } from './ui'
+import { ThemeToggle } from './ThemeToggle'
+import { LENS_FILTERS, lensToneClass } from '../lenses'
 
 interface ArticleListProps {
   feeds: Feed[]
@@ -16,9 +19,11 @@ interface ArticleListProps {
   currentView: 'briefing' | 'feed' | 'stats'
   onViewChange: (v: 'briefing' | 'feed' | 'stats') => void
   onLogout: () => void
+  theme: Theme
+  onToggleTheme: () => void
 }
 
-export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange, onLogout }: ArticleListProps) {
+export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, currentView, onViewChange, onLogout, theme, onToggleTheme }: ArticleListProps) {
   const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchArticles, clearSearch, searchResults, isSearching } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
@@ -125,6 +130,22 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
   }, [loading, hasMore, articles.length])
 
   const unreadCount = filter.status === 'unread' ? articles.length : null
+  const activeLens = LENS_FILTERS.find(lens => lens.key === filter.lens) || LENS_FILTERS[0]
+  const lensIcons = {
+    all: Radar,
+    latest: Clock3,
+    opinions: MessageSquare,
+    debates: Flame,
+    practical: Wrench,
+    deep: BookOpen,
+  }
+  const selectLens = (lens: ReadingLensKey) => {
+    setFilter({
+      lens,
+      minScore: 0,
+      sort: lens === 'latest' || lens === 'opinions' || lens === 'debates' ? 'date' : 'score',
+    })
+  }
   const viewOptions = [
     { value: 'briefing' as const, label: 'Briefing', icon: Sparkles },
     { value: 'feed' as const, label: 'Articles', icon: Newspaper },
@@ -202,6 +223,7 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
             icon={Settings2}
             label="Gérer les feeds"
           />
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           {/* Logout */}
           <IconButton
             onClick={async () => {
@@ -254,6 +276,46 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
 
       {/* Category tabs — hidden only in Stats */}
       {showArticleList && <CategoryTabs feeds={feeds} />}
+
+      {/* Reading lenses */}
+      {showArticleList && (
+        <div className="border-b border-border-subtle bg-bg-base/88 px-3 py-2.5 flex-shrink-0">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">
+              <Radar className="h-3.5 w-3.5" />
+              Radar
+            </div>
+            <span className="max-w-[150px] truncate text-[11px] text-text-muted" title={activeLens.description}>
+              {activeLens.shortLabel}
+            </span>
+          </div>
+          <div className="scrollbar-hide flex gap-1.5 overflow-x-auto">
+            {LENS_FILTERS.map(lens => {
+              const Icon = lensIcons[lens.key]
+              const active = filter.lens === lens.key
+              return (
+                <button
+                  key={lens.key}
+                  type="button"
+                  onClick={() => selectLens(lens.key)}
+                  title={lens.description}
+                  className={`
+                    inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-medium
+                    transition-colors duration-150
+                    ${active
+                      ? lensToneClass(lens.tone)
+                      : 'border-transparent bg-transparent text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                    }
+                  `}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{lens.shortLabel}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar — hidden only in Stats */}
       {showArticleList && <div className="flex flex-col gap-2 border-b border-border-subtle bg-bg-base/70 px-3 py-2.5 flex-shrink-0">
@@ -345,6 +407,8 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, cu
               <p className="text-xs text-text-muted leading-relaxed max-w-[200px]">
                 {isSearchActive
                   ? `Aucun article ne correspond à "${searchQuery}"`
+                  : filter.lens !== 'all'
+                  ? `Aucun article dans ${activeLens.label.toLowerCase()}`
                   : filter.minScore > 0
                   ? `Aucun article avec score ≥ ${filter.minScore}`
                   : 'Les articles apparaîtront après le prochain poll.'}
