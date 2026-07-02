@@ -58,7 +58,7 @@ export function ArticleLensPanel({ article }: { article: Article }) {
   if (lenses.length === 0) return null
 
   return (
-    <section className="mb-6 rounded-md border border-border-subtle bg-bg-surface/70 p-4">
+    <section className="mb-6 rounded-md bg-bg-elevated/40 p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <Eyebrow>Dans ton radar</Eyebrow>
         <span className="text-[11px] text-text-muted">intention de lecture</span>
