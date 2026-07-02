@@ -6,6 +6,9 @@ import { ReaderView } from './components/ReaderView'
 import { FeedManagerPanel } from './components/FeedManagerPanel'
 import { OfflineBanner } from './components/OfflineBanner'
 import { LoginView } from './components/LoginView'
+import { StatsView } from './components/StatsView'
+import { NavRail, MobileHeader, MobileNavBar } from './components/NavRail'
+import type { AppView } from './components/NavRail'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -13,8 +16,6 @@ import { useTheme } from './hooks/useTheme'
 import type { Feed } from './types'
 import { Inbox, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { IconButton, Kbd } from './components/ui'
-
-type AppView = 'briefing' | 'feed' | 'stats'
 
 // ---------------------------------------------------------------------------
 // Auth gate — checks session on load, shows LoginView if unauthenticated
@@ -209,30 +210,34 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       {/* ── Desktop layout ── */}
       <div className="hidden lg:flex w-full h-full">
 
+        {/* Navigation rail — global views + app-level actions */}
+        <NavRail
+          view={appView}
+          onViewChange={setAppView}
+          onOpenFeedManager={() => setFeedManagerOpen(true)}
+          onLogout={onLogout}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+
         {/* Sidebar — collapsible */}
         <div
           className={`
             flex-shrink-0 border-r border-border-default h-full overflow-hidden
             transition-all duration-300 ease-in-out
-            ${sidebarOpen ? 'w-[380px]' : 'w-0'}
+            ${sidebarOpen ? 'w-[400px]' : 'w-0'}
           `}
         >
-          <div className="w-[380px] h-full">
+          <div className="w-[400px] h-full">
             <ArticleList
               feeds={feeds}
               onSelect={handleSelectArticle}
               selectedId={selectedId}
-              onOpenFeedManager={() => setFeedManagerOpen(true)}
-              currentView={appView}
-              onViewChange={setAppView}
-              onLogout={onLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
             />
           </div>
         </div>
 
-        {/* Main panel: briefing, reader, or empty */}
+        {/* Main panel: briefing, stats, reader, or empty */}
         <div className="flex-1 h-full overflow-hidden min-w-0">
           {appView === 'briefing' ? (
             <BriefingView
@@ -242,6 +247,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               mode={briefingMode}
               onToggleMode={toggleBriefingMode}
             />
+          ) : appView === 'stats' ? (
+            <StatsView onClose={() => setAppView('feed')} />
           ) : selectedId ? (
             <ReaderView
               articleId={selectedId}
@@ -261,30 +268,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
       {/* ── Mobile layout ── */}
       <div className="flex lg:hidden w-full h-full">
-        {appView === 'briefing' ? (
-          <div className="w-full h-full">
-            <BriefingView
-              onOpen={handleSelectArticle}
-              onBack={() => setAppView('feed')}
-              mode={briefingMode}
-              onToggleMode={toggleBriefingMode}
-            />
-          </div>
-        ) : !showReader || !selectedId ? (
-          <div className="w-full h-full">
-            <ArticleList
-              feeds={feeds}
-              onSelect={handleSelectArticle}
-              selectedId={selectedId}
-              onOpenFeedManager={() => setFeedManagerOpen(true)}
-              currentView={appView}
-              onViewChange={setAppView}
-              onLogout={onLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
-            />
-          </div>
-        ) : (
+        {showReader && selectedId && appView === 'feed' ? (
           <div className="w-full h-full">
             <ReaderView
               articleId={selectedId}
@@ -294,6 +278,33 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               onNext={handleNext}
               hasNext={hasNext}
             />
+          </div>
+        ) : (
+          <div className="flex w-full h-full flex-col">
+            <MobileHeader
+              onOpenFeedManager={() => setFeedManagerOpen(true)}
+              onLogout={onLogout}
+              theme={theme}
+              onToggleTheme={toggleTheme}
+            />
+            <div className="min-h-0 flex-1">
+              {appView === 'briefing' ? (
+                <BriefingView
+                  onOpen={handleSelectArticle}
+                  mode={briefingMode}
+                  onToggleMode={toggleBriefingMode}
+                />
+              ) : appView === 'stats' ? (
+                <StatsView onClose={() => setAppView('feed')} />
+              ) : (
+                <ArticleList
+                  feeds={feeds}
+                  onSelect={handleSelectArticle}
+                  selectedId={selectedId}
+                />
+              )}
+            </div>
+            <MobileNavBar view={appView} onViewChange={setAppView} />
           </div>
         )}
       </div>
