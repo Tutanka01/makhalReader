@@ -78,13 +78,13 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
         className="absolute left-1/2 -translate-x-1/2 w-0 h-0"
         style={
           below
-            ? { top: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: '6px solid #2A3341' }
-            : { bottom: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #2A3341' }
+            ? { top: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: '6px solid var(--color-popover-arrow)' }
+            : { bottom: -6, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid var(--color-popover-arrow)' }
         }
       />
 
       {/* Card */}
-      <div className="rounded-xl shadow-2xl overflow-hidden" style={{ background: '#1E2430', border: '1px solid #2A3341' }}>
+      <div className="overflow-hidden rounded-xl border border-border-default bg-bg-surface" style={{ boxShadow: 'var(--shadow-elevated)' }}>
         {/* Selected text preview */}
         <div className="px-3 pt-3 pb-2">
           <p className="text-[11px] text-text-muted line-clamp-1 italic">
@@ -142,7 +142,7 @@ export function HighlightPopover({ position, selectedText, onSave, onClose }: Hi
               onChange={e => setNote(e.target.value)}
               placeholder="Ajouter une note…"
               rows={3}
-              className="w-full text-xs bg-[#161B22] border border-[#2A3341] rounded-lg px-2.5 py-2 text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-accent-blue/50"
+              className="w-full text-xs bg-bg-elevated border border-border-default rounded-lg px-2.5 py-2 text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-accent-blue/50"
             />
           </div>
         )}

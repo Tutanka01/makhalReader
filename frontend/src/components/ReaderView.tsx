@@ -26,6 +26,7 @@ import { HighlightPopover } from './HighlightPopover'
 import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
 import { Eyebrow, IconButton, ScoreBadge } from './ui'
+import { ArticleLensPanel } from './ArticleLenses'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -497,6 +498,8 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
               <ReadTimeBadge minutes={article.reading_time} />
             </div>
 
+            <ArticleLensPanel article={article} />
+
             {/* AI Summary */}
             {article.summary_bullets.length > 0 && (
               <div className="mb-7 rounded-md bg-accent-blue/8 p-4 sm:p-5">
@@ -638,13 +641,10 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           }}
         >
           <div
-            className="relative rounded-xl px-3 py-2 text-xs leading-relaxed shadow-2xl"
+            className="relative rounded-xl border border-border-default bg-bg-surface px-3 py-2 text-xs leading-relaxed text-text-secondary"
             style={{
-              background: '#1E2430',
-              border: '1px solid #2A3341',
-              color: '#A0ADB8',
               maxWidth: 220,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              boxShadow: 'var(--shadow-elevated)',
             }}
           >
             {noteTooltip.note}
@@ -657,7 +657,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
                 height: 0,
                 borderLeft: '6px solid transparent',
                 borderRight: '6px solid transparent',
-                borderTop: '6px solid #2A3341',
+                borderTop: '6px solid var(--color-popover-arrow)',
               }}
             />
           </div>

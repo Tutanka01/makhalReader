@@ -64,14 +64,13 @@ function arxivIdFromUrl(url: string): string | null {
 
 function ScorePill({ score }: { score: number | null }) {
   if (score === null) return null
-  const color =
-    score >= 8 ? '#3FB950' : score >= 6 ? '#D29922' : '#6B7685'
-  const bg =
-    score >= 8 ? 'rgba(63,185,80,0.12)' : score >= 6 ? 'rgba(210,153,34,0.12)' : 'rgba(107,118,133,0.12)'
+  const tone =
+    score >= 8 ? 'text-score-high bg-score-high/10 border-score-high/30'
+    : score >= 6 ? 'text-score-mid bg-score-mid/10 border-score-mid/30'
+    : 'text-text-muted bg-bg-elevated border-border-default'
   return (
     <span
-      className="inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-0.5 rounded-full border"
-      style={{ color, background: bg, borderColor: color + '40' }}
+      className={`inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-0.5 rounded-full border ${tone}`}
     >
       {score.toFixed(1)}
       <span className="font-normal opacity-60">/ 10</span>
@@ -193,12 +192,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               {subjects.slice(0, 6).map(s => (
                 <span
                   key={s}
-                  className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold tracking-wide"
-                  style={{
-                    background: 'rgba(68,147,248,0.1)',
-                    color: '#4493F8',
-                    border: '1px solid rgba(68,147,248,0.25)',
-                  }}
+                  className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold tracking-wide bg-accent-blue/10 text-accent-blue border border-accent-blue/25"
                 >
                   {s}
                 </span>
@@ -247,20 +241,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 href={article.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg border transition-colors group"
-                style={{
-                  background: 'rgba(30,36,48,1)',
-                  borderColor: '#2A3341',
-                  color: '#A0ADB8',
-                }}
-                onMouseEnter={e => {
-                  ;(e.currentTarget as HTMLElement).style.borderColor = '#4493F8'
-                  ;(e.currentTarget as HTMLElement).style.color = '#4493F8'
-                }}
-                onMouseLeave={e => {
-                  ;(e.currentTarget as HTMLElement).style.borderColor = '#2A3341'
-                  ;(e.currentTarget as HTMLElement).style.color = '#A0ADB8'
-                }}
+                className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg border border-border-default bg-bg-elevated text-text-muted transition-colors hover:border-accent-blue/45 hover:text-accent-blue"
               >
                 <span className="opacity-50">arXiv:</span>
                 {paperId}
@@ -272,12 +253,10 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
           {/* Abstract */}
           <section className="mb-7">
             <div
-              className="relative pl-5 py-1"
-              style={{ borderLeft: '3px solid rgba(68,147,248,0.5)' }}
+              className="relative pl-5 py-1 border-l-[3px] border-accent-blue/50"
             >
               <p
-                className="text-[11px] font-bold uppercase tracking-[0.12em] mb-3"
-                style={{ color: 'rgba(68,147,248,0.8)' }}
+                className="text-[11px] font-bold uppercase tracking-[0.12em] mb-3 text-accent-blue/80"
               >
                 Abstract
               </p>
@@ -293,10 +272,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
           {/* AI Analysis */}
           {article.summary_bullets.length > 0 && (
             <section className="mb-7 rounded-xl overflow-hidden border border-border-default">
-              <div
-                className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-subtle"
-                style={{ background: '#1E2430' }}
-              >
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-subtle bg-bg-elevated">
                 <div className="flex items-center gap-2">
                   <Bot className="w-3.5 h-3.5 text-accent-blue flex-shrink-0" />
                   <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-secondary">
@@ -305,7 +281,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 </div>
                 <ScorePill score={article.score} />
               </div>
-              <div className="px-4 py-4 space-y-3" style={{ background: '#161B22' }}>
+              <div className="px-4 py-4 space-y-3 bg-bg-surface">
                 {article.summary_bullets.map((bullet, i) => (
                   <div key={i} className="flex gap-2.5 leading-relaxed" style={{ fontSize: '0.88em' }}>
                     <span className="text-accent-blue flex-shrink-0 mt-0.5 font-bold">›</span>
@@ -329,13 +305,12 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
             {(pdfUrl || htmlUrl) && (
               <button
                 onClick={togglePdf}
-                className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95"
-                style={{
-                  background: pdfMode !== 'none' ? 'rgba(68,147,248,0.25)' : '#4493F8',
-                  color: pdfMode !== 'none' ? '#4493F8' : '#fff',
-                  fontSize: '0.875em',
-                  border: pdfMode !== 'none' ? '1px solid rgba(68,147,248,0.4)' : 'none',
-                }}
+                className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95 ${
+                  pdfMode !== 'none'
+                    ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/40'
+                    : 'bg-accent-blue text-white'
+                }`}
+                style={{ fontSize: '0.875em' }}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
                 {pdfMode !== 'none' ? 'Hide viewer' : htmlUrl ? 'Read paper (HTML)' : 'View PDF'}
@@ -347,7 +322,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold border border-border-default text-text-secondary hover:text-text-primary hover:border-border-subtle transition-all active:scale-95"
-                style={{ background: '#1E2430', fontSize: '0.875em' }}
+                style={{ background: 'var(--color-bg-elevated)', fontSize: '0.875em' }}
               >
                 <Globe className="w-4 h-4 flex-shrink-0" />
                 HTML version
@@ -358,7 +333,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-1.5 px-4 py-3 rounded-xl border border-border-default text-text-muted hover:text-text-secondary transition-all active:scale-95"
-              style={{ background: '#161B22', fontSize: '0.875em' }}
+              style={{ background: 'var(--color-bg-surface)', fontSize: '0.875em' }}
               title="Open on arXiv"
             >
               <ExternalLink className="w-4 h-4" />

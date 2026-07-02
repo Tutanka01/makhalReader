@@ -131,7 +131,8 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        className={`fixed inset-0 z-40 backdrop-blur-sm transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        style={{ background: 'var(--color-overlay)' }}
         onClick={onClose}
       />
 

@@ -6,6 +6,7 @@ import type { ArticleListItem } from '../types'
 import { ReadTimeBadge } from './ReadTimeBadge'
 import { useArticlesStore } from '../store/articles'
 import { ScoreBadge } from './ui'
+import { ArticleLensStrip } from './ArticleLenses'
 
 interface ArticleCardProps {
   article: ArticleListItem
@@ -110,6 +111,8 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         >
           {article.title}
         </h3>
+
+        <ArticleLensStrip article={article} max={2} compact className="mb-2.5" />
 
         {/* Summary bullets */}
         {article.summary_bullets.length > 0 && (

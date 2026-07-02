@@ -46,6 +46,9 @@ function buildQueryParams(filter: ArticleFilter, limit: number, offset: number):
   if (filter.minScore > 0) {
     params.set('min_score', String(filter.minScore))
   }
+  if (filter.lens !== 'all') {
+    params.set('lens', filter.lens)
+  }
   return params.toString()
 }
 
@@ -59,6 +62,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     status: 'unread',
     bookmarked: false,
     minScore: 0,
+    lens: 'all',
   },
   loading: false,
   hasMore: true,
@@ -258,6 +262,9 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       if (filter.minScore > 0) {
         params.set('min_score', String(filter.minScore))
       }
+      if (filter.lens !== 'all') {
+        params.set('lens', filter.lens)
+      }
       const resp = await fetch(`/api/articles?${params}`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data: ArticleListItem[] = await resp.json()
@@ -292,6 +299,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       if (!filter.bookmarked && !filter.category && article.feed_category === PAPER_CATEGORY) return {}
       if (filter.category && filter.category !== article.feed_category) return {}
       if (filter.minScore > 0 && (article.score ?? 0) < filter.minScore) return {}
+      if (filter.lens !== 'all') return {}
       // New articles from SSE are always unread — skip only if filtering to read-only
       if (filter.status === 'read') return {}
 

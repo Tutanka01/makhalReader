@@ -19,6 +19,7 @@ export interface Article {
   content_text: string | null
   images_json: string
   score: number | null
+  score_details_json: string
   tags_json: string
   summary_bullets_json: string
   reason: string | null
@@ -31,6 +32,7 @@ export interface Article {
   tags: string[]
   summary_bullets: string[]
   images: string[]
+  score_details?: Record<string, unknown>
 }
 
 export interface ArticleListItem {
@@ -53,6 +55,7 @@ export interface ArticleListItem {
   reading_time: number | null
   tags: string[]
   summary_bullets: string[]
+  score_details?: Record<string, unknown>
 }
 
 export interface Highlight {
@@ -90,6 +93,7 @@ export interface Stats {
 
 export type SortOption = 'score' | 'date'
 export type StatusOption = 'unread' | 'read' | 'all'
+export type ReadingLensKey = 'all' | 'latest' | 'opinions' | 'debates' | 'practical' | 'deep'
 
 export interface ArticleFilter {
   category: string | null
@@ -97,6 +101,7 @@ export interface ArticleFilter {
   status: StatusOption
   bookmarked: boolean
   minScore: number  // 0 = all, 6 = 6+, 8 = 8+
+  lens: ReadingLensKey
 }
 
 export interface BriefingArticle {

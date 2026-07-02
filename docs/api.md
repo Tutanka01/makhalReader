@@ -45,6 +45,7 @@ Filtres usuels sur `GET /api/articles` :
 - `category`
 - `bookmarked=true`
 - `min_score`
+- `lens`: `latest`, `opinions`, `debates`, `practical`, `deep`
 - `search`
 
 Payload feedback :

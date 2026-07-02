@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -179,3 +180,67 @@ async def test_internal_requeue_failed_resets_retry_state():
     assert article.scoring_status == "queued"
     assert article.score_attempts == 0
     assert article.score_last_error is None
+
+
+@pytest.mark.asyncio
+async def test_article_lens_keeps_low_score_opinion_discoverable():
+    db = _memory_session()
+    now = datetime.now(timezone.utc)
+    db.add(Feed(id=1, url="https://example.test/feed.xml", name="Feed", category="AI"))
+    db.add_all(
+        [
+            Article(
+                id=50,
+                feed_id=1,
+                title="AI is shit and why builders are frustrated",
+                url="https://example.test/ai-is-shit",
+                content_text="Opinionated backlash post.",
+                score=4.2,
+                score_details_json=json.dumps(
+                    {
+                        "content_type": "opinion",
+                        "topic_fit": 2.2,
+                        "novelty": 1.2,
+                        "reading_lenses": ["opinion", "debate", "weak-signal"],
+                    }
+                ),
+                created_at=now,
+            ),
+            Article(
+                id=51,
+                feed_id=1,
+                title="Routine Kubernetes checklist",
+                url="https://example.test/kubernetes",
+                content_text="Practical checklist.",
+                score=6.8,
+                score_details_json=json.dumps(
+                    {
+                        "content_type": "tutorial",
+                        "operational_value": 2.0,
+                        "reading_lenses": ["practical"],
+                    }
+                ),
+                created_at=now,
+            ),
+        ]
+    )
+    db.commit()
+
+    results = await main.list_articles(
+        status="all",
+        sort="date",
+        limit=20,
+        offset=0,
+        category=None,
+        exclude_category=None,
+        bookmarked=None,
+        url=None,
+        min_score=None,
+        lens="debates",
+        search=None,
+        db=db,
+        _=None,
+    )
+
+    assert [article.id for article in results] == [50]
+    assert results[0].score == 4.2

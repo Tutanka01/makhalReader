@@ -388,6 +388,74 @@ async def health():
 _auth = Depends(require_session)
 
 
+def _score_detail(path: str):
+    return func.json_extract(Article.score_details_json, f"$.{path}")
+
+
+def _title_matches_any(*terms: str):
+    return or_(*(Article.title.ilike(f"%{term}%") for term in terms))
+
+
+def _apply_article_lens(query, lens: Optional[str]):
+    if not lens or lens == "all" or lens == "latest":
+        return query
+
+    content_type = _score_detail("content_type")
+    topic_fit = _score_detail("topic_fit")
+    technical_depth = _score_detail("technical_depth")
+    operational_value = _score_detail("operational_value")
+    novelty = _score_detail("novelty")
+
+    if lens == "opinions":
+        return query.filter(
+            or_(
+                content_type == "opinion",
+                Article.score_details_json.ilike('%"opinion"%'),
+                _title_matches_any("opinion", "why i", "i think", "rant", "blog"),
+            )
+        )
+
+    if lens == "debates":
+        return query.filter(
+            or_(
+                Article.score_details_json.ilike('%"contrarian"%'),
+                Article.score_details_json.ilike('%"debate"%'),
+                and_(content_type == "opinion", topic_fit >= 1.6, novelty >= 0.8),
+                _title_matches_any(
+                    "ai is",
+                    "ai isn't",
+                    "ai sucks",
+                    "ai is shit",
+                    "broken",
+                    "overhyped",
+                    "stop using",
+                    "against",
+                    "critique",
+                ),
+            )
+        )
+
+    if lens == "practical":
+        return query.filter(
+            or_(
+                operational_value >= 1.8,
+                content_type.in_(("tutorial", "postmortem")),
+                Article.score_details_json.ilike('%"practical"%'),
+            )
+        )
+
+    if lens == "deep":
+        return query.filter(
+            or_(
+                technical_depth >= 2.0,
+                content_type.in_(("paper", "postmortem")),
+                Article.score_details_json.ilike('%"deep-dive"%'),
+            )
+        )
+
+    return query
+
+
 @app.get("/api/articles", response_model=List[ArticleListItem])
 async def list_articles(
     status: str = Query("unread", enum=["unread", "read", "all"]),
@@ -399,6 +467,7 @@ async def list_articles(
     bookmarked: Optional[bool] = Query(None),
     url: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
+    lens: Optional[str] = Query(None, enum=["latest", "opinions", "debates", "practical", "deep"]),
     search: Optional[str] = Query(None, max_length=200),
     db: Session = Depends(get_db),
     _: None = _auth,
@@ -444,6 +513,8 @@ async def list_articles(
 
     if min_score is not None:
         query = query.filter(Article.score >= min_score)
+
+    query = _apply_article_lens(query, lens)
 
     # Unread articles always float above read ones (read_at IS NULL = True → 1 > 0)
     unread_first = Article.read_at.is_(None).desc()

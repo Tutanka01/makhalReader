@@ -20,10 +20,43 @@
   --color-score-high: #67D99A;
   --color-score-mid: #E7BE68;
   --color-score-low: #FF6B6B;
+  --color-overlay: rgba(0, 0, 0, 0.60);
+  --color-popover-arrow: #2A3341;
+  --color-focus-ring: rgba(139, 184, 255, 0.65);
+  --color-highlight-text: #EAEEE8;
+  --shadow-elevated: 0 24px 70px rgba(0, 0, 0, 0.36);
 }
 
-/* Always use dark mode */
 html {
+  color-scheme: dark;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --color-bg-base: #F6F8FB;
+  --color-bg-surface: #FFFFFF;
+  --color-bg-elevated: #EEF3F8;
+  --color-bg-hover: #E6EDF5;
+  --color-border-subtle: rgba(27, 39, 56, 0.08);
+  --color-border-default: rgba(27, 39, 56, 0.14);
+  --color-text-primary: #111827;
+  --color-text-secondary: #344054;
+  --color-text-muted: #667085;
+  --color-accent-blue: #2563EB;
+  --color-accent-green: #14804A;
+  --color-accent-yellow: #A16207;
+  --color-accent-red: #DC2626;
+  --color-score-high: #14804A;
+  --color-score-mid: #A16207;
+  --color-score-low: #DC2626;
+  --color-overlay: rgba(15, 23, 42, 0.34);
+  --color-popover-arrow: #D0DAE7;
+  --color-focus-ring: rgba(37, 99, 235, 0.36);
+  --color-highlight-text: #111827;
+  --shadow-elevated: 0 22px 60px rgba(15, 23, 42, 0.16);
+}
+
+html[data-theme='dark'] {
   color-scheme: dark;
 }
 
@@ -61,7 +94,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid rgba(104, 168, 255, 0.65);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 
@@ -322,7 +355,7 @@ mark[data-hid] {
   cursor: pointer;
   transition: opacity 0.15s;
   padding: 0 2px;
-  color: #E6EDF3; /* force white text — <mark> defaults to black in all browsers */
+  color: var(--color-highlight-text);
 }
 mark[data-hid]:hover { opacity: 0.80; }
 
