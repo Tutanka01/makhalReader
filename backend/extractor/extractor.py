@@ -379,23 +379,84 @@ def clean_readability_html(raw: str, base_url: str) -> str:
         return sanitize_article_html(raw, base_url)
 
 
+# Site-chrome / decorative images that must never be picked as an article
+# illustration: logos, icons, avatars, tracking pixels, theme assets.
+# Matched against isolated path segments so e.g. "silicon-photonics.jpg" passes.
+_CHROME_IMAGE_RE = re.compile(
+    r"(?:^|[/_\-.])(logos?|icons?|favicons?|avatars?|gravatar|sprites?|emojis?"
+    r"|badges?|spacer|pixel|placeholder)(?=[/_\-.@]|$)",
+    re.IGNORECASE,
+)
+
+
+def is_chrome_image_url(url: str) -> bool:
+    """True for images that are site chrome rather than article content."""
+    path = urlparse(url).path.lower()
+    if "/themes/" in path:
+        return True
+    # SVGs on article pages are almost always logos or UI icons.
+    if path.endswith(".svg"):
+        return True
+    return bool(_CHROME_IMAGE_RE.search(path))
+
+
+def _resolve_image_src(src: str, base_url: str) -> Optional[str]:
+    src = (src or "").strip()
+    if not src or src.startswith("data:"):
+        return None
+    parsed = urlparse(base_url)
+    if src.startswith("//"):
+        return f"{parsed.scheme}:{src}"
+    if src.startswith("/"):
+        return f"{parsed.scheme}://{parsed.netloc}{src}"
+    if not src.startswith("http"):
+        return None
+    return src
+
+
+def extract_og_image(html: str, base_url: str) -> Optional[str]:
+    """Page-declared share image — the best hero candidate when present."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for attrs in (
+            {"property": "og:image"},
+            {"name": "og:image"},
+            {"name": "twitter:image"},
+        ):
+            meta = soup.find("meta", attrs=attrs)
+            if meta and meta.get("content"):
+                url = _resolve_image_src(meta["content"], base_url)
+                if url and not is_chrome_image_url(url):
+                    return url
+        return None
+    except Exception:
+        return None
+
+
 def extract_images_from_html(
     html: str, base_url: str, max_images: int = 10
 ) -> List[str]:
     try:
         soup = BeautifulSoup(html, "html.parser")
-        images = []
-        parsed = urlparse(base_url)
-        for img in soup.find_all("img", src=True):
-            src = img.get("src", "").strip()
-            if not src or src.startswith("data:"):
+        images: List[str] = []
+        for img in soup.find_all("img"):
+            # Lazy-loaded images keep the real URL in data-src.
+            raw = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or ""
+            if raw.startswith("data:"):
+                raw = img.get("data-src") or img.get("data-lazy-src") or ""
+            src = _resolve_image_src(raw, base_url)
+            if not src or src in images:
                 continue
-            if src.startswith("//"):
-                src = f"{parsed.scheme}:{src}"
-            elif src.startswith("/"):
-                src = f"{parsed.scheme}://{parsed.netloc}{src}"
-            elif not src.startswith("http"):
+            if is_chrome_image_url(src):
                 continue
+            # Skip tiny images (icons, tracking pixels) when dimensions are declared.
+            try:
+                w = int(str(img.get("width", "")).rstrip("px") or 0)
+                h = int(str(img.get("height", "")).rstrip("px") or 0)
+                if (w and w < 100) or (h and h < 100):
+                    continue
+            except ValueError:
+                pass
             images.append(src)
             if len(images) >= max_images:
                 break
@@ -927,6 +988,11 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
             extracted_title = extracted.get("title")
             author = extracted.get("author")
             images = extract_images_from_html(html, req.url)
+            # og:image is the page's declared hero — put it first when available.
+            og_image = extract_og_image(html, req.url)
+            if og_image:
+                images = [og_image] + [u for u in images if u != og_image]
+                images = images[:10]
             # Extract canonical URL — the site's own authoritative URL for this page.
             # If it differs from the requested URL, use it as the dedup key so the
             # same article reached via different paths is only stored once.

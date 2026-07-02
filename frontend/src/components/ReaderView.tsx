@@ -27,6 +27,7 @@ import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
 import { Eyebrow, IconButton, ScoreBadge } from './ui'
 import { ArticleLensPanel } from './ArticleLenses'
+import { pickHeroImage } from '../images'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -309,7 +310,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
   const relativeDate = article.published_at
     ? formatDistanceToNow(new Date(article.published_at), { addSuffix: true })
     : null
-  const heroImage = article.images?.[0] || null
+  const heroImage = pickHeroImage(article.images, article.content_html)
 
   return (
     <div className="flex flex-col h-full bg-bg-base overflow-hidden">
@@ -525,13 +526,17 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
             {/* Hero image */}
             {heroImage && (
-              <div className="mb-7 overflow-hidden rounded-md bg-bg-surface">
+              <div className="reader-hero mb-7 overflow-hidden rounded-lg">
                 <img
                   src={heroImage}
                   alt=""
                   className="w-full h-auto"
                   loading="lazy"
-                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  onError={e => {
+                    const el = e.target as HTMLImageElement
+                    const wrap = el.closest('.reader-hero') as HTMLElement | null
+                    if (wrap) wrap.style.display = 'none'
+                  }}
                 />
               </div>
             )}

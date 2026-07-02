@@ -154,13 +154,37 @@ textarea:focus-visible {
 }
 .reader-content a:hover { opacity: 0.75; }
 
-/* Images */
-.reader-content img {
+/* Images
+   Article images (logos, diagrams, screenshots) frequently ship with a white
+   or transparent canvas. Rendered raw, a white-canvas figure glares as a hard
+   rectangle in dark mode, and a white-on-transparent logo vanishes in light
+   mode. Framing every reader image as a figure — consistent light matte, thin
+   border, rounded corners — keeps content legible in both themes and reads as
+   deliberate rather than a leaked box. */
+.reader-content img,
+.reader-hero {
   max-width: 100%;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-border-default);
+  background-color: #ffffff;
+}
+.reader-content img {
   height: auto;
-  border-radius: 0.5rem;
   margin: 1.75em auto;
   display: block;
+}
+.reader-hero img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Dark mode: dampen the matte just below pure white so white-canvas figures
+   sit calmly against the dark page instead of glowing. */
+html[data-theme='dark'] .reader-content img,
+html[data-theme='dark'] .reader-hero {
+  background-color: #f4f5f6;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 /* Figures */
@@ -324,19 +348,17 @@ textarea:focus-visible {
   overflow: hidden;
 }
 
-.briefing-rise {
-  animation: briefing-rise 420ms ease both;
+/* View transition — plays when switching between feed / briefing / stats so a
+   tab change reads as a genuine change of view, not a static swap. */
+.view-enter {
+  animation: view-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-
-@keyframes briefing-rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view-enter { animation: none; }
 }
 
 /* Smooth scroll */

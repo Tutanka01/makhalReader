@@ -74,6 +74,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   }, [])
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
+  // The article list only belongs to the feed view; on briefing/stats it
+  // collapses regardless of the user's toggle preference (which is preserved
+  // for when they return to the feed).
+  const feedSidebarOpen = sidebarOpen && appView === 'feed'
+
   useSSE(onLogout)
   const isOnline = useOnlineStatus()
 
@@ -220,12 +225,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           onToggleTheme={toggleTheme}
         />
 
-        {/* Sidebar — collapsible */}
+        {/* Sidebar — the article list belongs to the feed view. Briefing and
+            Stats are full-width takeover views, so the list collapses for them:
+            switching tabs visibly changes the whole layout instead of leaving
+            the list sitting there. */}
         <div
           className={`
             flex-shrink-0 border-r border-border-default h-full overflow-hidden
             transition-all duration-300 ease-in-out
-            ${sidebarOpen ? 'w-[400px]' : 'w-0'}
+            ${feedSidebarOpen ? 'w-[400px]' : 'w-0 border-r-0'}
           `}
         >
           <div className="w-[400px] h-full">
@@ -239,11 +247,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
         {/* Main panel: briefing, stats, reader, or empty */}
         <div className="flex-1 h-full overflow-hidden min-w-0">
+          <div key={appView} className="view-enter h-full">
           {appView === 'briefing' ? (
             <BriefingView
               onOpen={handleSelectArticle}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen(v => !v)}
               mode={briefingMode}
               onToggleMode={toggleBriefingMode}
             />
@@ -263,6 +270,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               onToggleSidebar={() => setSidebarOpen(v => !v)}
             />
           )}
+          </div>
         </div>
       </div>
 
@@ -288,6 +296,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               onToggleTheme={toggleTheme}
             />
             <div className="min-h-0 flex-1">
+              <div key={appView} className="view-enter h-full">
               {appView === 'briefing' ? (
                 <BriefingView
                   onOpen={handleSelectArticle}
@@ -303,6 +312,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
                   selectedId={selectedId}
                 />
               )}
+              </div>
             </div>
             <MobileNavBar view={appView} onViewChange={setAppView} />
           </div>
