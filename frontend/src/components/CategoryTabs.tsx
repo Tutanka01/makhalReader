@@ -4,9 +4,10 @@ import type { Feed } from '../types'
 
 interface CategoryTabsProps {
   feeds: Feed[]
+  className?: string
 }
 
-export function CategoryTabs({ feeds }: CategoryTabsProps) {
+export function CategoryTabs({ feeds, className = '' }: CategoryTabsProps) {
   const { filter, setFilter, articles } = useArticlesStore()
 
   const categories = ['Tous', ...Array.from(new Set(feeds.map(f => f.category))).sort()]
@@ -36,7 +37,7 @@ export function CategoryTabs({ feeds }: CategoryTabsProps) {
   }
 
   return (
-    <div className="flex items-center gap-1 px-3 py-2 overflow-x-auto scrollbar-hide border-b border-border-subtle">
+    <div className={`flex items-center gap-1 overflow-x-auto scrollbar-hide ${className || 'border-b border-border-subtle px-3 py-2'}`}>
       {categories.map(cat => {
         const count = cat === 'Tous' ? totalCount : (categoryCounts.get(cat) ?? 0)
         const isActive = activeCategory === cat

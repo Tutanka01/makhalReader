@@ -84,7 +84,7 @@ export function StatsView({ onClose }: StatsViewProps) {
         </div>
       </div>
 
-      <div className="px-4 py-4 space-y-6">
+      <div className="mx-auto w-full max-w-2xl px-4 py-5 space-y-6">
 
         {/* Streak */}
         <div className="flex items-center justify-center rounded-md bg-bg-surface py-4">

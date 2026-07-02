@@ -88,47 +88,6 @@ export function ScoreBadge({ score, compact = false, className = '' }: ScoreBadg
   )
 }
 
-interface SegmentedControlProps<T extends string> {
-  value: T
-  options: Array<{ value: T; label: string; icon?: LucideIcon }>
-  onChange: (value: T) => void
-  className?: string
-}
-
-export function SegmentedControl<T extends string>({
-  value,
-  options,
-  onChange,
-  className = '',
-}: SegmentedControlProps<T>) {
-  return (
-    <div className={`inline-flex rounded-md bg-bg-elevated/70 p-0.5 ${className}`}>
-      {options.map(option => {
-        const Icon = option.icon
-        const active = option.value === value
-        return (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={`
-              inline-flex min-h-7 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium
-              transition-colors duration-150
-              ${active
-                ? 'bg-bg-surface text-text-primary shadow-sm'
-                : 'text-text-muted hover:text-text-primary'
-              }
-            `}
-          >
-            {Icon && <Icon className="h-3.5 w-3.5" />}
-            <span>{option.label}</span>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted ${className}`}>
