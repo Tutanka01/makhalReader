@@ -31,6 +31,6 @@
     "vitest": "^1.6.0",
     "jsdom": "^24.1.0",
     "@testing-library/react": "^16.0.0",
-    "@testing-library/jest-dom": "^6.4.6"
+    "@testing-library/jest-dom": "^7.0.1"
   }
 }
