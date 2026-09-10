@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Debian bookworm is pinned explicitly: the floating -slim tag now resolves to trixie.
-FROM python:3.12.14-slim-bookworm
+FROM python:3.14.7-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1
 
