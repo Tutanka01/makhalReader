@@ -8,6 +8,7 @@
 
 ---
 
+[![CI](https://github.com/Tutanka01/makhalReader/actions/workflows/ci.yml/badge.svg)](https://github.com/Tutanka01/makhalReader/actions/workflows/ci.yml)
 [![Made with FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/Frontend-React%2018-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![Docker](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?style=flat-square&logo=docker)](https://docs.docker.com/compose/)
@@ -252,6 +253,14 @@ See `DEPLOY.md` for the full local vs NPM explanation.
 | Scoring | OpenRouter API (Gemini) · Ollama (Mistral) |
 | Infrastructure | Docker Compose · Nginx Proxy Manager compatible · APScheduler · httpx async |
 | PWA | Workbox · vite-plugin-pwa · Service Workers |
+
+---
+
+## Quality
+
+Every pull request and push to `main` runs CI (`.github/workflows/ci.yml`): the backend `pytest` suites (`api`, `extractor`, `scorer`), the frontend `typecheck`, `test` and `build`, and a full `docker compose build --pull`.
+
+Images are built from pinned base images with `.dockerignore` files and `npm ci`; backend containers run as a non-root `app` user (uid 1000).
 
 ---
 

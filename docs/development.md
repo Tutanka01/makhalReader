@@ -30,7 +30,7 @@ Frontend seul :
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 npm run typecheck
 npm run build
@@ -87,15 +87,31 @@ Checklist :
 
 ## Tests et verification
 
-Il n'y a pas de suite de tests evidente dans le depot actuel. Les verifications pratiques sont donc :
+Les tests sont executes par `.github/workflows/ci.yml` a chaque pull request et push sur `main`.
+
+Backend, par service (depuis la racine du depot) :
+
+```bash
+(cd backend/api && python -m pytest tests -q)
+(cd backend/extractor && python -m pytest tests -q)
+(cd backend/scorer && python -m pytest tests -q)
+```
+
+Le `conftest.py` de `backend/api/tests` fournit les variables d'environnement factices et une base temporaire : aucune configuration shell n'est necessaire.
+
+Frontend :
 
 ```bash
 cd frontend
+npm ci
 npm run typecheck
+npm run test
 npm run build
 ```
 
-Et cote Compose :
+Le workflow CI lance aussi `docker compose build --pull` apres `cp .env.example .env`.
+
+Et cote Compose, une fois la stack demarree :
 
 ```bash
 docker compose up -d --build

@@ -1,0 +1,24 @@
+# Python runtime artifacts (never ship the host virtualenv)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests are not needed in the production image
+tests/
+
+# Local databases and secrets
+*.db
+*.db-*
+.env
+.env.*
+
+# Docker metadata / host noise
+Dockerfile
+.dockerignore
+.git/
+.DS_Store

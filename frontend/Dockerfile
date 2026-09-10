@@ -1,16 +1,19 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:20.20.2-alpine3.23 AS builder
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+# Copy manifests first so `npm ci` is cached until the lockfile changes.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 COPY . .
 RUN npm run build
 
 # Stage 2: Serve
-FROM nginx:alpine
+FROM nginx:1.30.4-alpine3.24
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html

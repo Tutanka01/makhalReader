@@ -154,6 +154,14 @@ docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 
 The `data` volume survives rebuilds.
 
+The API container runs as the non-root `app` user (uid/gid 1000). Its entrypoint starts as root only to fix the ownership of an existing `/data` volume, then drops privileges with `setpriv`; volumes created by older root-running images keep working after the upgrade, with no manual step.
+
+---
+
+## Logs
+
+All services use the Docker `json-file` logging driver, capped at 10 MB per file with 3 files per container through the `x-logging` anchor in `docker-compose.yml`. Adjust `max-size` / `max-file` there if you need a different retention.
+
 ---
 
 ## Backup & Restore
@@ -170,7 +178,7 @@ docker compose cp ./makhal.db.bak api:/data/makhal.db
 docker compose restart api
 ```
 
-The `api` image is based on `python:3.12-slim`; use Python's `sqlite3` module
+The `api` image is based on `python:3.12.14-slim-bookworm`; use Python's `sqlite3` module
 unless the image is explicitly changed to install the `sqlite3` CLI.
 
 For production, use the same commands with `-f docker-compose.yml -f docker-compose.npm.yml`.
@@ -201,6 +209,7 @@ docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/mak
 - [ ] Production `CORS_ORIGIN` exactly matches the public origin, with no trailing slash.
 - [ ] NPM forwards to `makhal-reader-web:80`, not to `frontend`.
 - [ ] Host ports `8000`, `8001`, and `8002` are not exposed publicly.
+- [ ] Backend containers run as a non-root user (`app`, uid/gid 1000).
 - [ ] `.env` is not committed to git.
 
 ---

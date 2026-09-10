@@ -73,6 +73,14 @@ Le proxy desactive le buffering pour `/api/`, ce qui est important pour SSE et l
 | `frontend` | `80` | Non directement |
 | `web` | `80` | Oui en local, via NPM en prod |
 
+## Images et execution
+
+Les images de base sont epinglees (`python:3.12.14-slim-bookworm`, `node:20.20.2-alpine3.23`, `nginx:1.30.4-alpine3.24`) et chaque contexte de build a son `.dockerignore`, pour que `.venv`, `node_modules`, `tests` et `.env` ne partent pas dans les images.
+
+Les services backend tournent avec l'utilisateur non-root `app` (uid/gid 1000). L'entrypoint de `api` demarre en root uniquement pour corriger le proprietaire du volume `/data` existant, puis abandonne les privileges avec `setpriv` : les volumes crees par les anciennes images root continuent de fonctionner sans intervention manuelle.
+
+Les logs Docker utilisent le driver `json-file`, plafonnes a 10 Mo x 3 fichiers par conteneur via l'ancre `x-logging` de `docker-compose.yml`. Modifier cette ancre pour ajuster la retention.
+
 ## Caddy
 
 Le dossier `caddy/` est present et contient une configuration alternative, mais la stack Compose actuelle utilise `nginx/npm.conf` et Nginx Proxy Manager. Ne pas supposer que Caddy est actif sans verifier les fichiers Compose.
