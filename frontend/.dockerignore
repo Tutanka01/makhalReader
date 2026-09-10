@@ -1,0 +1,17 @@
+# Dependencies and build output (rebuilt inside the image)
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Local env and logs
+.env
+.env.*
+*.log
+npm-debug.log*
+
+# Docker metadata / host noise
+Dockerfile
+.dockerignore
+.git/
+.DS_Store

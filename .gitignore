@@ -6,6 +6,15 @@ __pycache__/
 node_modules/
 frontend/dist/
 
+# Python virtualenvs and tool caches
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# macOS
+.DS_Store
+
 .claude/
 
 .ruff_cache/
