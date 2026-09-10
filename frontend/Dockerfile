@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Stage 1: Build
-FROM node:20.20.2-alpine3.23 AS builder
+FROM node:26.8-alpine3.23 AS builder
 
 WORKDIR /app
 
