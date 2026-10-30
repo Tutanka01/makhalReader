@@ -85,7 +85,7 @@ function EmptyState({ status, onGenerate }: { status: 'empty' | 'error'; onGener
       </p>
       <button
         onClick={onGenerate}
-        className="flex items-center gap-2 rounded-md bg-accent-blue px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+        className="flex h-10 items-center gap-2 rounded-lg bg-accent-blue px-4 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
       >
         <Sparkles className="h-4 w-4" />
         Générer le briefing

@@ -1,4 +1,5 @@
 import type { Article, ArticleListItem, ReadingLensKey } from './types'
+import { parseScoreDetails } from './scoreDetails'
 
 export interface LensDefinition {
   key: ReadingLensKey
@@ -70,16 +71,6 @@ interface ArticleLike {
   tags: string[]
   score_details_json?: string
   score_details?: Record<string, unknown>
-}
-
-function parseScoreDetails(article: ArticleLike): Record<string, unknown> {
-  if (article.score_details && typeof article.score_details === 'object') return article.score_details
-  try {
-    const parsed = JSON.parse(article.score_details_json ?? '{}')
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
 }
 
 function numberDetail(details: Record<string, unknown>, key: string): number {

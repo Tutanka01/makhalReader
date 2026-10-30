@@ -69,7 +69,7 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
         }),
       })
       if (res.status === 409) {
-        setAddError('Ce feed existe déjà.')
+        setAddError('Cette source existe déjà.')
       } else if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         setAddError(data.detail || 'URL invalide ou inaccessible.')
@@ -139,9 +139,9 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
       {/* Panel */}
       <div
         className={`
-          fixed right-0 top-0 h-full w-full max-w-sm z-50
-          bg-bg-surface border-l border-border-default shadow-2xl
-          flex flex-col
+          fixed right-0 top-0 z-50 flex h-[100dvh] w-full max-w-sm flex-col
+          border-l border-border-default bg-bg-surface shadow-2xl
+          pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)]
           transition-transform duration-300 ease-out
           ${open ? 'translate-x-0' : 'translate-x-full'}
         `}
@@ -150,7 +150,7 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
         <div className="flex items-center justify-between px-4 py-3.5 border-b border-border-subtle flex-shrink-0">
           <div className="flex items-center gap-2">
             <Rss className="w-4 h-4 text-accent-blue" />
-            <span className="text-sm font-semibold text-text-primary">Feeds</span>
+            <span className="text-sm font-semibold text-text-primary">Sources</span>
             <span className="text-xs text-text-muted bg-bg-elevated px-1.5 py-0.5 rounded-full">
               {feeds.length}
             </span>
@@ -158,7 +158,7 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
           <div className="flex items-center gap-1">
             {/* Import OPML */}
             <label
-              className="flex items-center gap-1 p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary cursor-pointer"
+              className="flex cursor-pointer items-center gap-1 rounded-md p-2 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary touch:p-3"
               title="Importer OPML"
             >
               {importing ? (
@@ -177,14 +177,16 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
             {/* Export OPML */}
             <button
               onClick={() => exportOPML(feeds)}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
+              className="rounded-md p-2 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary touch:p-3"
               title="Exporter OPML"
+              aria-label="Exporter les sources en OPML"
             >
               <Download className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-primary"
+              aria-label="Fermer"
+              className="rounded-md p-2 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary touch:p-3"
             >
               <X className="w-4 h-4" />
             </button>
@@ -251,20 +253,20 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
                       disabled={isDeleting}
                       className={`
                         flex items-center gap-1 rounded-md transition-all duration-150 text-[11px] font-medium flex-shrink-0
-                        opacity-0 group-hover:opacity-100
                         ${isConfirming
-                          ? 'px-2 py-1 bg-red-500/15 text-red-400 hover:bg-red-500/25 ring-1 ring-red-500/40 opacity-100'
-                          : 'p-1.5 text-text-muted hover:text-accent-red hover:bg-bg-elevated'
+                          ? 'bg-accent-red/12 px-2.5 py-1.5 text-accent-red ring-1 ring-accent-red/40 hover:bg-accent-red/20'
+                          : 'p-2 text-text-muted hover:bg-bg-elevated hover:text-accent-red focus-visible:opacity-100 can-hover:opacity-0 group-hover:opacity-100'
                         }
                       `}
                       title={isConfirming ? 'Confirmer la suppression' : 'Supprimer'}
+                      aria-label={isConfirming ? `Confirmer la suppression de ${feed.name}` : `Supprimer ${feed.name}`}
                     >
                       {isDeleting ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <Trash2 className="w-3.5 h-3.5 flex-shrink-0" />
                       )}
-                      {isConfirming && <span>Confirmer?</span>}
+                      {isConfirming && <span>Supprimer ?</span>}
                     </button>
                   </div>
                 )
@@ -274,9 +276,9 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
         </div>
 
         {/* Add feed form */}
-        <div className="border-t border-border-default bg-bg-surface px-4 py-4 flex-shrink-0">
+        <div className="flex-shrink-0 border-t border-border-default bg-bg-surface px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
           <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-            Ajouter un feed
+            Ajouter une source
           </p>
           <div className="space-y-2">
             <input
@@ -316,7 +318,7 @@ export function FeedManagerPanel({ open, onClose, feeds, onFeedsChange }: FeedMa
             <button
               onClick={handleAdd}
               disabled={adding || !addUrl.trim()}
-              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-accent-blue text-white text-xs font-medium transition-all hover:bg-accent-blue/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-accent-blue text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {adding ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />

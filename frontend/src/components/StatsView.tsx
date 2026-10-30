@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Flame, BookOpen, Bookmark, Star, X, RefreshCw } from 'lucide-react'
 import { useStatsStore } from '../store/stats'
+import { IconButton } from './ui'
 
 interface StatsViewProps {
   onClose: () => void
@@ -65,22 +66,16 @@ export function StatsView({ onClose }: StatsViewProps) {
   return (
     <div className="flex flex-col h-full bg-bg-base overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0 bg-bg-surface">
-        <h2 className="text-sm font-semibold text-text-primary">Statistiques de lecture</h2>
-        <div className="flex items-center gap-1">
-          <button
+      <div className="sticky top-0 z-10 flex h-[52px] flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3">
+        <h2 className="ml-1 text-sm font-semibold text-text-primary">Statistiques de lecture</h2>
+        <div className="flex items-center gap-0.5">
+          <IconButton
             onClick={fetchStats}
-            className="p-1.5 rounded-md hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
-            title="Rafraîchir"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+            icon={RefreshCw}
+            label="Rafraîchir"
+            className={loading ? '[&>svg]:animate-spin' : ''}
+          />
+          <IconButton onClick={onClose} icon={X} label="Revenir aux articles" />
         </div>
       </div>
 

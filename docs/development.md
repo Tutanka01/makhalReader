@@ -36,7 +36,7 @@ npm run typecheck
 npm run build
 ```
 
-Attention : `vite.config.ts` proxifie `/api` vers `http://api:8000`. Si Vite tourne hors reseau Docker, adapter temporairement la cible ou passer par `web`.
+Attention : `vite.config.ts` proxifie `/api` et `/auth` vers `http://api:8000` (reseau Docker). Hors Docker, avec la stack Compose lancee, utiliser `VITE_PROXY_TARGET=http://localhost npm run dev` pour passer par `web`, puis ouvrir `http://localhost:5173`.
 
 ## Workflow de modification
 

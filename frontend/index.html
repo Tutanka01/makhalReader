@@ -1,9 +1,13 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0E1117" />
+    <meta name="theme-color" content="#101211" />
+    <script>
+      // Apply the saved theme before first paint (no dark→light flash).
+      try { if (localStorage.getItem('makhal_reader_theme') === 'light') document.documentElement.dataset.theme = 'light' } catch (e) {}
+    </script>
     <meta name="description" content="MakhalReader - Smart RSS reader with AI scoring" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

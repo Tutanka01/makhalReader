@@ -3,7 +3,7 @@ import type { ArticleListItem } from '../types'
 import { useArticlesStore } from '../store/articles'
 
 export function useSSE(onUnauthorized?: () => void) {
-  const prependArticle = useArticlesStore(state => state.prependArticle)
+  const upsertArticle = useArticlesStore(state => state.upsertArticle)
   const esRef = useRef<EventSource | null>(null)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryCountRef = useRef(0)
@@ -27,7 +27,7 @@ export function useSSE(onUnauthorized?: () => void) {
         const message = JSON.parse(event.data)
         if (message.type === 'new_article' && message.data) {
           const article = message.data as ArticleListItem
-          prependArticle(article)
+          upsertArticle(article)
         }
         if (message.type === 'briefing_ready') {
           window.dispatchEvent(new CustomEvent('makhal:briefing-ready'))

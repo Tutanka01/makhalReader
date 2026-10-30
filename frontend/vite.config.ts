@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const proxyTarget = process.env.VITE_PROXY_TARGET || 'http://api:8000'
+
 export default defineConfig({
   plugins: [
     react(),
@@ -80,10 +82,10 @@ export default defineConfig({
         name: 'MakhalReader',
         short_name: 'MakhalReader',
         description: 'Smart RSS reader with AI scoring',
-        theme_color: '#0E1117',
-        background_color: '#0E1117',
+        theme_color: '#101211',
+        background_color: '#101211',
         display: 'standalone',
-        orientation: 'portrait',
+        orientation: 'any',
         start_url: '/',
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -93,9 +95,16 @@ export default defineConfig({
     }),
   ],
   server: {
+    // Inside Docker the API is reachable as `api:8000`. Outside Docker, point
+    // the dev server at the `web` proxy instead: VITE_PROXY_TARGET=http://localhost
     proxy: {
       '/api': {
-        target: 'http://api:8000',
+        target: proxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      '/auth': {
+        target: proxyTarget,
         changeOrigin: true,
         secure: false,
       },

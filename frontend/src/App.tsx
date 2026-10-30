@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { ArticleList } from './components/ArticleList'
 import { BriefingView } from './components/briefing/BriefingView'
 import type { BriefingMode } from './components/briefing/BriefingView'
@@ -7,14 +7,16 @@ import { FeedManagerPanel } from './components/FeedManagerPanel'
 import { OfflineBanner } from './components/OfflineBanner'
 import { LoginView } from './components/LoginView'
 import { StatsView } from './components/StatsView'
+import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { NavRail, MobileHeader, MobileNavBar } from './components/NavRail'
 import type { AppView } from './components/NavRail'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { useTheme } from './hooks/useTheme'
+import { useLayout } from './hooks/useLayout'
 import type { Feed } from './types'
-import { Inbox, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Radar } from 'lucide-react'
 import { IconButton, Kbd } from './components/ui'
 
 // ---------------------------------------------------------------------------
@@ -42,12 +44,10 @@ export default function App() {
 
   if (authState === 'loading') {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
-        <div className="flex items-center gap-3 text-text-muted text-sm">
-          <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M21 12a9 9 0 11-6.219-8.56"/>
-          </svg>
-          Loading…
+      <div className="flex h-[100dvh] w-screen items-center justify-center bg-bg-base">
+        <div className="flex items-center gap-3 text-sm text-text-muted">
+          <Radar className="h-4 w-4 animate-spin text-accent-blue [animation-duration:2.4s]" />
+          Chargement…
         </div>
       </div>
     )
@@ -60,11 +60,29 @@ export default function App() {
   return <AuthenticatedApp onLogout={recheckAuth} />
 }
 
+/** History marker pushed while the reader covers the list (compact/medium). */
+const READER_STATE = 'makhalReader'
+
+function isReaderHistoryState(state: unknown): boolean {
+  return Boolean(state && typeof state === 'object' && (state as Record<string, unknown>)[READER_STATE])
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
+}
+
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+  const layout = useLayout()
   const { theme, toggleTheme } = useTheme()
   const [feeds, setFeeds] = useState<Feed[]>([])
-  const [showReader, setShowReader] = useState(false)
+  // Compact/medium: the reader covers the list while an article is open.
+  const [readerOpen, setReaderOpen] = useState(false)
+  // Wide: the list pane is pinned next to the reader (toggle with `[`).
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Medium with an article open: the list slides over the reader on demand.
+  const [listOverlayOpen, setListOverlayOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [appView, setAppView] = useState<AppView>('feed')
@@ -72,12 +90,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const toggleBriefingMode = useCallback(() => {
     setBriefingMode(m => (m === 'live' ? 'history' : 'live'))
   }, [])
-  const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
-
-  // The article list only belongs to the feed view; on briefing/stats it
-  // collapses regardless of the user's toggle preference (which is preserved
-  // for when they return to the feed).
-  const feedSidebarOpen = sidebarOpen && appView === 'feed'
+  const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles, searchResults } = useArticlesStore()
 
   useSSE(onLogout)
   const isOnline = useOnlineStatus()
@@ -94,44 +107,82 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => { refreshFeeds() }, [refreshFeeds])
 
-  const handleSelectArticle = useCallback((id: number) => {
-    setSelectedId(id)
-    setShowReader(true)
-    setAppView('feed')
-  }, [setSelectedId])
+  const stacked = layout !== 'wide'
+  const readerVisible = appView === 'feed' && selectedId !== null && (!stacked || readerOpen)
 
-  const handleBack = useCallback(() => {
-    setShowReader(false)
+  // ── Reader open/close, mirrored in browser history on stacked layouts so the
+  //    iOS edge swipe, Android back and the browser back button close the
+  //    reader instead of leaving the app.
+  const readerOpenRef = useRef(readerOpen)
+  readerOpenRef.current = readerOpen
+
+  useEffect(() => {
+    // A reload can land on a stale reader entry; start from a clean state.
+    if (isReaderHistoryState(window.history.state)) window.history.replaceState(null, '')
+    const onPopState = (e: PopStateEvent) => {
+      if (!isReaderHistoryState(e.state)) {
+        setReaderOpen(false)
+        setListOverlayOpen(false)
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  const currentIndex = articles.findIndex(a => a.id === selectedId)
-  const hasNext = currentIndex >= 0 && currentIndex < articles.length - 1
-  const handleNext = useCallback(() => {
-    if (currentIndex >= 0 && currentIndex < articles.length - 1) {
-      handleSelectArticle(articles[currentIndex + 1].id)
+  const handleSelectArticle = useCallback((id: number) => {
+    setSelectedId(id)
+    setAppView('feed')
+    setListOverlayOpen(false)
+    if (stacked && !readerOpenRef.current && !isReaderHistoryState(window.history.state)) {
+      window.history.pushState({ [READER_STATE]: true }, '')
     }
-  }, [currentIndex, articles, handleSelectArticle])
+    setReaderOpen(true)
+  }, [setSelectedId, stacked])
+
+  const handleBack = useCallback(() => {
+    if (isReaderHistoryState(window.history.state)) {
+      window.history.back() // popstate closes the reader
+    } else {
+      setReaderOpen(false)
+      setListOverlayOpen(false)
+    }
+  }, [])
+
+  const toggleListPane = useCallback(() => {
+    if (layout === 'wide') setSidebarOpen(v => !v)
+    else if (readerVisible) setListOverlayOpen(v => !v)
+  }, [layout, readerVisible])
+
+  const currentIndex = articles.findIndex(a => a.id === selectedId)
+  const nextArticle = currentIndex >= 0 ? articles[currentIndex + 1] : undefined
+  const handleNext = useCallback(() => {
+    if (nextArticle) handleSelectArticle(nextArticle.id)
+  }, [nextArticle, handleSelectArticle])
+
+  const selectedListItem =
+    articles.find(a => a.id === selectedId) ?? searchResults.find(a => a.id === selectedId)
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (isTypingTarget(e.target)) return
+      // Leave browser/OS shortcuts (⌘R, Ctrl+B, …) alone.
+      if (e.metaKey || e.ctrlKey || e.altKey) return
 
-      const currentIndex = articles.findIndex(a => a.id === selectedId)
+      const index = articles.findIndex(a => a.id === selectedId)
 
       switch (e.key) {
         case '[':
-          setSidebarOpen(v => !v)
+          toggleListPane()
           break
         case 'j':
-          if (currentIndex >= 0 && currentIndex < articles.length - 1) {
-            handleSelectArticle(articles[currentIndex + 1].id)
+          if (index < articles.length - 1) {
+            handleSelectArticle(articles[index + 1].id)
           }
           break
         case 'k':
-          if (currentIndex > 0) {
-            handleSelectArticle(articles[currentIndex - 1].id)
+          if (index > 0) {
+            handleSelectArticle(articles[index - 1].id)
           }
           break
         case 'r': {
@@ -154,8 +205,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           break
         }
         case 'Escape':
-          setShowReader(false)
-          setShowHelp(false)
+          if (showHelp) setShowHelp(false)
+          else if (listOverlayOpen) setListOverlayOpen(false)
+          else if (stacked && readerOpen) handleBack()
           break
         case '?':
           setShowHelp(v => !v)
@@ -165,10 +217,65 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedId, articles, handleSelectArticle, markRead, markUnread, toggleBookmark])
+  }, [
+    selectedId, articles, handleSelectArticle, markRead, markUnread, toggleBookmark,
+    toggleListPane, showHelp, listOverlayOpen, stacked, readerOpen, handleBack,
+  ])
+
+  // ── List pane placement. The list stays mounted in every mode so its scroll
+  //    position, loaded pages and search survive opening an article.
+  type ListMode = 'pinned' | 'collapsed' | 'full' | 'overlay' | 'overlay-closed' | 'hidden'
+  let listMode: ListMode
+  if (appView !== 'feed') listMode = stacked ? 'hidden' : 'collapsed'
+  else if (!stacked) listMode = sidebarOpen ? 'pinned' : 'collapsed'
+  else if (!readerVisible) listMode = 'full'
+  else if (layout === 'medium') listMode = listOverlayOpen ? 'overlay' : 'overlay-closed'
+  else listMode = 'hidden'
+
+  const listPaneClass: Record<ListMode, string> = {
+    pinned: 'relative h-full w-[380px] flex-shrink-0 border-r border-border-default transition-[width] duration-300 ease-out',
+    collapsed: 'invisible relative h-full w-0 flex-shrink-0 transition-[width,visibility] duration-300 ease-out',
+    full: 'relative h-full min-w-0 flex-1',
+    overlay: 'absolute inset-y-0 left-0 z-30 h-full w-[min(380px,88%)] border-r border-border-default shadow-pane transition-[transform,visibility] duration-300 ease-out',
+    'overlay-closed': 'invisible absolute inset-y-0 left-0 z-30 h-full w-[min(380px,88%)] -translate-x-full transition-[transform,visibility] duration-300 ease-out',
+    hidden: 'invisible pointer-events-none absolute inset-0',
+  }
+  const listInnerClass = listMode === 'pinned' || listMode === 'collapsed' ? 'h-full w-[380px]' : 'h-full w-full'
+  const listHidden = listMode === 'collapsed' || listMode === 'overlay-closed' || listMode === 'hidden'
+
+  let mainContent: React.ReactNode = null
+  if (appView === 'briefing') {
+    mainContent = (
+      <BriefingView onOpen={handleSelectArticle} mode={briefingMode} onToggleMode={toggleBriefingMode} />
+    )
+  } else if (appView === 'stats') {
+    mainContent = <StatsView onClose={() => setAppView('feed')} />
+  } else if (readerVisible && selectedId !== null) {
+    mainContent = (
+      <ReaderView
+        articleId={selectedId}
+        feedName={selectedListItem?.feed_name}
+        layout={layout}
+        onBack={stacked ? handleBack : undefined}
+        listOpen={layout === 'wide' ? sidebarOpen : listOverlayOpen}
+        onToggleList={layout === 'compact' ? undefined : toggleListPane}
+        onNext={nextArticle ? handleNext : undefined}
+        nextTitle={nextArticle?.title}
+      />
+    )
+  } else if (!stacked) {
+    mainContent = <EmptyReaderState sidebarOpen={sidebarOpen} onToggleSidebar={toggleListPane} />
+  }
+
+  const chromeVisible = layout === 'compact' && !readerVisible
 
   return (
-    <div className="flex h-screen bg-bg-base text-text-primary overflow-hidden">
+    <div
+      className="
+        flex h-[100dvh] w-full overflow-hidden bg-bg-base text-text-primary
+        pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-[env(safe-area-inset-top)]
+      "
+    >
       <OfflineBanner show={!isOnline} />
 
       <FeedManagerPanel
@@ -178,145 +285,60 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         onFeedsChange={refreshFeeds}
       />
 
-      {/* Keyboard shortcuts help overlay */}
-      {showHelp && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm"
-          style={{ background: 'var(--color-overlay)' }}
-          onClick={() => setShowHelp(false)}
-        >
-          <div
-            className="bg-bg-surface rounded-2xl p-6 w-80 shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <h2 className="text-sm font-semibold text-text-primary mb-4 text-center tracking-wide">Raccourcis clavier</h2>
-            <div className="space-y-2">
-              {[
-                ['j / k', 'Article suivant / précédent'],
-                ['r', 'Marquer lu / non-lu'],
-                ['b', 'Bookmark'],
-                ['o', 'Ouvrir l\'original'],
-                ['/', 'Rechercher'],
-                ['[', 'Masquer/afficher sidebar'],
-                ['?', 'Aide'],
-                ['Esc', 'Fermer'],
-              ].map(([key, desc]) => (
-                <div key={key} className="flex items-center justify-between">
-                  <span className="text-xs text-text-muted">{desc}</span>
-                  <Kbd>{key}</Kbd>
-                </div>
-              ))}
-            </div>
-            <p className="text-center text-xs text-text-muted mt-5">Swipe ← lire · Swipe → bookmark</p>
-          </div>
-        </div>
-      )}
+      {showHelp && <ShortcutsDialog onClose={() => setShowHelp(false)} />}
 
-      {/* ── Desktop layout ── */}
-      <div className="hidden lg:flex w-full h-full">
-
-        {/* Navigation rail — global views + app-level actions */}
+      {layout !== 'compact' && (
         <NavRail
           view={appView}
           onViewChange={setAppView}
           onOpenFeedManager={() => setFeedManagerOpen(true)}
+          onOpenHelp={() => setShowHelp(true)}
           onLogout={onLogout}
           theme={theme}
           onToggleTheme={toggleTheme}
         />
+      )}
 
-        {/* Sidebar — the article list belongs to the feed view. Briefing and
-            Stats are full-width takeover views, so the list collapses for them:
-            switching tabs visibly changes the whole layout instead of leaving
-            the list sitting there. */}
-        <div
-          className={`
-            flex-shrink-0 border-r border-border-default h-full overflow-hidden
-            transition-all duration-300 ease-in-out
-            ${feedSidebarOpen ? 'w-[400px]' : 'w-0 border-r-0'}
-          `}
-        >
-          <div className="w-[400px] h-full">
-            <ArticleList
-              feeds={feeds}
-              onSelect={handleSelectArticle}
-              selectedId={selectedId}
-            />
-          </div>
-        </div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {chromeVisible && (
+          <MobileHeader
+            onOpenFeedManager={() => setFeedManagerOpen(true)}
+            onLogout={onLogout}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        )}
 
-        {/* Main panel: briefing, stats, reader, or empty */}
-        <div className="flex-1 h-full overflow-hidden min-w-0">
-          <div key={appView} className="view-enter h-full">
-          {appView === 'briefing' ? (
-            <BriefingView
-              onOpen={handleSelectArticle}
-              mode={briefingMode}
-              onToggleMode={toggleBriefingMode}
-            />
-          ) : appView === 'stats' ? (
-            <StatsView onClose={() => setAppView('feed')} />
-          ) : selectedId ? (
-            <ReaderView
-              articleId={selectedId}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen(v => !v)}
-              onNext={handleNext}
-              hasNext={hasNext}
-            />
-          ) : (
-            <EmptyReaderState
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen(v => !v)}
+        <main className="relative flex min-h-0 flex-1 overflow-hidden">
+          <aside
+            aria-label="Liste des articles"
+            aria-hidden={listHidden || undefined}
+            className={`overflow-hidden bg-bg-base ${listPaneClass[listMode]}`}
+          >
+            <div className={listInnerClass}>
+              <ArticleList feeds={feeds} onSelect={handleSelectArticle} selectedId={selectedId} />
+            </div>
+          </aside>
+
+          {listMode === 'overlay' && (
+            <div
+              aria-hidden
+              className="animate-fade-in absolute inset-0 z-20"
+              style={{ background: 'var(--color-overlay)' }}
+              onClick={() => setListOverlayOpen(false)}
             />
           )}
-          </div>
-        </div>
-      </div>
 
-      {/* ── Mobile layout ── */}
-      <div className="flex lg:hidden w-full h-full">
-        {showReader && selectedId && appView === 'feed' ? (
-          <div className="w-full h-full">
-            <ReaderView
-              articleId={selectedId}
-              onBack={handleBack}
-              sidebarOpen={false}
-              onToggleSidebar={() => {}}
-              onNext={handleNext}
-              hasNext={hasNext}
-            />
-          </div>
-        ) : (
-          <div className="flex w-full h-full flex-col">
-            <MobileHeader
-              onOpenFeedManager={() => setFeedManagerOpen(true)}
-              onLogout={onLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
-            />
-            <div className="min-h-0 flex-1">
+          {mainContent && (
+            <section className="h-full min-w-0 flex-1">
               <div key={appView} className="view-enter h-full">
-              {appView === 'briefing' ? (
-                <BriefingView
-                  onOpen={handleSelectArticle}
-                  mode={briefingMode}
-                  onToggleMode={toggleBriefingMode}
-                />
-              ) : appView === 'stats' ? (
-                <StatsView onClose={() => setAppView('feed')} />
-              ) : (
-                <ArticleList
-                  feeds={feeds}
-                  onSelect={handleSelectArticle}
-                  selectedId={selectedId}
-                />
-              )}
+                {mainContent}
               </div>
-            </div>
-            <MobileNavBar view={appView} onViewChange={setAppView} />
-          </div>
-        )}
+            </section>
+          )}
+        </main>
+
+        {chromeVisible && <MobileNavBar view={appView} onViewChange={setAppView} />}
       </div>
     </div>
   )
@@ -330,34 +352,35 @@ function EmptyReaderState({
   onToggleSidebar: () => void
 }) {
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col">
       {/* Toolbar stub to align with ReaderView toolbar */}
-      <div className="flex items-center px-3 py-3 border-b border-border-subtle bg-bg-surface flex-shrink-0">
+      <div className="flex h-[52px] flex-shrink-0 items-center border-b border-border-subtle bg-bg-surface px-3">
         <IconButton
           onClick={onToggleSidebar}
           icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
-          label={sidebarOpen ? 'Masquer la sidebar  [' : 'Afficher la sidebar  ['}
+          label={sidebarOpen ? 'Masquer la liste  [' : 'Afficher la liste  ['}
         />
       </div>
-      <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-md bg-bg-surface text-accent-blue">
-          <Inbox className="h-6 w-6" />
+      <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-accent-blue/10 text-accent-blue">
+          <Radar className="h-6 w-6" />
         </div>
-        <h2 className="text-base font-semibold text-text-primary mb-1">
-          Sélectionne un article
+        <h2 className="mb-1.5 text-base font-semibold text-text-primary">
+          Choisis un article à lire
         </h2>
-        <p className="text-xs text-text-muted max-w-xs leading-relaxed">
-          <Kbd>j</Kbd>
-          {' / '}
-          <Kbd>k</Kbd>
-          {' '}naviguer{'  ·  '}
-          <Kbd>r</Kbd>
-          {' '}lu{'  ·  '}
-          <Kbd>b</Kbd>
-          {' '}favori{'  ·  '}
-          <Kbd>[</Kbd>
-          {' '}sidebar
+        <p className="mb-6 max-w-xs text-sm leading-relaxed text-text-muted">
+          Les mieux notés par l’IA sont en haut de la liste.
         </p>
+        <div className="grid grid-cols-[auto_auto] items-center gap-x-3 gap-y-2 text-left text-xs text-text-muted">
+          <span className="flex justify-end gap-1"><Kbd>j</Kbd><Kbd>k</Kbd></span>
+          <span>Article suivant / précédent</span>
+          <span className="flex justify-end"><Kbd>r</Kbd></span>
+          <span>Marquer lu</span>
+          <span className="flex justify-end"><Kbd>b</Kbd></span>
+          <span>Favori</span>
+          <span className="flex justify-end"><Kbd>?</Kbd></span>
+          <span>Tous les raccourcis</span>
+        </div>
       </div>
     </div>
   )

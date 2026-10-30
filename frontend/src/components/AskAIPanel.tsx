@@ -196,10 +196,14 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
 
   return (
     <div
-      className="fixed z-[55] bottom-6 right-6 flex flex-col rounded-2xl overflow-hidden border border-border-default bg-bg-surface"
+      role="dialog"
+      aria-label="Poser une question à l’IA"
+      className="
+        fixed inset-x-2 bottom-[max(0.5rem,env(safe-area-inset-bottom))] z-[55] flex h-[min(540px,calc(100dvh-6rem))]
+        flex-col overflow-hidden rounded-2xl border border-border-default bg-bg-surface
+        sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[440px]
+      "
       style={{
-        width: 'min(440px, calc(100vw - 2rem))',
-        height: 'min(540px, calc(100vh - 5rem))',
         boxShadow: 'var(--shadow-elevated)',
         opacity: visible ? 1 : 0,
         transform: visible ? 'translateY(0)' : 'translateY(14px)',
@@ -269,7 +273,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
               }`}
               style={
                 msg.role === 'user'
-                  ? { background: 'var(--color-accent-blue)', color: '#fff' }
+                  ? { background: 'var(--color-accent-blue)', color: 'rgb(var(--c-on-accent))' }
                   : undefined
               }
             >
@@ -316,11 +320,15 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
           <button
             onClick={submit}
             disabled={!input.trim() || loading}
-            className="p-2 rounded-lg transition-all duration-150 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: input.trim() && !loading ? 'var(--color-accent-blue)' : 'color-mix(in srgb, var(--color-accent-blue) 15%, transparent)' }}
+            className={`
+              flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-colors duration-150
+              disabled:cursor-not-allowed touch:h-10 touch:w-10
+              ${input.trim() && !loading ? 'bg-accent-blue text-on-accent' : 'bg-accent-blue/15 text-accent-blue/60'}
+            `}
             title="Envoyer (Entrée)"
+            aria-label="Envoyer la question"
           >
-            <Send className="w-3.5 h-3.5 text-white" />
+            <Send className="h-3.5 w-3.5" />
           </button>
         </div>
         <p className="text-[10px] text-text-muted mt-1.5 text-center">Entrée pour envoyer · Échap pour fermer</p>

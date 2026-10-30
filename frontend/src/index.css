@@ -2,29 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ────────────────────────────────────────────────────────
+   Colors are declared twice:
+   - `--c-*` holds bare RGB channels. Tailwind consumes them as
+     `rgb(var(--c-x) / <alpha-value>)`, which is what makes opacity modifiers
+     (`bg-accent-blue/12`, `border-accent-blue/20`, …) compile at all. With
+     plain hex variables Tailwind silently drops every such class, and a bare
+     `border` then falls back to the preflight #e5e7eb — the stray white
+     outlines that used to ring badges and icons.
+   - `--color-*` is the ready-to-use color for plain CSS and inline styles.
+   Themes only redefine the channels; the aliases follow automatically. */
 :root {
   /* Dark reader theme: low-glare surfaces with deliberate accents. */
-  --color-bg-base: #101211;
-  --color-bg-surface: #151817;
-  --color-bg-elevated: #1B201E;
-  --color-bg-hover: #222A26;
-  --color-border-subtle: rgba(232, 238, 226, 0.07);
-  --color-border-default: rgba(232, 238, 226, 0.13);
-  --color-text-primary: #EAEEE8;
-  --color-text-secondary: #B6BDB3;
-  --color-text-muted: #818B82;
-  --color-accent-blue: #8BB8FF;
-  --color-accent-green: #67D99A;
-  --color-accent-yellow: #E7BE68;
-  --color-accent-red: #FF6B6B;
-  --color-score-high: #67D99A;
-  --color-score-mid: #E7BE68;
-  --color-score-low: #FF6B6B;
+  --c-bg-base: 16 18 17;          /* #101211 */
+  --c-bg-surface: 21 24 23;       /* #151817 */
+  --c-bg-elevated: 27 32 30;      /* #1B201E */
+  --c-bg-hover: 34 42 38;         /* #222A26 */
+  --c-text-primary: 234 238 232;  /* #EAEEE8 */
+  --c-text-secondary: 182 189 179;/* #B6BDB3 */
+  --c-text-muted: 129 139 130;    /* #818B82 */
+  --c-accent-blue: 139 184 255;   /* #8BB8FF */
+  --c-accent-green: 103 217 154;  /* #67D99A */
+  --c-accent-yellow: 231 190 104; /* #E7BE68 */
+  --c-accent-red: 255 122 122;    /* #FF7A7A */
+  --c-on-accent: 10 18 32;        /* ink on a light accent fill */
+  --c-line: 232 238 226;
+
+  --color-border-subtle: rgb(var(--c-line) / 0.07);
+  --color-border-default: rgb(var(--c-line) / 0.13);
   --color-overlay: rgba(0, 0, 0, 0.60);
   --color-popover-arrow: #2A3341;
-  --color-focus-ring: rgba(139, 184, 255, 0.65);
-  --color-highlight-text: #EAEEE8;
+  --color-focus-ring: rgb(var(--c-accent-blue) / 0.65);
+  --color-highlight-text: rgb(var(--c-text-primary));
   --shadow-elevated: 0 24px 70px rgba(0, 0, 0, 0.36);
+  --shadow-pane: 12px 0 40px rgba(0, 0, 0, 0.45);
 }
 
 html {
@@ -33,31 +44,50 @@ html {
 
 html[data-theme='light'] {
   color-scheme: light;
-  --color-bg-base: #F6F8FB;
-  --color-bg-surface: #FFFFFF;
-  --color-bg-elevated: #EEF3F8;
-  --color-bg-hover: #E6EDF5;
-  --color-border-subtle: rgba(27, 39, 56, 0.08);
-  --color-border-default: rgba(27, 39, 56, 0.14);
-  --color-text-primary: #111827;
-  --color-text-secondary: #344054;
-  --color-text-muted: #667085;
-  --color-accent-blue: #2563EB;
-  --color-accent-green: #14804A;
-  --color-accent-yellow: #A16207;
-  --color-accent-red: #DC2626;
-  --color-score-high: #14804A;
-  --color-score-mid: #A16207;
-  --color-score-low: #DC2626;
+  --c-bg-base: 246 248 251;       /* #F6F8FB */
+  --c-bg-surface: 255 255 255;
+  --c-bg-elevated: 238 243 248;   /* #EEF3F8 */
+  --c-bg-hover: 230 237 245;      /* #E6EDF5 */
+  --c-text-primary: 17 24 39;     /* #111827 */
+  --c-text-secondary: 52 64 84;   /* #344054 */
+  --c-text-muted: 102 112 133;    /* #667085 */
+  --c-accent-blue: 37 99 235;     /* #2563EB */
+  --c-accent-green: 20 128 74;    /* #14804A */
+  --c-accent-yellow: 161 98 7;    /* #A16207 */
+  --c-accent-red: 220 38 38;      /* #DC2626 */
+  --c-on-accent: 255 255 255;
+  --c-line: 27 39 56;
+
+  --color-border-subtle: rgb(var(--c-line) / 0.08);
+  --color-border-default: rgb(var(--c-line) / 0.14);
   --color-overlay: rgba(15, 23, 42, 0.34);
   --color-popover-arrow: #D0DAE7;
-  --color-focus-ring: rgba(37, 99, 235, 0.36);
-  --color-highlight-text: #111827;
+  --color-focus-ring: rgb(var(--c-accent-blue) / 0.40);
   --shadow-elevated: 0 22px 60px rgba(15, 23, 42, 0.16);
+  --shadow-pane: 12px 0 40px rgba(15, 23, 42, 0.14);
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
+}
+
+/* Ready-to-use colors. Declared on the root element, they resolve against
+   whichever theme's channels apply there. */
+:root {
+  --color-bg-base: rgb(var(--c-bg-base));
+  --color-bg-surface: rgb(var(--c-bg-surface));
+  --color-bg-elevated: rgb(var(--c-bg-elevated));
+  --color-bg-hover: rgb(var(--c-bg-hover));
+  --color-text-primary: rgb(var(--c-text-primary));
+  --color-text-secondary: rgb(var(--c-text-secondary));
+  --color-text-muted: rgb(var(--c-text-muted));
+  --color-accent-blue: rgb(var(--c-accent-blue));
+  --color-accent-green: rgb(var(--c-accent-green));
+  --color-accent-yellow: rgb(var(--c-accent-yellow));
+  --color-accent-red: rgb(var(--c-accent-red));
+  --color-score-high: rgb(var(--c-accent-green));
+  --color-score-mid: rgb(var(--c-accent-yellow));
+  --color-score-low: rgb(var(--c-accent-red));
 }
 
 * {
@@ -93,9 +123,22 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
+}
+
+/* iOS/iPadOS zoom the page when a focused field is below 16px. On touch
+   devices keep every text field at 16px so focusing search or a note never
+   rescales the whole app. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* Hide scrollbars utility */
@@ -181,10 +224,17 @@ textarea:focus-visible {
 
 /* Dark mode: dampen the matte just below pure white so white-canvas figures
    sit calmly against the dark page instead of glowing. */
-html[data-theme='dark'] .reader-content img,
-html[data-theme='dark'] .reader-hero {
+html[data-theme='dark'] .reader-content img {
   background-color: #f4f5f6;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* The hero is almost always a full-bleed photo or illustration: no matte,
+   otherwise sub-pixel rounding leaves a bright hairline along its edges. */
+.reader-hero,
+html[data-theme='dark'] .reader-hero {
+  background-color: transparent;
+  box-shadow: none;
 }
 
 /* Figures */
@@ -408,3 +458,65 @@ mark[data-hid].highlight-purple { background: rgba(168, 85, 247, 0.25); border-b
 @media (prefers-reduced-motion: reduce) {
   .briefing-rise { animation: none; opacity: 1; }
 }
+
+/* ── Signal meter ────────────────────────────────────────────────────────
+   While a score is pending the four bars sweep left to right, like a radar
+   looking for a signal. */
+@keyframes signal-scan {
+  0%, 60%, 100% { opacity: 0.22; }
+  25% { opacity: 1; }
+}
+.signal-scan > span {
+  animation: signal-scan 1.6s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 140ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .signal-scan > span { animation: none; opacity: 0.5; }
+}
+
+/* ── Reading preferences ─────────────────────────────────────────────── */
+.reader-sans .reader-content,
+.reader-sans .reader-plain {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+.reader-title {
+  font-family: 'Lora', Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.reader-sans .reader-title {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* ── Panes & overlays ────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: none; }
+}
+.animate-fade-in { animation: fade-in 160ms ease-out both; }
+.animate-pop-in { animation: pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sheet-up { animation: sheet-up 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-pop-in,
+  .animate-sheet-up { animation: none; }
+}
+
+/* Momentum scrolling and no scroll chaining into the page on iPad. */
+.scroll-pane {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.text-balance { text-wrap: balance; }

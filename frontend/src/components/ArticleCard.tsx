@@ -1,12 +1,10 @@
 import { useRef, useState } from 'react'
-import { formatDistanceToNow } from 'date-fns'
-import { fr } from 'date-fns/locale'
-import { AlertTriangle, Bookmark, BookmarkCheck, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { AlertTriangle, BookmarkCheck, BookmarkMinus, Check, ThumbsDown, ThumbsUp } from 'lucide-react'
 import type { ArticleListItem } from '../types'
-import { ReadTimeBadge } from './ReadTimeBadge'
 import { useArticlesStore } from '../store/articles'
 import { ScoreBadge } from './ui'
 import { ArticleLensStrip } from './ArticleLenses'
+import { articleDate, longDate, shortAgo } from '../format'
 
 interface ArticleCardProps {
   article: ArticleListItem
@@ -14,151 +12,176 @@ interface ArticleCardProps {
   onClick: () => void
 }
 
-const SWIPE_THRESHOLD = 60
+/** Horizontal travel needed to commit a swipe action. */
+const SWIPE_THRESHOLD = 72
+/** Movement before deciding whether the gesture is a swipe or a scroll. */
+const INTENT_SLOP = 8
 
 export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
-  const { markRead, toggleBookmark } = useArticlesStore()
+  const markRead = useArticlesStore(s => s.markRead)
+  const toggleBookmark = useArticlesStore(s => s.toggleBookmark)
 
-  const touchStartX = useRef<number>(0)
-  const touchStartY = useRef<number>(0)
-  const [swipeOffset, setSwipeOffset] = useState(0)
-  const [swiping, setSwiping] = useState(false)
+  const start = useRef({ x: 0, y: 0 })
+  const intent = useRef<'undecided' | 'swipe' | 'scroll'>('undecided')
+  const [offset, setOffset] = useState(0)
+  const [dragging, setDragging] = useState(false)
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX
-    touchStartY.current = e.touches[0].clientY
-    setSwiping(true)
+    start.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    intent.current = 'undecided'
   }
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (!swiping) return
-    const dx = e.touches[0].clientX - touchStartX.current
-    const dy = Math.abs(e.touches[0].clientY - touchStartY.current)
-    if (dy > 20) {
-      setSwiping(false)
-      setSwipeOffset(0)
-      return
+    const dx = e.touches[0].clientX - start.current.x
+    const dy = e.touches[0].clientY - start.current.y
+    if (intent.current === 'undecided') {
+      if (Math.abs(dx) < INTENT_SLOP && Math.abs(dy) < INTENT_SLOP) return
+      // Lock the gesture: a mostly vertical move belongs to the list scroll.
+      intent.current = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'swipe' : 'scroll'
+      if (intent.current === 'swipe') setDragging(true)
     }
-    setSwipeOffset(dx)
+    if (intent.current === 'swipe') {
+      // Resist past the threshold so the card never flies off screen.
+      const limit = SWIPE_THRESHOLD * 1.6
+      setOffset(Math.max(-limit, Math.min(limit, dx)))
+    }
   }
 
   const handleTouchEnd = () => {
-    if (swipeOffset < -SWIPE_THRESHOLD) {
-      markRead(article.id)
-    } else if (swipeOffset > SWIPE_THRESHOLD) {
-      toggleBookmark(article.id)
+    if (intent.current === 'swipe') {
+      if (offset <= -SWIPE_THRESHOLD && !article.read_at) markRead(article.id)
+      else if (offset >= SWIPE_THRESHOLD) toggleBookmark(article.id)
     }
-    setSwiping(false)
-    setSwipeOffset(0)
+    intent.current = 'undecided'
+    setDragging(false)
+    setOffset(0)
   }
 
-  const relativeDate = article.published_at
-    ? formatDistanceToNow(new Date(article.published_at), { addSuffix: true, locale: fr })
-    : formatDistanceToNow(new Date(article.created_at), { addSuffix: true, locale: fr })
-
+  const date = articleDate(article)
   const isRead = Boolean(article.read_at)
+  const excerpt = article.summary_bullets[0]
+  const tags = article.tags.slice(0, 2)
+  const armed = Math.abs(offset) >= SWIPE_THRESHOLD
 
   return (
-    <div
-      className={`
-        group relative cursor-pointer select-none overflow-hidden
-        border-b border-border-subtle
-        transition-all duration-150
-        ${selected
-          ? 'bg-accent-blue/8 shadow-[inset_3px_0_0_var(--color-accent-blue)]'
-          : 'hover:bg-bg-hover/80'
-        }
-        ${isRead ? 'opacity-60' : ''}
-      `}
-      style={{
-        transform: swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
-        transition: swiping ? 'none' : 'transform 0.2s ease',
-      }}
-      onClick={onClick}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-    >
-      {/* Swipe left indicator (mark read) */}
-      {swipeOffset < -20 && (
-        <div className="absolute right-0 top-0 bottom-0 flex items-center px-4 bg-accent-green text-white text-xs font-medium">
-          Read
-        </div>
-      )}
-      {/* Swipe right indicator (bookmark) */}
-      {swipeOffset > 20 && (
-        <div className="absolute left-0 top-0 bottom-0 flex items-center px-4 bg-accent-blue text-white text-xs font-medium">
-          <Bookmark className="w-4 h-4" />
+    <div className="relative overflow-hidden border-b border-border-subtle">
+      {/* Action revealed behind the card while swiping */}
+      {offset !== 0 && (
+        <div
+          aria-hidden
+          className={`
+            absolute inset-0 flex items-center px-5 text-xs font-semibold transition-colors
+            ${offset > 0
+              ? `justify-start ${armed ? 'bg-accent-blue/25' : 'bg-accent-blue/10'} text-accent-blue`
+              : `justify-end ${armed ? 'bg-accent-green/25' : 'bg-accent-green/10'} text-accent-green`}
+          `}
+        >
+          {offset > 0 ? (
+            <span className="flex items-center gap-1.5">
+              {article.bookmarked ? <BookmarkMinus className="h-4 w-4" /> : <BookmarkCheck className="h-4 w-4" />}
+              {article.bookmarked ? 'Retirer des favoris' : 'Favori'}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              {isRead ? 'Déjà lu' : 'Marquer lu'}
+              <Check className="h-4 w-4" />
+            </span>
+          )}
         </div>
       )}
 
-      <div className="p-3.5">
-        <div className="mb-2 flex items-start justify-between gap-3">
-          <div className="min-w-0 text-[11px] leading-5 text-text-muted">
-            <span className="font-semibold text-text-secondary">{article.feed_name}</span>
-            <span className="px-1.5 text-border-default">/</span>
-            <span>{relativeDate}</span>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-current={selected || undefined}
+        onClick={onClick}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onClick()
+          }
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        className={`
+          group relative cursor-pointer select-none px-4 py-3.5 outline-offset-[-2px]
+          ${selected ? 'bg-bg-surface' : 'bg-bg-base hover:bg-bg-surface'}
+        `}
+        style={{
+          transform: offset ? `translateX(${offset}px)` : undefined,
+          transition: dragging ? 'none' : 'transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms',
+        }}
+      >
+        {selected && (
+          <span aria-hidden className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-accent-blue" />
+        )}
+
+        <div className="mb-1.5 flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-xs leading-5">
+            {!isRead && (
+              <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-blue" aria-label="Non lu" />
+            )}
+            <span className={`truncate font-medium ${isRead ? 'text-text-muted' : 'text-text-secondary'}`}>
+              {article.feed_name}
+            </span>
+            <time
+              dateTime={date.toISOString()}
+              title={longDate(date)}
+              className="flex-shrink-0 tabular-nums text-text-muted"
+            >
+              {shortAgo(date)}
+            </time>
           </div>
-          <ScoreBadge score={article.score} compact />
+          <ScoreBadge score={article.score} status={article.scoring_status} compact />
         </div>
 
-        {/* Title */}
         <h3
           className={`
-            mb-2 line-clamp-2 text-[15px] font-semibold leading-snug
-            ${isRead ? 'text-text-secondary' : 'text-text-primary'}
+            line-clamp-3 text-[15px] font-semibold leading-snug
+            ${isRead ? 'text-text-muted' : 'text-text-primary'}
           `}
         >
           {article.title}
         </h3>
 
-        <ArticleLensStrip article={article} max={2} compact className="mb-2.5" />
-
-        {/* Summary bullets */}
-        {article.summary_bullets.length > 0 && (
-          <ul className="mb-2.5 space-y-1">
-            {article.summary_bullets.slice(0, 2).map((bullet, i) => (
-              <li key={i} className="flex gap-1.5 text-xs leading-relaxed text-text-secondary">
-                <span className="mt-[0.55em] h-1 w-1 flex-shrink-0 rounded-full bg-accent-blue/70" />
-                <span className="line-clamp-1">{bullet}</span>
-              </li>
-            ))}
-          </ul>
+        {excerpt && (
+          <p className={`mt-1.5 line-clamp-2 text-[13px] leading-relaxed ${isRead ? 'text-text-muted' : 'text-text-secondary'}`}>
+            {excerpt}
+          </p>
         )}
 
-        {/* Tags */}
-        {article.tags.length > 0 && (
-          <div className="mb-2.5 flex flex-wrap gap-1">
-            {article.tags.slice(0, 4).map(tag => (
+        <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
+          <ArticleLensStrip article={article} max={1} compact skipFresh className="flex-shrink-0" />
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-hidden">
+            {tags.map(tag => (
               <span
                 key={tag}
-                className="rounded bg-bg-elevated/80 px-1.5 py-0.5 text-[10px] font-medium text-text-muted"
+                className="truncate rounded bg-bg-elevated px-1.5 py-0.5 text-[11px] text-text-muted"
               >
                 {tag}
               </span>
             ))}
           </div>
-        )}
-
-        {/* Meta */}
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs text-text-muted min-w-0">
-            <ReadTimeBadge minutes={article.reading_time} />
-            {isRead && <span className="rounded bg-bg-elevated/80 px-1.5 py-0.5 text-[10px]">Lu</span>}
-          </div>
-          <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+          <div className="ml-auto flex flex-shrink-0 items-center gap-2 text-text-muted">
             {article.user_feedback === 1 && (
-              <ThumbsUp className="h-3.5 w-3.5 text-accent-green" />
+              <ThumbsUp className="h-3.5 w-3.5 text-accent-green" aria-label="Aimé" />
             )}
             {article.user_feedback === -1 && (
-              <ThumbsDown className="h-3.5 w-3.5 text-accent-red" />
+              <ThumbsDown className="h-3.5 w-3.5 text-accent-red" aria-label="Pas aimé" />
             )}
             {article.bookmarked && (
-              <BookmarkCheck className="w-3.5 h-3.5 text-accent-blue" />
+              <BookmarkCheck className="h-3.5 w-3.5 text-accent-blue" aria-label="Favori" />
             )}
             {article.extraction_failed && (
-              <AlertTriangle className="h-3.5 w-3.5 text-accent-yellow" />
+              <span title="Contenu non extrait : ouvre l’original">
+                <AlertTriangle className="h-3.5 w-3.5 text-accent-yellow" aria-label="Extraction échouée" />
+              </span>
             )}
+            {article.reading_time ? (
+              <span className="text-[11px] tabular-nums">{article.reading_time} min</span>
+            ) : null}
           </div>
         </div>
       </div>

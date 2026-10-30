@@ -22,12 +22,44 @@ interface ArticlesState {
   searchArticles: (query: string) => Promise<void>
   clearSearch: () => void
   setFilter: (partial: Partial<ArticleFilter>) => void
-  prependArticle: (article: ArticleListItem) => void
+  /** Insert a freshly scored article, or refresh it in place if already loaded. */
+  upsertArticle: (article: ArticleListItem) => void
   setSelectedId: (id: number | null) => void
 }
 
 const PAGE_SIZE = 50
 const PAPER_CATEGORY = 'Papers'
+
+/**
+ * Fields owned by the scorer. Read state, bookmark and feedback are left out on
+ * purpose: the local copy may carry an optimistic mutation newer than the
+ * server snapshot that came with the event.
+ */
+export function scoringPatch(article: Partial<ArticleListItem>): Partial<ArticleListItem> {
+  const patch: Partial<ArticleListItem> = {}
+  const keys = [
+    'score',
+    'score_details',
+    'tags',
+    'summary_bullets',
+    'reason',
+    'scoring_status',
+    'score_attempts',
+    'scored_at',
+    'reading_time',
+    'extraction_failed',
+  ] as const
+  for (const key of keys) {
+    if (article[key] !== undefined) (patch as Record<string, unknown>)[key] = article[key]
+  }
+  return patch
+}
+
+/** True while the scorer has not produced a score yet and has not given up. */
+export function isScorePending(article: Pick<ArticleListItem, 'score' | 'scoring_status'>): boolean {
+  if (article.score !== null && article.score !== undefined) return false
+  return article.scoring_status !== 'failed'
+}
 
 function buildQueryParams(filter: ArticleFilter, limit: number, offset: number): string {
   const params = new URLSearchParams()
@@ -287,10 +319,28 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     get().fetchArticles(true)
   },
 
-  prependArticle: (article: ArticleListItem) => {
+  upsertArticle: (article: ArticleListItem) => {
     set(state => {
-      // Skip if already in list
-      if (state.articles.some(a => a.id === article.id)) return {}
+      // The API broadcasts an article once the scorer is done with it. Most of
+      // the time it is already on screen with a pending score: refresh it in
+      // place (without moving it under the reader's finger).
+      const patch = scoringPatch(article)
+      const inList = state.articles.some(a => a.id === article.id)
+      const inSearch = state.searchResults.some(a => a.id === article.id)
+      const isSelected = state.selectedArticle?.id === article.id
+      if (inList || inSearch || isSelected) {
+        return {
+          articles: inList
+            ? state.articles.map(a => a.id === article.id ? { ...a, ...patch } : a)
+            : state.articles,
+          searchResults: inSearch
+            ? state.searchResults.map(a => a.id === article.id ? { ...a, ...patch } : a)
+            : state.searchResults,
+          selectedArticle: isSelected && state.selectedArticle
+            ? { ...state.selectedArticle, ...patch }
+            : state.selectedArticle,
+        }
+      }
 
       const { filter } = state
 

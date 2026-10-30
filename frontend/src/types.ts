@@ -8,6 +8,12 @@ export interface Feed {
   article_count?: number
 }
 
+/**
+ * Where an article stands in the LLM scoring queue (see API `scoring_status`).
+ * `queued`/`processing`/`retry` mean a score is still on its way.
+ */
+export type ScoringStatus = 'queued' | 'processing' | 'retry' | 'failed' | 'done'
+
 export interface Article {
   id: number
   feed_id: number
@@ -29,6 +35,9 @@ export interface Article {
   created_at: string
   user_feedback: number | null
   reading_time: number | null
+  scoring_status?: ScoringStatus
+  score_attempts?: number
+  scored_at?: string | null
   tags: string[]
   summary_bullets: string[]
   images: string[]
@@ -53,6 +62,9 @@ export interface ArticleListItem {
   feed_category: string
   user_feedback: number | null
   reading_time: number | null
+  scoring_status?: ScoringStatus
+  score_attempts?: number
+  scored_at?: string | null
   tags: string[]
   summary_bullets: string[]
   score_details?: Record<string, unknown>

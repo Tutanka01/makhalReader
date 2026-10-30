@@ -1,5 +1,6 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import type { ScoringStatus } from '../types'
 
 type Tone = 'default' | 'active' | 'success' | 'warning' | 'danger'
 
@@ -25,22 +26,24 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   active?: boolean
 }
 
-export function IconButton({
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({
   icon: Icon,
   label,
   tone = 'default',
   active = false,
   className = '',
   ...props
-}: IconButtonProps) {
+}, ref) {
   return (
     <button
+      ref={ref}
       type="button"
       aria-label={label}
+      aria-pressed={active || undefined}
       title={label}
       className={`
-        inline-flex h-8 w-8 items-center justify-center rounded-md border
-        transition-colors duration-150
+        inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border
+        transition-colors duration-150 touch:h-10 touch:w-10
         hover:border-transparent hover:bg-bg-hover hover:text-text-primary
         disabled:pointer-events-none disabled:opacity-40
         ${toneClass(active && tone === 'default' ? 'active' : tone)}
@@ -51,39 +54,96 @@ export function IconButton({
       <Icon className="h-4 w-4" />
     </button>
   )
+})
+
+export type ScoreTier = 'high' | 'mid' | 'low'
+
+/** Score bands shared by every score display: 8+ strong signal, 5+ worth a look. */
+export function scoreTier(score: number): ScoreTier {
+  if (score >= 8) return 'high'
+  if (score >= 5) return 'mid'
+  return 'low'
+}
+
+/** Lit bars on the 4-bar signal meter for a 0–10 score. */
+export function signalBars(score: number): number {
+  return Math.max(0, Math.min(4, Math.ceil(score / 2.5)))
+}
+
+const TIER_CLASS: Record<ScoreTier, string> = {
+  high: 'text-score-high bg-score-high/10',
+  mid: 'text-score-mid bg-score-mid/10',
+  low: 'text-score-low bg-score-low/10',
+}
+
+const BAR_HEIGHTS = { compact: [4, 6, 8, 10], regular: [5, 8, 11, 14] }
+
+export function SignalBars({ lit, compact, scanning = false }: { lit: number; compact: boolean; scanning?: boolean }) {
+  const heights = compact ? BAR_HEIGHTS.compact : BAR_HEIGHTS.regular
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex items-end gap-[2px] ${scanning ? 'signal-scan' : ''}`}
+      style={{ height: heights[3] }}
+    >
+      {heights.map((h, i) => (
+        <span
+          key={i}
+          className={`w-[3px] rounded-[1px] bg-current ${scanning || i >= lit ? 'opacity-25' : ''}`}
+          style={{ height: h, ['--i' as string]: i }}
+        />
+      ))}
+    </span>
+  )
 }
 
 interface ScoreBadgeProps {
   score: number | null | undefined
+  /** Scoring queue state; a missing score with a non-failed status reads as "in progress". */
+  status?: ScoringStatus
   compact?: boolean
   className?: string
 }
 
-export function ScoreBadge({ score, compact = false, className = '' }: ScoreBadgeProps) {
+/**
+ * The app's signal meter: four bars (like reception strength) plus the score.
+ * While the LLM has not scored the article yet the bars sweep, so an empty
+ * score reads as work in progress rather than missing data.
+ */
+export function ScoreBadge({ score, status, compact = false, className = '' }: ScoreBadgeProps) {
+  const size = compact ? 'h-6 gap-1.5 px-1.5 text-[11px]' : 'h-7 gap-2 px-2 text-xs'
+
   if (score === null || score === undefined) {
+    const failed = status === 'failed'
     return (
-      <span className={`inline-flex items-center rounded-md bg-bg-elevated px-2 py-1 font-mono text-xs text-text-muted ${className}`}>
-        --
+      <span
+        role="img"
+        aria-label={failed ? 'Score indisponible : le scoring a échoué' : 'Score en cours de calcul'}
+        title={failed ? 'Le scoring IA a échoué pour cet article' : 'L’IA évalue cet article…'}
+        className={`
+          inline-flex flex-shrink-0 items-center rounded-md font-medium
+          ${failed ? 'bg-bg-elevated text-text-muted' : 'bg-accent-blue/8 text-accent-blue'}
+          ${size} ${className}
+        `}
+      >
+        <SignalBars lit={0} compact={compact} scanning={!failed} />
+        {failed ? <span>n/a</span> : !compact && <span>Analyse…</span>}
       </span>
     )
   }
 
-  const tone =
-    score >= 8 ? 'text-score-high bg-score-high/10'
-    : score >= 5 ? 'text-score-mid bg-score-mid/10'
-    : 'text-score-low bg-score-low/10'
-
   return (
     <span
-      className={`
-        inline-flex items-baseline justify-center rounded-md font-mono font-semibold tabular-nums
-        ${compact ? 'min-w-10 px-1.5 py-0.5 text-[11px]' : 'min-w-12 px-2 py-1 text-xs'}
-        ${tone}
-        ${className}
-      `}
+      role="img"
+      aria-label={`Score IA ${score.toFixed(1)} sur 10`}
       title={`Score IA : ${score.toFixed(1)}/10`}
+      className={`
+        inline-flex flex-shrink-0 items-center rounded-md font-semibold tabular-nums
+        ${TIER_CLASS[scoreTier(score)]} ${size} ${className}
+      `}
     >
-      {score.toFixed(1)}
+      <SignalBars lit={signalBars(score)} compact={compact} />
+      <span>{score.toFixed(1)}</span>
     </span>
   )
 }

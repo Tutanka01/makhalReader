@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Virtuoso } from 'react-virtuoso'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import {
   CheckCheck,
   Inbox,
@@ -12,9 +12,9 @@ import {
 import { ArticleCard } from './ArticleCard'
 import { FilterPopover } from './FilterPopover'
 import { MissionSelect, filterForMission, missionFromFilter, type MissionKey } from './MissionSelect'
-import { useArticlesStore } from '../store/articles'
+import { isScorePending, useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
-import { IconButton } from './ui'
+import { IconButton, SignalBars } from './ui'
 import { LENS_FILTERS } from '../lenses'
 
 interface ArticleListProps {
@@ -90,6 +90,7 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
   const touchStartY = useRef(0)
   const isPulling = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
     fetchArticles(true)
@@ -139,6 +140,14 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
 
   const isSearchActive = Boolean(searchQuery.trim())
   const displayedArticles = isSearchActive ? searchResults : articles
+  const pendingCount = displayedArticles.filter(isScorePending).length
+
+  // Keep the selected card on screen when j/k moves the selection.
+  useEffect(() => {
+    if (selectedId === null) return
+    const index = displayedArticles.findIndex(a => a.id === selectedId)
+    if (index >= 0) virtuosoRef.current?.scrollIntoView({ index, behavior: 'smooth' })
+  }, [selectedId]) // only on selection change, not when the page grows
 
   // Filters diverging from the plain mission presets (category scope, read-status
   // override) are only visible inside the popover — surface them on the trigger.
@@ -158,7 +167,7 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
       )}
 
       {/* Toolbar — mission selector + list actions */}
-      <div className="relative flex flex-shrink-0 items-center gap-1 border-b border-border-subtle bg-bg-surface/95 px-2 py-2">
+      <div className="relative z-10 flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-border-subtle bg-bg-surface px-2">
         <MissionSelect
           value={activeMission}
           count={displayedArticles.length}
@@ -179,15 +188,16 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
           {filter.status !== 'read' && (
             <button
               onClick={handleMarkAllRead}
-              className={`inline-flex h-8 items-center justify-center rounded-md border text-xs font-medium transition-all duration-150 ${
+              className={`inline-flex h-8 items-center justify-center rounded-md border text-xs font-medium transition-all duration-150 touch:h-10 ${
                 confirmingReadAll
                   ? 'w-auto gap-1 border-accent-red/40 bg-accent-red/12 px-2 text-accent-red'
-                  : 'w-8 border-transparent bg-transparent text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                  : 'w-8 border-transparent bg-transparent text-text-muted hover:bg-bg-hover hover:text-text-primary touch:w-10'
               }`}
-              title={confirmingReadAll ? 'Confirmer' : 'Tout marquer comme lu'}
+              title={confirmingReadAll ? 'Confirmer : tout marquer comme lu' : 'Tout marquer comme lu'}
+              aria-label={confirmingReadAll ? 'Confirmer : tout marquer comme lu' : 'Tout marquer comme lu'}
             >
               <CheckCheck className="h-4 w-4 flex-shrink-0" />
-              {confirmingReadAll && <span>Confirmer</span>}
+              {confirmingReadAll && <span>Tout lire ?</span>}
             </button>
           )}
           <div ref={filterButtonRef} className="relative">
@@ -213,25 +223,40 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
 
       {/* Search bar */}
       {searchOpen && (
-        <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-base px-3 py-2.5 flex-shrink-0">
-          <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Escape') closeSearch() }}
-            placeholder="Titre, source, tag..."
-            className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
-          />
-          {isSearchActive && (
-            <span className="text-xs text-text-muted tabular-nums flex-shrink-0">
-              {isSearching ? '…' : `${searchResults.length}`}
-            </span>
-          )}
-          <button onClick={closeSearch} className="p-0.5 rounded text-text-muted hover:text-text-primary">
-            <X className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-base px-3 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-bg-elevated px-2.5 focus-within:ring-1 focus-within:ring-accent-blue/40">
+            <Search className="h-3.5 w-3.5 flex-shrink-0 text-text-muted" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              enterKeyHint="search"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape') closeSearch() }}
+              placeholder="Titre, source, tag…"
+              aria-label="Rechercher dans les articles"
+              className="h-8 min-w-0 flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none touch:h-10 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {isSearchActive && (
+              <span className="flex-shrink-0 text-xs tabular-nums text-text-muted">
+                {isSearching ? '…' : `${searchResults.length}`}
+              </span>
+            )}
+          </div>
+          <IconButton onClick={closeSearch} icon={X} label="Fermer la recherche" />
+        </div>
+      )}
+
+      {/* Scoring progress — explains the sweeping meters on pending cards */}
+      {pendingCount > 0 && !isSearching && (
+        <div
+          className="flex flex-shrink-0 items-center gap-2 border-b border-border-subtle bg-accent-blue/[0.04] px-4 py-1.5 text-[11px] text-text-muted"
+          role="status"
+        >
+          <span className="text-accent-blue"><SignalBars lit={0} compact scanning /></span>
+          <span className="truncate" title="Les scores s’affichent dès qu’ils arrivent, sans recharger.">
+            {pendingCount} article{pendingCount > 1 ? 's' : ''} en cours d’évaluation par l’IA
+          </span>
         </div>
       )}
 
@@ -264,7 +289,8 @@ export function ArticleList({ feeds, onSelect, selectedId }: ArticleListProps) {
       {/* Article list */}
       {!isSearching && displayedArticles.length > 0 && (
         <Virtuoso
-          className="flex-1"
+          ref={virtuosoRef}
+          className="flex-1 overscroll-contain"
           data={displayedArticles}
           endReached={isSearchActive ? undefined : loadMore}
           overscan={200}

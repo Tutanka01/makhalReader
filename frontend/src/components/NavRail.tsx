@@ -1,4 +1,4 @@
-import { BarChart2, LogOut, Moon, Newspaper, Radar, Settings2, Sparkles, Sun } from 'lucide-react'
+import { BarChart2, Keyboard, LogOut, Moon, Newspaper, Radar, Settings2, Sparkles, Sun } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Theme } from '../theme'
 
@@ -14,21 +14,20 @@ interface NavProps {
   view: AppView
   onViewChange: (v: AppView) => void
   onOpenFeedManager: () => void
+  onOpenHelp?: () => void
   onLogout: () => void
   theme: Theme
   onToggleTheme: () => void
 }
 
-function RailButton({
+function ActionButton({
   icon: Icon,
   label,
-  active = false,
   danger = false,
   onClick,
 }: {
   icon: LucideIcon
   label: string
-  active?: boolean
   danger?: boolean
   onClick: () => void
 }) {
@@ -38,66 +37,92 @@ function RailButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      aria-current={active ? 'page' : undefined}
       className={`
-        relative flex h-10 w-10 items-center justify-center rounded-lg
-        transition-colors duration-150
-        ${active
-          ? 'bg-accent-blue/12 text-accent-blue'
-          : `text-text-muted hover:bg-bg-hover ${danger ? 'hover:text-accent-red' : 'hover:text-text-primary'}`
-        }
+        flex h-10 w-10 items-center justify-center rounded-lg text-text-muted
+        transition-colors duration-150 hover:bg-bg-hover touch:h-11 touch:w-11
+        ${danger ? 'hover:text-accent-red' : 'hover:text-text-primary'}
       `}
     >
       <Icon className="h-[18px] w-[18px]" />
-      {active && (
-        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent-blue" />
-      )}
     </button>
   )
 }
 
 async function logout(onLogout: () => void) {
-  await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
+  await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
   onLogout()
 }
 
-/** Desktop-only vertical rail: global navigation + app-level actions. */
-export function NavRail({ view, onViewChange, onOpenFeedManager, onLogout, theme, onToggleTheme }: NavProps) {
+function BrandMark({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
-    <nav className="flex h-full w-14 flex-shrink-0 flex-col items-center border-r border-border-subtle bg-bg-surface py-3">
-      <div
-        className="mb-5 flex h-9 w-9 items-center justify-center rounded-lg border border-accent-blue/20 bg-accent-blue/12 text-accent-blue"
-        title="MakhalReader — Cockpit de veille personnelle"
-      >
-        <Radar className="h-4 w-4" />
+    <div
+      className={`
+        flex flex-shrink-0 items-center justify-center rounded-lg bg-accent-blue text-on-accent
+        ${size === 'sm' ? 'h-8 w-8' : 'h-9 w-9'}
+      `}
+      title="MakhalReader"
+    >
+      <Radar className="h-[18px] w-[18px]" strokeWidth={2.25} />
+    </div>
+  )
+}
+
+/** Vertical rail (iPad and desktop): main views with labels, app-level actions below. */
+export function NavRail({ view, onViewChange, onOpenFeedManager, onOpenHelp, onLogout, theme, onToggleTheme }: NavProps) {
+  return (
+    <nav
+      aria-label="Navigation principale"
+      className="flex h-full w-16 flex-shrink-0 flex-col items-center border-r border-border-subtle bg-bg-surface pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3"
+    >
+      <div className="mb-5">
+        <BrandMark />
       </div>
 
-      <div className="flex flex-col items-center gap-1">
-        {VIEWS.map(v => (
-          <RailButton
-            key={v.value}
-            icon={v.icon}
-            label={v.label}
-            active={view === v.value}
-            onClick={() => onViewChange(v.value)}
-          />
-        ))}
+      <div className="flex w-full flex-col items-center gap-1 px-1.5">
+        {VIEWS.map(v => {
+          const Icon = v.icon
+          const active = view === v.value
+          return (
+            <button
+              key={v.value}
+              type="button"
+              onClick={() => onViewChange(v.value)}
+              aria-current={active ? 'page' : undefined}
+              className={`
+                group flex w-full flex-col items-center gap-1 rounded-lg py-2 text-[10px] font-medium
+                transition-colors duration-150
+                ${active ? 'text-accent-blue' : 'text-text-muted hover:text-text-primary'}
+              `}
+            >
+              <span
+                className={`
+                  flex h-8 w-11 items-center justify-center rounded-full transition-colors duration-150
+                  ${active ? 'bg-accent-blue/14' : 'group-hover:bg-bg-hover'}
+                `}
+              >
+                <Icon className="h-[18px] w-[18px]" />
+              </span>
+              {v.label}
+            </button>
+          )
+        })}
       </div>
 
       <div className="mt-auto flex flex-col items-center gap-1">
-        <RailButton icon={Settings2} label="Gérer les feeds" onClick={onOpenFeedManager} />
-        <RailButton
+        <ActionButton icon={Settings2} label="Gérer les sources" onClick={onOpenFeedManager} />
+        <ActionButton
           icon={theme === 'light' ? Moon : Sun}
           label={theme === 'light' ? 'Passer en mode sombre' : 'Passer en mode clair'}
           onClick={onToggleTheme}
         />
-        <RailButton icon={LogOut} label="Se déconnecter" danger onClick={() => logout(onLogout)} />
+        {onOpenHelp && <ActionButton icon={Keyboard} label="Raccourcis clavier  ?" onClick={onOpenHelp} />}
+        <ActionButton icon={LogOut} label="Se déconnecter" danger onClick={() => logout(onLogout)} />
       </div>
     </nav>
   )
 }
 
-/** Mobile-only compact header: brand + app-level actions. */
+/** Phone header: brand + app-level actions. */
 export function MobileHeader({
   onOpenFeedManager,
   onLogout,
@@ -105,30 +130,31 @@ export function MobileHeader({
   onToggleTheme,
 }: Omit<NavProps, 'view' | 'onViewChange'>) {
   return (
-    <header className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3 py-2">
+    <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3">
       <div className="flex min-w-0 items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent-blue/20 bg-accent-blue/12 text-accent-blue">
-          <Radar className="h-4 w-4" />
-        </div>
-        <h1 className="truncate text-sm font-semibold text-text-primary">MakhalReader</h1>
+        <BrandMark size="sm" />
+        <h1 className="truncate text-[15px] font-semibold text-text-primary">MakhalReader</h1>
       </div>
       <div className="flex items-center gap-0.5">
-        <RailButton icon={Settings2} label="Gérer les feeds" onClick={onOpenFeedManager} />
-        <RailButton
+        <ActionButton icon={Settings2} label="Gérer les sources" onClick={onOpenFeedManager} />
+        <ActionButton
           icon={theme === 'light' ? Moon : Sun}
           label={theme === 'light' ? 'Passer en mode sombre' : 'Passer en mode clair'}
           onClick={onToggleTheme}
         />
-        <RailButton icon={LogOut} label="Se déconnecter" danger onClick={() => logout(onLogout)} />
+        <ActionButton icon={LogOut} label="Se déconnecter" danger onClick={() => logout(onLogout)} />
       </div>
     </header>
   )
 }
 
-/** Mobile-only bottom tab bar: the three main views. */
+/** Phone tab bar: the three main views, clear of the home indicator. */
 export function MobileNavBar({ view, onViewChange }: Pick<NavProps, 'view' | 'onViewChange'>) {
   return (
-    <nav className="flex flex-shrink-0 border-t border-border-subtle bg-bg-surface pb-[env(safe-area-inset-bottom)]">
+    <nav
+      aria-label="Navigation principale"
+      className="flex flex-shrink-0 border-t border-border-subtle bg-bg-surface pb-[env(safe-area-inset-bottom)]"
+    >
       {VIEWS.map(v => {
         const Icon = v.icon
         const active = view === v.value
@@ -139,12 +165,16 @@ export function MobileNavBar({ view, onViewChange }: Pick<NavProps, 'view' | 'on
             onClick={() => onViewChange(v.value)}
             aria-current={active ? 'page' : undefined}
             className={`
-              flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium
+              flex flex-1 flex-col items-center gap-0.5 pb-1.5 pt-2 text-[11px] font-medium
               transition-colors duration-150
-              ${active ? 'text-accent-blue' : 'text-text-muted hover:text-text-primary'}
+              ${active ? 'text-accent-blue' : 'text-text-muted'}
             `}
           >
-            <Icon className="h-5 w-5" />
+            <span
+              className={`flex h-7 w-12 items-center justify-center rounded-full transition-colors ${active ? 'bg-accent-blue/14' : ''}`}
+            >
+              <Icon className="h-5 w-5" />
+            </span>
             <span>{v.label}</span>
           </button>
         )

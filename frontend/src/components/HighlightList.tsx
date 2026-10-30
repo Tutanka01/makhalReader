@@ -1,5 +1,6 @@
 import { X, Trash2 } from 'lucide-react'
 import type { Highlight } from '../types'
+import { IconButton } from './ui'
 
 const COLOR_CLASSES: Record<string, string> = {
   yellow: 'bg-yellow-400/25 border-yellow-400/50',
@@ -24,18 +25,13 @@ interface HighlightListProps {
 
 export function HighlightList({ highlights, onDelete, onClose, onScrollTo }: HighlightListProps) {
   return (
-    <div className="absolute inset-y-0 right-0 w-72 bg-bg-surface border-l border-border-subtle z-40 flex flex-col shadow-2xl">
+    <div className="animate-fade-in absolute inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border-subtle bg-bg-surface shadow-2xl sm:w-80">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
         <h3 className="text-sm font-semibold text-text-primary">
           Surlignages{highlights.length > 0 ? ` (${highlights.length})` : ''}
         </h3>
-        <button
-          onClick={onClose}
-          className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-secondary transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <IconButton onClick={onClose} icon={X} label="Fermer les surlignages" />
       </div>
 
       {/* List */}
@@ -56,7 +52,7 @@ export function HighlightList({ highlights, onDelete, onClose, onScrollTo }: Hig
                 {/* Color swatch + text */}
                 <div className="flex items-start gap-2">
                   <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${SWATCH_CLASSES[h.color] ?? 'bg-text-muted'}`} />
-                  <p className="text-xs text-text-secondary leading-relaxed line-clamp-3">
+                  <p className="line-clamp-3 pr-6 text-xs leading-relaxed text-text-secondary">
                     {h.selected_text}
                   </p>
                 </div>
@@ -71,7 +67,8 @@ export function HighlightList({ highlights, onDelete, onClose, onScrollTo }: Hig
                 {/* Delete button */}
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(h.id) }}
-                  className="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-elevated text-text-muted hover:text-accent-red transition-all"
+                  aria-label="Supprimer ce surlignage"
+                  className="absolute right-1.5 top-1.5 rounded p-1.5 text-text-muted transition-all hover:bg-bg-elevated hover:text-accent-red focus-visible:opacity-100 can-hover:opacity-0 group-hover:opacity-100"
                   title="Supprimer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

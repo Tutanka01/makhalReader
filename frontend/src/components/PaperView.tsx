@@ -14,6 +14,7 @@ import {
   Tag,
 } from 'lucide-react'
 import type { Article } from '../types'
+import { cleanReason } from '../scoreDetails'
 
 interface PaperViewProps {
   article: Article
@@ -288,12 +289,12 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                     <span className="text-text-secondary">{bullet}</span>
                   </div>
                 ))}
-                {article.reason && (
+                {cleanReason(article.reason) && (
                   <p
                     className="pt-3 mt-1 border-t border-border-subtle text-text-muted italic leading-relaxed"
                     style={{ fontSize: '0.82em' }}
                   >
-                    {article.reason}
+                    {cleanReason(article.reason)}
                   </p>
                 )}
               </div>
@@ -308,7 +309,7 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
                 className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold transition-all duration-150 active:scale-95 ${
                   pdfMode !== 'none'
                     ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/40'
-                    : 'bg-accent-blue text-white'
+                    : 'bg-accent-blue text-on-accent'
                 }`}
                 style={{ fontSize: '0.875em' }}
               >

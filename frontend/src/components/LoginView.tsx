@@ -52,7 +52,7 @@ export function LoginView({ onLogin }: Props) {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-bg-base px-6">
+    <div className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-hidden bg-bg-base px-6 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]">
       <div className="relative z-10 w-full max-w-[390px]">
 
         {/* Logo */}
@@ -125,7 +125,7 @@ export function LoginView({ onLogin }: Props) {
           <button
             type="submit"
             disabled={loading || !password}
-            className="flex w-full items-center justify-center gap-2 rounded-md bg-accent-blue px-3 py-2.5 text-sm font-semibold text-bg-base transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-accent-blue px-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {loading ? (
               <>

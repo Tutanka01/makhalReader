@@ -26,7 +26,7 @@ export function BriefingToolbar({
   onToggleMode,
 }: Props) {
   return (
-    <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface/95 px-3 py-2">
+    <div className="flex h-[52px] flex-shrink-0 items-center justify-between border-b border-border-subtle bg-bg-surface px-3">
       <div className="flex items-center gap-1">
         {onToggleSidebar && (
           <IconButton
@@ -52,7 +52,7 @@ export function BriefingToolbar({
       <div className="flex items-center gap-1">
         <button
           onClick={onToggleMode}
-          className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors hover:bg-bg-hover hover:text-text-primary ${
+          className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors hover:bg-bg-hover hover:text-text-primary touch:h-10 ${
             mode === 'history' ? 'bg-accent-blue/10 text-accent-blue' : 'text-text-secondary'
           }`}
           title={mode === 'history' ? "Revenir au briefing du jour" : "Voir l'historique des briefings"}
@@ -65,7 +65,7 @@ export function BriefingToolbar({
           <button
             onClick={onRegenerate}
             disabled={regenerating}
-            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+            className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50 touch:h-10"
             title="Régénérer le briefing"
           >
             <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
