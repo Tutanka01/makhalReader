@@ -4,7 +4,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Literal, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -459,8 +459,8 @@ def _apply_article_lens(query, lens: Optional[str]):
 
 @app.get("/api/articles", response_model=List[ArticleListItem])
 async def list_articles(
-    status: str = Query("unread", enum=["unread", "read", "all"]),
-    sort: str = Query("score", enum=["score", "date"]),
+    status: Literal["unread", "read", "all"] = Query("unread"),
+    sort: Literal["score", "date"] = Query("score"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     category: Optional[str] = Query(None),
@@ -468,7 +468,7 @@ async def list_articles(
     bookmarked: Optional[bool] = Query(None),
     url: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None, ge=0, le=10),
-    lens: Optional[str] = Query(None, enum=["latest", "opinions", "debates", "practical", "deep"]),
+    lens: Optional[Literal["latest", "opinions", "debates", "practical", "deep"]] = Query(None),
     search: Optional[str] = Query(None, max_length=200),
     db: Session = Depends(get_db),
     _: None = _auth,
