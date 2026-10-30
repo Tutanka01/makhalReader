@@ -37,7 +37,7 @@ class ScoringCalibrationTest(unittest.TestCase):
 
         self.assertEqual(result.score, 6.2)
         self.assertEqual(result.score_details["scoring_version"], SCORING_VERSION)
-        self.assertEqual(result.score_details["scoring_version"], 3)
+        self.assertEqual(result.score_details["scoring_version"], 4)
         self.assertEqual(result.score_details["adjustments"], ["practical-note", "practical-floor"])
         self.assertEqual(result.score_details["caps"], [])
 
@@ -67,7 +67,7 @@ class ScoringCalibrationTest(unittest.TestCase):
         payload = asyncio.run(health())
 
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["scoring_version"], 3)
+        self.assertEqual(payload["scoring_version"], 4)
 
     def test_malformed_json_with_prose_is_recovered(self):
         content = """

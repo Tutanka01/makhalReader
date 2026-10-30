@@ -205,11 +205,21 @@ class InternalScoringClaimRequest(BaseModel):
 
 class InternalScoreFailure(BaseModel):
     error: str = ""
+    # Provider quota/rate limit: reschedule without consuming a scoring attempt.
+    rate_limited: bool = False
+    retry_after_seconds: Optional[int] = None
 
     @field_validator("error")
     @classmethod
     def validate_error(cls, v: str) -> str:
         return str(v or "").strip()[:2000]
+
+    @field_validator("retry_after_seconds")
+    @classmethod
+    def validate_retry_after(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return None
+        return max(1, min(int(v), 86400))
 
 
 class InternalFeedFetched(BaseModel):

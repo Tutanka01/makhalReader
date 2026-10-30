@@ -37,7 +37,10 @@ Comportement :
 | `FETCH_INTERVAL_MINUTES` | Intervalle entre cycles RSS. |
 | `MAX_NEW_ARTICLES_PER_FEED` | Nouveaux articles max par feed et par cycle. |
 | `MAX_ARTICLE_AGE_DAYS` | Age max des articles ingestes. |
-| `SCORE_DELAY_SECONDS` | Delai entre appels de scoring. |
+| `SCORE_DELAY_SECONDS` | Pause apres chaque appel de scoring, par slot concurrent. |
+| `SCORING_CONCURRENCY` | Appels de scoring simultanes (defaut `1`). Garder `1` avec Ollama local; en cloud, rester sous la limite de requetes/minute du provider (OpenRouter `:free` : 20/min). |
+| `SCORING_CLAIM_BATCH_SIZE` | Articles reclames par passe du worker (au moins `SCORING_CONCURRENCY`). |
+| `PREFERENCE_CACHE_SECONDS` | Duree de reutilisation du profil de preferences par le scorer (defaut `600`, `0` = recalcul a chaque article). |
 
 Ces limites protegent contre les feeds trop bruyants et les couts LLM.
 

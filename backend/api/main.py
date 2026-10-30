@@ -64,6 +64,7 @@ SCORING_MAX_ATTEMPTS = int(os.getenv("SCORING_MAX_ATTEMPTS", "5"))
 SCORING_LOCK_TIMEOUT_MINUTES = int(os.getenv("SCORING_LOCK_TIMEOUT_MINUTES", "20"))
 SCORING_RETRY_BASE_MINUTES = int(os.getenv("SCORING_RETRY_BASE_MINUTES", "5"))
 SCORING_RETRY_MAX_MINUTES = int(os.getenv("SCORING_RETRY_MAX_MINUTES", "360"))
+SCORING_RATE_LIMIT_RETRY_SECONDS = 60
 
 # LLM config (shared with scorer service)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -882,16 +883,10 @@ def internal_list_feeds(
 ):
     if x_internal_secret != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
-    results = (
-        db.query(Feed, func.count(Article.id).label("article_count"))
-        .outerjoin(Article, Feed.id == Article.feed_id)
-        .filter(Feed.active == True)
-        .group_by(Feed.id)
-        .all()
-    )
+    feeds = db.query(Feed).filter(Feed.active == True).all()
     return [
         {"id": feed.id, "url": feed.url, "name": feed.name, "category": feed.category}
-        for feed, _ in results
+        for feed in feeds
     ]
 
 
@@ -1074,13 +1069,15 @@ def _score_retry_delay(attempts: int) -> timedelta:
     return timedelta(minutes=minutes)
 
 
-def _score_claim_payload(article: Article) -> dict:
+def _score_claim_payload(article: Article, feed: Optional[Feed] = None) -> dict:
     return {
         "article_id": article.id,
         "id": article.id,
         "title": article.title,
         "content_text": article.content_text or "",
         "rss_summary": "",
+        "feed_name": feed.name if feed else "",
+        "feed_category": feed.category if feed else "",
         "status": article.scoring_status,
         "attempts": article.score_attempts or 0,
         "next_retry_at": article.next_score_attempt_at.isoformat() if article.next_score_attempt_at else None,
@@ -1129,7 +1126,9 @@ def internal_claim_scoring_batch(
     for article in articles:
         db.refresh(article)
 
-    return {"items": [_score_claim_payload(article) for article in articles]}
+    feed_ids = {article.feed_id for article in articles}
+    feeds = {feed.id: feed for feed in db.query(Feed).filter(Feed.id.in_(feed_ids)).all()} if feed_ids else {}
+    return {"items": [_score_claim_payload(article, feeds.get(article.feed_id)) for article in articles]}
 
 
 @app.post("/api/internal/articles/{article_id}/score-failed")
@@ -1147,9 +1146,27 @@ def internal_score_article_failed(
         raise HTTPException(status_code=404, detail="Article not found")
 
     now = datetime.now(timezone.utc)
+    article.score_locked_at = None
+
+    if failure.rate_limited:
+        # The claim already counted this attempt; give it back, the article is not at fault.
+        article.score_attempts = max((article.score_attempts or 0) - 1, 0)
+        article.score_last_error = failure.error or "Rate limited by LLM provider"
+        article.scoring_status = "retry"
+        article.next_score_attempt_at = now + timedelta(
+            seconds=failure.retry_after_seconds or SCORING_RATE_LIMIT_RETRY_SECONDS
+        )
+        db.commit()
+        return {
+            "status": article.scoring_status,
+            "attempts": article.score_attempts,
+            "next_retry_at": article.next_score_attempt_at.isoformat(),
+            "max_attempts": SCORING_MAX_ATTEMPTS,
+            "rate_limited": True,
+        }
+
     attempts = max(article.score_attempts or 1, 1)
     article.score_last_error = failure.error or "Scoring failed"
-    article.score_locked_at = None
 
     if attempts >= SCORING_MAX_ATTEMPTS:
         article.scoring_status = "failed"
@@ -1191,13 +1208,54 @@ def internal_scoring_stats(
         )
         .count()
     )
+    now = datetime.now(timezone.utc)
     return {
         "total": db.query(Article).count(),
         "unscored": unscored,
         "ready": ready,
         "by_status": by_status,
         "max_attempts": SCORING_MAX_ATTEMPTS,
+        "llm_usage_24h": _scoring_usage_since(db, now - timedelta(hours=24)),
+        "llm_usage_7d": _scoring_usage_since(db, now - timedelta(days=7)),
     }
+
+
+_USAGE_COUNTERS = ("calls", "latency_ms", "prompt_tokens", "completion_tokens", "cached_tokens", "reasoning_tokens")
+
+
+def _scoring_usage_since(db: Session, since: datetime) -> dict:
+    """Sum the per-article llm_usage the scorer stores in score_details (successful scorings only)."""
+    totals = {counter: 0 for counter in _USAGE_COUNTERS}
+    cost = 0.0
+    has_cost = False
+    scored = 0
+    measured = 0
+    rows = db.query(Article.score_details_json).filter(Article.scored_at >= since).all()
+    for (raw,) in rows:
+        scored += 1
+        try:
+            usage = json.loads(raw or "{}").get("llm_usage")
+        except (ValueError, AttributeError):
+            continue
+        if not isinstance(usage, dict):
+            continue
+        measured += 1
+        for counter in _USAGE_COUNTERS:
+            value = usage.get(counter)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                totals[counter] += int(value)
+        if isinstance(usage.get("cost"), (int, float)):
+            cost += float(usage["cost"])
+            has_cost = True
+
+    result = {"scored_articles": scored, "measured_articles": measured, **totals}
+    result["cost"] = round(cost, 6) if has_cost else None
+    if measured:
+        result["avg_prompt_tokens"] = round(totals["prompt_tokens"] / measured)
+        result["avg_completion_tokens"] = round(totals["completion_tokens"] / measured)
+        result["avg_latency_ms"] = round(totals["latency_ms"] / measured)
+        result["avg_calls"] = round(totals["calls"] / measured, 2)
+    return result
 
 
 @app.post("/api/internal/scoring/requeue-failed")

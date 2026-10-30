@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -23,12 +24,17 @@ FETCH_INTERVAL_MINUTES = int(os.getenv("FETCH_INTERVAL_MINUTES", "720"))
 MAX_NEW_PER_FEED = int(os.getenv("MAX_NEW_ARTICLES_PER_FEED", "5"))
 # Articles older than this are skipped entirely (not stored, not scored).
 MAX_ARTICLE_AGE_DAYS = int(os.getenv("MAX_ARTICLE_AGE_DAYS", "7"))
-# Minimum seconds between two consecutive LLM scoring calls (global, all feeds).
+# Pause (seconds) after each LLM scoring call, per concurrent scoring slot.
 SCORE_DELAY_SECONDS = float(os.getenv("SCORE_DELAY_SECONDS", "2.0"))
+# Scoring calls in flight at once. Keep 1 for a local Ollama; a cloud provider
+# can take more, within its requests-per-minute limit.
+SCORING_CONCURRENCY = max(1, int(os.getenv("SCORING_CONCURRENCY", "1")))
 # Durable scoring worker controls how many queued articles are claimed per pass.
-SCORING_CLAIM_BATCH_SIZE = int(os.getenv("SCORING_CLAIM_BATCH_SIZE", "5"))
+SCORING_CLAIM_BATCH_SIZE = max(int(os.getenv("SCORING_CLAIM_BATCH_SIZE", "5")), SCORING_CONCURRENCY)
 SCORING_WORKER_IDLE_SECONDS = float(os.getenv("SCORING_WORKER_IDLE_SECONDS", "15"))
 SCORING_WORKER_ERROR_SECONDS = float(os.getenv("SCORING_WORKER_ERROR_SECONDS", "30"))
+# Upper bound on how long a provider 429 pauses the whole scoring worker before it probes again.
+SCORING_RATE_LIMIT_MAX_PAUSE_SECONDS = 900
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
 
@@ -61,8 +67,35 @@ def normalize_url(url: str) -> str:
     except Exception:
         return url
 
-# Global semaphore: only one LLM call at a time across all concurrent feed processing.
-_score_semaphore = asyncio.Semaphore(1)
+# Global semaphore: at most SCORING_CONCURRENCY LLM scoring calls in flight.
+_score_semaphore = asyncio.Semaphore(SCORING_CONCURRENCY)
+# time.monotonic() until which no scoring call is made, after a provider 429.
+_scoring_paused_until = 0.0
+
+
+class ScoringPaused(Exception):
+    """The LLM provider is rate limiting us; the article should simply be retried later."""
+
+    def __init__(self, retry_after: int):
+        super().__init__(f"LLM provider rate limited; retry after {retry_after}s")
+        self.retry_after = retry_after
+
+
+def scoring_pause_remaining() -> float:
+    return max(0.0, _scoring_paused_until - time.monotonic())
+
+
+def pause_scoring(retry_after: int) -> None:
+    global _scoring_paused_until
+    pause = min(retry_after, SCORING_RATE_LIMIT_MAX_PAUSE_SECONDS)
+    _scoring_paused_until = max(_scoring_paused_until, time.monotonic() + pause)
+
+
+def retry_after_seconds(resp: httpx.Response) -> int:
+    try:
+        return max(1, int(float(resp.headers.get("retry-after", "60"))))
+    except ValueError:
+        return 60
 
 
 # ---------------------------------------------------------------------------
@@ -160,10 +193,18 @@ async def claim_scoring_batch(client: httpx.AsyncClient, limit: int) -> dict | l
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-async def report_score_failed(client: httpx.AsyncClient, article_id: int, error: str) -> dict:
+async def report_score_failed(
+    client: httpx.AsyncClient,
+    article_id: int,
+    error: str,
+    retry_after: int | None = None,
+) -> dict:
+    payload: dict = {"error": error[:2000]}
+    if retry_after is not None:
+        payload.update({"rate_limited": True, "retry_after_seconds": retry_after})
     resp = await client.post(
         f"{API_BASE}/api/internal/articles/{article_id}/score-failed",
-        json={"error": error[:2000]},
+        json=payload,
         headers=INTERNAL_HEADERS,
         timeout=30,
     )
@@ -177,9 +218,14 @@ async def score_article_rate_limited(
     title: str,
     content_text: str,
     rss_summary: str,
+    feed_name: str = "",
+    feed_category: str = "",
 ):
-    """Acquire the global semaphore before calling the scorer, then wait SCORE_DELAY_SECONDS."""
+    """Acquire a scoring slot before calling the scorer, then wait SCORE_DELAY_SECONDS."""
     async with _score_semaphore:
+        remaining = scoring_pause_remaining()
+        if remaining > 0:
+            raise ScoringPaused(int(remaining) + 1)
         try:
             resp = await client.post(
                 f"{SCORER_BASE}/score",
@@ -188,9 +234,15 @@ async def score_article_rate_limited(
                     "title": title,
                     "content_text": content_text or "",
                     "rss_summary": rss_summary or "",
+                    "feed_name": feed_name or "",
+                    "feed_category": feed_category or "",
                 },
                 timeout=120,
             )
+            if resp.status_code == 429:
+                retry_after = retry_after_seconds(resp)
+                pause_scoring(retry_after)
+                raise ScoringPaused(retry_after)
             resp.raise_for_status()
             return resp.json()
         finally:
@@ -250,8 +302,17 @@ async def process_scoring_item(client: httpx.AsyncClient, item: dict):
             item.get("title") or "",
             item.get("content_text") or "",
             item.get("rss_summary") or item.get("summary") or "",
+            item.get("feed_name") or "",
+            item.get("feed_category") or "",
         )
         log.info("Scoring completed", status=result.get("status", "ok") if isinstance(result, dict) else "ok")
+    except ScoringPaused as paused:
+        try:
+            await report_score_failed(client, article_id, str(paused), retry_after=paused.retry_after)
+        except Exception as report_exc:
+            log.error("Failed to reschedule rate-limited article", report_error=compact_error(report_exc))
+            return
+        log.warning("Scoring deferred: LLM provider rate limit", retry_after=paused.retry_after)
     except Exception as exc:
         error = compact_error(exc)
         try:
@@ -285,10 +346,15 @@ async def scoring_worker_loop():
     logger.info(
         "Scoring worker running",
         claim_batch_size=SCORING_CLAIM_BATCH_SIZE,
+        concurrency=SCORING_CONCURRENCY,
         score_delay_s=SCORE_DELAY_SECONDS,
     )
     async with httpx.AsyncClient() as client:
         while True:
+            paused_for = scoring_pause_remaining()
+            if paused_for > 0:
+                logger.info("Scoring worker paused by LLM rate limit", seconds=round(paused_for))
+                await asyncio.sleep(paused_for)
             try:
                 claimed = await claim_scoring_batch(client, SCORING_CLAIM_BATCH_SIZE)
                 items = claim_items_from_response(claimed)
@@ -304,8 +370,13 @@ async def scoring_worker_loop():
                 continue
 
             logger.info("Claimed scoring batch", count=len(items))
-            for item in items:
-                await process_scoring_item(client, item)
+            results = await asyncio.gather(
+                *(process_scoring_item(client, item) for item in items),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("Scoring task crashed", error=compact_error(result))
 
 
 # ---------------------------------------------------------------------------

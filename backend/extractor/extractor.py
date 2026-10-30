@@ -832,13 +832,6 @@ async def fetch_url(client: httpx.AsyncClient, url: str) -> Optional[str]:
         return None
 
 
-async def try_google_cache(client: httpx.AsyncClient, url: str) -> Optional[str]:
-    cache_url = (
-        f"https://webcache.googleusercontent.com/search?q=cache:{quote_plus(url)}"
-    )
-    return await fetch_url(client, cache_url)
-
-
 async def try_wayback_machine(client: httpx.AsyncClient, url: str) -> Optional[str]:
     try:
         resp = await client.get(
@@ -1052,22 +1045,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                     if not images:
                         images = extract_images_from_html(content_html or "", req.url)
 
-        # ── Strategy 2: Google cache ──────────────────────────────────────
-        if not content_text or len(content_text) < MIN_CONTENT_LENGTH:
-            cache_html = await try_google_cache(client, req.url)
-            if cache_html:
-                extracted = best_extraction(cache_html, req.url)
-                if len(extracted.get("text") or "") > len(content_text or ""):
-                    content_text = extracted.get("text")
-                    content_html = extracted.get("raw_html")
-                    if extracted.get("title"):
-                        extracted_title = extracted["title"]
-                    if extracted.get("author"):
-                        author = extracted["author"]
-                    if not images:
-                        images = extract_images_from_html(cache_html, req.url)
-
-        # ── Strategy 3: Wayback Machine ───────────────────────────────────
+        # ── Strategy 2: Wayback Machine ───────────────────────────────────
         if not content_text or len(content_text) < MIN_CONTENT_LENGTH:
             wb_html = await try_wayback_machine(client, req.url)
             if wb_html:

@@ -84,10 +84,8 @@ def test_extract_sanitizes_rss_summary_fallback_before_response():
         return None
 
     old_fetch_url = extractor.fetch_url
-    old_google_cache = extractor.try_google_cache
     old_wayback = extractor.try_wayback_machine
     extractor.fetch_url = fake_fetch
-    extractor.try_google_cache = fake_fetch
     extractor.try_wayback_machine = fake_fetch
     try:
         summary = """
@@ -109,7 +107,6 @@ def test_extract_sanitizes_rss_summary_fallback_before_response():
         )
     finally:
         extractor.fetch_url = old_fetch_url
-        extractor.try_google_cache = old_google_cache
         extractor.try_wayback_machine = old_wayback
 
     assert response.content_html is not None

@@ -163,6 +163,23 @@ Augmenter :
 
 - `SCORE_DELAY_SECONDS`
 
+Mesurer la consommation reelle (tokens, cout, latence) sur 24 h et 7 jours :
+
+```bash
+docker compose exec api python -c "import json, os, urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/api/internal/scoring/stats', headers={'X-Internal-Secret': os.environ['API_SECRET']}); print(json.dumps(json.load(urllib.request.urlopen(r)), indent=2))"
+```
+
+`reasoning_tokens` eleve signale un modele qui "reflechit" avant de repondre :
+c'est du temps et des tokens de sortie en plus a chaque article.
+
+### Scoring en pause ou articles qui restent en `retry`
+
+Un `429` du provider (quota, limite par minute) met le worker en pause et
+replanifie les articles sans consommer de tentative; chercher
+`Scoring deferred: LLM provider rate limit` dans les logs `poller`. Avec un
+modele OpenRouter `:free`, la limite est de 20 requetes/minute et 50 par jour
+(1 000 par jour apres 10 $ de credits achetes).
+
 ### Production : erreur `network npm_default not found`
 
 Le reseau Docker de NPM n'a pas ce nom. Lister les reseaux :

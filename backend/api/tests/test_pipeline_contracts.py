@@ -96,6 +96,8 @@ async def test_internal_scoring_claim_marks_articles_processing():
     article = db.query(Article).filter(Article.id == 20).one()
     assert result["items"][0]["article_id"] == 20
     assert result["items"][0]["attempts"] == 1
+    assert result["items"][0]["feed_name"] == "Feed"
+    assert result["items"][0]["feed_category"] == "Infra"
     assert article.scoring_status == "processing"
     assert article.score_attempts == 1
     assert article.score_locked_at is not None
@@ -148,6 +150,82 @@ async def test_internal_score_failure_schedules_retry_then_failed():
     assert failed["status"] == "failed"
     assert article.scoring_status == "failed"
     assert article.next_score_attempt_at is None
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_failure_does_not_consume_an_attempt():
+    db = _memory_session()
+    db.add(Feed(id=1, url="https://example.test/feed.xml", name="Feed", category="Infra"))
+    db.add(
+        Article(
+            id=35,
+            feed_id=1,
+            title="Quota hit",
+            url="https://example.test/quota",
+            content_text="body",
+            created_at=datetime.now(timezone.utc),
+            scoring_status="queued",
+            score_attempts=0,
+        )
+    )
+    db.commit()
+
+    # Even at the last allowed attempt, a 429 must not push the article to "failed".
+    for _ in range(main.SCORING_MAX_ATTEMPTS + 1):
+        main.internal_claim_scoring_batch(
+            InternalScoringClaimRequest(limit=1),
+            x_internal_secret=main.API_SECRET,
+            db=db,
+        )
+        result = main.internal_score_article_failed(
+            35,
+            InternalScoreFailure(error="HTTP 429", rate_limited=True, retry_after_seconds=1),
+            x_internal_secret=main.API_SECRET,
+            db=db,
+        )
+        article = db.query(Article).filter(Article.id == 35).one()
+        article.next_score_attempt_at = None  # make it claimable again immediately
+        db.commit()
+
+    assert result["status"] == "retry"
+    assert result["rate_limited"] is True
+    assert article.score_attempts == 0
+    assert article.scoring_status == "retry"
+    assert article.score_locked_at is None
+
+
+@pytest.mark.asyncio
+async def test_scoring_stats_sum_llm_usage():
+    db = _memory_session()
+    now = datetime.now(timezone.utc)
+    db.add(Feed(id=1, url="https://example.test/feed.xml", name="Feed", category="Infra"))
+    usage = {"calls": 1, "latency_ms": 900, "prompt_tokens": 2500, "completion_tokens": 250,
+             "cached_tokens": 1300, "reasoning_tokens": 0, "cost": 0.002}
+    db.add_all(
+        [
+            Article(id=60, feed_id=1, title="a", url="https://example.test/u1", score=6.0, scored_at=now,
+                    created_at=now, scoring_status="done",
+                    score_details_json=json.dumps({"scoring_version": 4, "llm_usage": usage})),
+            Article(id=61, feed_id=1, title="b", url="https://example.test/u2", score=5.0, scored_at=now,
+                    created_at=now, scoring_status="done",
+                    score_details_json=json.dumps({"scoring_version": 4, "llm_usage": {**usage, "calls": 2}})),
+            Article(id=62, feed_id=1, title="c", url="https://example.test/u3", score=4.0, scored_at=now,
+                    created_at=now, scoring_status="done",
+                    score_details_json=json.dumps({"scoring_version": 3})),
+        ]
+    )
+    db.commit()
+
+    stats = main.internal_scoring_stats(x_internal_secret=main.API_SECRET, db=db)
+
+    day = stats["llm_usage_24h"]
+    assert day["scored_articles"] == 3
+    assert day["measured_articles"] == 2
+    assert day["calls"] == 3
+    assert day["prompt_tokens"] == 5000
+    assert day["cached_tokens"] == 2600
+    assert day["avg_completion_tokens"] == 250
+    assert day["cost"] == pytest.approx(0.004)
 
 
 @pytest.mark.asyncio

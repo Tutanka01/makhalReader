@@ -51,7 +51,11 @@ Points cles :
 - appelle extractor puis cree l'article via l'API;
 - met a jour `feeds.last_fetched` apres une lecture RSS reussie;
 - lance un worker de scoring durable qui reclame des lots via l'API;
-- serialize les appels LLM avec un semaphore global et `SCORE_DELAY_SECONDS`;
+- limite les appels LLM simultanes a `SCORING_CONCURRENCY` (defaut 1) avec une
+  pause `SCORE_DELAY_SECONDS` apres chaque appel;
+- sur un `429` du scorer (quota provider), met tout le worker en pause selon
+  `Retry-After` (15 min max avant de re-sonder) et replanifie les articles sans
+  consommer de tentative;
 - reporte les echecs de scoring a l'API pour backoff/retry au lieu de perdre
   l'article.
 
@@ -77,9 +81,8 @@ Strategies, dans l'ordre :
 5. extraction Substack depuis payload HTML embarque;
 6. `content:encoded` RSS;
 7. resume RSS;
-8. Google cache;
-9. Wayback Machine;
-10. fallback court sur resume RSS avec `extraction_failed=true`.
+8. Wayback Machine;
+9. fallback court sur resume RSS avec `extraction_failed=true`.
 
 L'extractor renvoie aussi une URL canonique quand un `<link rel="canonical">` fiable est trouve. Le poller l'utilise pour ameliorer la deduplication.
 
@@ -105,14 +108,23 @@ Endpoint principal : `POST /score`
 
 Le scorer :
 
-- recupere un profil de preferences depuis l'API;
-- construit un prompt avec titre, resume RSS et texte extrait;
+- recupere un profil de preferences depuis l'API, mis en cache
+  `PREFERENCE_CACHE_SECONDS` (10 min par defaut);
+- construit un prompt avec titre, source (nom et categorie du flux), texte
+  extrait, et resume RSS seulement s'il est fourni;
+- reutilise un client HTTP unique pour garder les connexions TLS ouvertes;
+- utilise d'abord l'endpoint OpenAI-compatible `LLM_BASE_URL` s'il est configure;
 - utilise OpenRouter si `OPENROUTER_API_KEY` commence par `sk-`;
 - utilise Ollama comme fallback si `OLLAMA_URL` est configure;
 - extrait un JSON depuis la reponse du modele;
 - valide les axes avec Pydantic;
 - calcule le score final avec `compute_final_score()`;
-- poste le score, tags, bullets, raison et details vers l'API.
+- poste le score, tags, bullets, raison et details vers l'API;
+- ajoute `score_details.llm_usage` : appels LLM (retry JSON et fallbacks
+  compris), latence, tokens prompt/completion/cache/raisonnement et cout quand
+  le provider le renvoie (OpenRouter le fait);
+- repond `429` avec `Retry-After` quand le provider limite le debit, `503` pour
+  les autres echecs.
 
 Axes de scoring :
 

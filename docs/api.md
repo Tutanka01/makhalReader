@@ -153,10 +153,18 @@ Contrats internes :
 - `POST /api/internal/scoring/claim` reclame un lot d'articles `queued`/`retry`
   ou `processing` avec lock expire. La route passe les lignes en
   `processing`, incremente `score_attempts`, pose `score_locked_at`, puis
-  retourne `{"items": [...]}`.
+  retourne `{"items": [...]}`. Chaque item porte `feed_name` et
+  `feed_category`, transmis au scorer pour nommer la source dans le prompt.
 - `POST /api/internal/articles/{article_id}/score-failed` nettoie le lock et
   passe l'article en `retry` avec `next_score_attempt_at`, ou `failed` apres
-  `SCORING_MAX_ATTEMPTS`.
+  `SCORING_MAX_ATTEMPTS`. Avec `{"rate_limited": true, "retry_after_seconds": N}`
+  (quota du provider LLM), l'article repasse en `retry` dans `N` secondes et la
+  tentative comptee par le claim est rendue.
+- `GET /api/internal/scoring/stats` ajoute `llm_usage_24h` et `llm_usage_7d` :
+  somme des `score_details.llm_usage` des articles scores sur la fenetre
+  (appels, latence, tokens, cout) et moyennes par article. Les appels d'un
+  scoring finalement en echec n'y figurent pas; ils sont journalises par le
+  scorer.
 - `POST /api/internal/scoring/requeue-failed?limit=100` remet des articles
   `failed` sans score en `queued` apres correction de configuration ou de
   modele LLM.

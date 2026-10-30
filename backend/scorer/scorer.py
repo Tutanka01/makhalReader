@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import time
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from typing import Any, Optional
 
 import httpx
@@ -13,7 +17,8 @@ from prompt import JSON_RETRY_PROMPT, SYSTEM_PROMPT
 
 app = FastAPI(title="MakhalReader Scorer")
 
-SCORING_VERSION = 3
+# v4: the prompt names the source feed and drops the always-empty RSS summary block.
+SCORING_VERSION = 4
 
 # Generic OpenAI-compatible endpoint (highest priority when set): point it at any
 # OpenAI-compatible server (vLLM, llama.cpp, LM Studio, Groq, Together, OpenAI…).
@@ -40,6 +45,121 @@ def _chat_completions_url(base: str) -> str:
 API_SECRET = os.getenv("API_SECRET", "changeme")
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
+
+# The preference profile only moves when the user gives feedback, so it does not
+# need to be rebuilt from the whole history for every single article.
+PREFERENCE_CACHE_SECONDS = float(os.getenv("PREFERENCE_CACHE_SECONDS", "600"))
+DEFAULT_RATE_LIMIT_RETRY_SECONDS = 60
+MAX_RATE_LIMIT_RETRY_SECONDS = 86400
+
+_http_client: Optional[httpx.AsyncClient] = None
+_preference_cache: Optional[tuple[float, str]] = None
+_preference_lock = asyncio.Lock()
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """One pooled client per process: keeps TLS connections to the LLM provider alive."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient()
+    return _http_client
+
+
+@app.on_event("shutdown")
+async def close_http_client() -> None:
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+
+
+class ProviderRateLimited(Exception):
+    """The LLM provider answered 429; the article is fine, the quota is not."""
+
+    def __init__(self, provider: str, retry_after: int):
+        super().__init__(f"{provider} rate limited; retry after {retry_after}s")
+        self.provider = provider
+        self.retry_after = retry_after
+
+
+def parse_retry_after(headers: httpx.Headers) -> int:
+    """Seconds to wait from Retry-After (seconds or HTTP date) or X-RateLimit-Reset (epoch ms)."""
+    seconds: Optional[float] = None
+    retry_after = headers.get("retry-after")
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+        except ValueError:
+            try:
+                seconds = parsedate_to_datetime(retry_after).timestamp() - time.time()
+            except (TypeError, ValueError):
+                seconds = None
+    if seconds is None:
+        reset = headers.get("x-ratelimit-reset")
+        if reset:
+            try:
+                seconds = float(reset) / 1000.0 - time.time()
+            except ValueError:
+                seconds = None
+    if seconds is None:
+        return DEFAULT_RATE_LIMIT_RETRY_SECONDS
+    return int(clamp(seconds, 1, MAX_RATE_LIMIT_RETRY_SECONDS))
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+@dataclass
+class LlmUsage:
+    """Every LLM call made for one article, including JSON retries and fallbacks."""
+
+    calls: int = 0
+    latency_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost: Optional[float] = None
+
+    def record_call(self, started_at: float) -> None:
+        self.calls += 1
+        self.latency_ms += int((time.perf_counter() - started_at) * 1000)
+
+    def record_openai_usage(self, data: dict) -> None:
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            return
+        self.prompt_tokens += _as_int(usage.get("prompt_tokens"))
+        self.completion_tokens += _as_int(usage.get("completion_tokens"))
+        prompt_details = usage.get("prompt_tokens_details")
+        if isinstance(prompt_details, dict):
+            self.cached_tokens += _as_int(prompt_details.get("cached_tokens"))
+        completion_details = usage.get("completion_tokens_details")
+        if isinstance(completion_details, dict):
+            self.reasoning_tokens += _as_int(completion_details.get("reasoning_tokens"))
+        cost = usage.get("cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            self.cost = (self.cost or 0.0) + float(cost)
+
+    def record_ollama_usage(self, data: dict) -> None:
+        self.prompt_tokens += _as_int(data.get("prompt_eval_count"))
+        self.completion_tokens += _as_int(data.get("eval_count"))
+
+    def as_details(self) -> dict[str, Any]:
+        details: dict[str, Any] = {
+            "calls": self.calls,
+            "latency_ms": self.latency_ms,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cached_tokens": self.cached_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+        }
+        if self.cost is not None:
+            details["cost"] = round(self.cost, 8)
+        return details
 
 CONTENT_TYPES = {"postmortem", "tutorial", "paper", "release", "opinion", "news", "generic"}
 AXIS_FIELDS = {
@@ -173,7 +293,9 @@ async def post_openai_chat(
     system_prompt: str,
     user_message: str,
     timeout: float,
+    usage: LlmUsage,
 ) -> Optional[dict]:
+    started_at = time.perf_counter()
     try:
         resp = await client.post(
             url,
@@ -190,13 +312,22 @@ async def post_openai_chat(
             timeout=timeout,
         )
     except Exception as e:
+        usage.record_call(started_at)
         print(f"{provider} scoring request failed: {e}")
         return None
+    usage.record_call(started_at)
 
+    if resp.status_code == 429:
+        retry_after = parse_retry_after(resp.headers)
+        print(f"{provider} rate limited (429), retry after {retry_after}s: {resp.text[:300]}")
+        raise ProviderRateLimited(provider, retry_after)
     if not resp.is_success:
         print(f"{provider} error {resp.status_code}: {resp.text[:500]}")
         return None
-    return parse_response_json(provider, resp)
+    data = parse_response_json(provider, resp)
+    if data:
+        usage.record_openai_usage(data)
+    return data
 
 
 async def score_openai_chat_provider(
@@ -209,6 +340,7 @@ async def score_openai_chat_provider(
     user_message: str,
     article_words: int,
     summary_words: int,
+    usage: LlmUsage,
     timeout: float = 60,
     base_url: Optional[str] = None,
 ) -> Optional[ScoreResult]:
@@ -221,6 +353,7 @@ async def score_openai_chat_provider(
         system_prompt=SYSTEM_PROMPT,
         user_message=user_message,
         timeout=timeout,
+        usage=usage,
     )
     if not data:
         return None
@@ -244,6 +377,7 @@ async def score_openai_chat_provider(
         system_prompt=JSON_RETRY_PROMPT,
         user_message=build_retry_message(user_message, content),
         timeout=timeout,
+        usage=usage,
     )
     if not retry_data:
         return None
@@ -262,6 +396,8 @@ class ScoreRequest(BaseModel):
     title: str
     content_text: str
     rss_summary: str = ""
+    feed_name: str = ""
+    feed_category: str = ""
 
 
 class ScoreAnalysis(BaseModel):
@@ -660,6 +796,7 @@ async def score_with_openai_compatible(
     user_message: str,
     article_words: int,
     summary_words: int,
+    usage: LlmUsage,
 ) -> Optional[ScoreResult]:
     """Score via a generic OpenAI-compatible endpoint (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL)."""
     if not LLM_BASE_URL:
@@ -678,6 +815,7 @@ async def score_with_openai_compatible(
         user_message=user_message,
         article_words=article_words,
         summary_words=summary_words,
+        usage=usage,
         timeout=60,
         base_url=LLM_BASE_URL,
     )
@@ -688,6 +826,7 @@ async def score_with_openrouter(
     user_message: str,
     article_words: int,
     summary_words: int,
+    usage: LlmUsage,
 ) -> Optional[ScoreResult]:
     if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.startswith("sk-"):
         return None
@@ -706,6 +845,7 @@ async def score_with_openrouter(
         user_message=user_message,
         article_words=article_words,
         summary_words=summary_words,
+        usage=usage,
         timeout=60,
     )
 
@@ -715,11 +855,13 @@ async def score_with_ollama(
     user_message: str,
     article_words: int,
     summary_words: int,
+    usage: LlmUsage,
 ) -> Optional[ScoreResult]:
     if not OLLAMA_URL:
         return None
 
     try:
+        started_at = time.perf_counter()
         resp = await client.post(
             f"{OLLAMA_URL}/api/chat",
             json={
@@ -737,12 +879,14 @@ async def score_with_ollama(
             },
             timeout=120,
         )
+        usage.record_call(started_at)
         if not resp.is_success:
             print(f"Ollama error {resp.status_code}: {resp.text[:300]}")
             return None
         data = parse_response_json("Ollama", resp)
         if not data:
             return None
+        usage.record_ollama_usage(data)
         content, metadata = extract_ollama_chat_content(data)
         if not content:
             return None
@@ -750,6 +894,7 @@ async def score_with_ollama(
         if result is not None:
             return result
 
+        started_at = time.perf_counter()
         retry_resp = await client.post(
             f"{OLLAMA_URL}/api/chat",
             json={
@@ -767,12 +912,14 @@ async def score_with_ollama(
             },
             timeout=120,
         )
+        usage.record_call(started_at)
         if not retry_resp.is_success:
             print(f"Ollama JSON retry error {retry_resp.status_code}: {retry_resp.text[:300]}")
             return None
         retry_data = parse_response_json("Ollama JSON retry", retry_resp)
         if not retry_data:
             return None
+        usage.record_ollama_usage(retry_data)
         retry_content, retry_metadata = extract_ollama_chat_content(retry_data)
         retry_metadata["provider_retry"] = "json-only"
         if not retry_content:
@@ -790,8 +937,11 @@ async def score_with_ollama(
     return None
 
 
-async def build_preference_block(client: httpx.AsyncClient) -> str:
-    """Build a compact preference profile from explicit and implicit history."""
+async def build_preference_block(client: httpx.AsyncClient) -> Optional[str]:
+    """Build a compact preference profile from explicit and implicit history.
+
+    Returns None when the API could not be read, so callers don't cache a failure.
+    """
     try:
         resp = await client.get(
             f"{API_BASE}/api/internal/feedback-examples",
@@ -799,7 +949,7 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
             timeout=5,
         )
         if not resp.is_success:
-            return ""
+            return None
 
         data = resp.json()
         total = (
@@ -839,7 +989,31 @@ async def build_preference_block(client: httpx.AsyncClient) -> str:
         return "\n".join(lines)
 
     except Exception:
-        return ""
+        return None
+
+
+async def get_preference_block(client: httpx.AsyncClient) -> str:
+    """Preference profile, rebuilt at most every PREFERENCE_CACHE_SECONDS."""
+    global _preference_cache
+    if PREFERENCE_CACHE_SECONDS <= 0:
+        return await build_preference_block(client) or ""
+
+    async with _preference_lock:
+        now = time.monotonic()
+        if _preference_cache is not None and now - _preference_cache[0] < PREFERENCE_CACHE_SECONDS:
+            return _preference_cache[1]
+        block = await build_preference_block(client)
+        if block is not None:
+            _preference_cache = (now, block)
+        return block or ""
+
+
+def format_source(feed_name: str, feed_category: str) -> str:
+    name = (feed_name or "").strip()[:120]
+    category = (feed_category or "").strip()[:60]
+    if name and category:
+        return f"{name} (feed category: {category})"
+    return name or (f"feed category: {category}" if category else "")
 
 
 def build_user_message(req: ScoreRequest, preference_block: str) -> tuple[str, int, int]:
@@ -847,60 +1021,87 @@ def build_user_message(req: ScoreRequest, preference_block: str) -> tuple[str, i
     summary_preview = (req.rss_summary or "").strip()[:900]
     article_words = word_count(content_preview)
     summary_words = word_count(summary_preview)
-    user_message = (
-        f"Title: {req.title.strip()[:300]}\n"
-        f"Article word count in provided text: {article_words}\n"
-        f"RSS summary word count: {summary_words}\n\n"
-        f"RSS summary:\n{summary_preview or '(none)'}\n\n"
-        f"Article text:\n{content_preview or '(no extracted article text)'}"
-        f"{preference_block}"
-    )
+
+    header = [f"Title: {req.title.strip()[:300]}"]
+    source = format_source(req.feed_name, req.feed_category)
+    if source:
+        header.append(f"Source: {source}")
+    header.append(f"Article word count in provided text: {article_words}")
+    sections = []
+    if summary_preview:
+        header.append(f"RSS summary word count: {summary_words}")
+        sections.append(f"RSS summary:\n{summary_preview}")
+    sections.append(f"Article text:\n{content_preview or '(no extracted article text)'}")
+
+    user_message = "\n".join(header) + "\n\n" + "\n\n".join(sections) + preference_block
     return user_message, article_words, summary_words
+
+
+async def try_provider(call, rate_limits: list[ProviderRateLimited]) -> Optional[ScoreResult]:
+    try:
+        return await call
+    except ProviderRateLimited as exc:
+        rate_limits.append(exc)
+        return None
 
 
 @app.post("/score")
 async def score_article(req: ScoreRequest):
     result: Optional[ScoreResult] = None
+    usage = LlmUsage()
+    rate_limits: list[ProviderRateLimited] = []
+    client = get_http_client()
 
-    async with httpx.AsyncClient() as client:
-        preference_block = await build_preference_block(client)
-        user_message, article_words, summary_words = build_user_message(req, preference_block)
+    preference_block = await get_preference_block(client)
+    user_message, article_words, summary_words = build_user_message(req, preference_block)
+    args = (client, user_message, article_words, summary_words, usage)
 
-        if LLM_BASE_URL:
-            result = await score_with_openai_compatible(client, user_message, article_words, summary_words)
+    if LLM_BASE_URL:
+        result = await try_provider(score_with_openai_compatible(*args), rate_limits)
 
-        if result is None and not (LLM_BASE_URL and LLM_DISABLE_FALLBACK):
-            if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
-                result = await score_with_openrouter(client, user_message, article_words, summary_words)
-
-            if result is None:
-                result = await score_with_ollama(client, user_message, article_words, summary_words)
-        elif result is None:
-            print("Scoring fallback disabled by LLM_DISABLE_FALLBACK after LLM_BASE_URL failure.")
+    if result is None and not (LLM_BASE_URL and LLM_DISABLE_FALLBACK):
+        if OPENROUTER_API_KEY and OPENROUTER_API_KEY.startswith("sk-"):
+            result = await try_provider(score_with_openrouter(*args), rate_limits)
 
         if result is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Scoring failed: unable to reach any LLM service or parse a valid score.",
-            )
+            result = await try_provider(score_with_ollama(*args), rate_limits)
+    elif result is None:
+        print("Scoring fallback disabled by LLM_DISABLE_FALLBACK after LLM_BASE_URL failure.")
 
-        try:
-            resp = await client.post(
-                f"{API_BASE}/api/internal/articles/{req.article_id}/score",
-                json={
-                    "score": result.score,
-                    "tags": result.tags,
-                    "summary_bullets": result.summary_bullets,
-                    "reason": result.reason,
-                    "score_details": result.score_details,
-                },
-                headers=INTERNAL_HEADERS,
-                timeout=30,
+    if result is None:
+        print(f"Scoring failed for article {req.article_id}: llm_usage={usage.as_details()}")
+        if rate_limits:
+            retry_after = min(exc.retry_after for exc in rate_limits)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Scoring rate limited by LLM provider; retry after {retry_after}s.",
+                headers={"Retry-After": str(retry_after)},
             )
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"Failed to post score to API: {e}")
-            raise
+        raise HTTPException(
+            status_code=503,
+            detail="Scoring failed: unable to reach any LLM service or parse a valid score.",
+        )
+
+    result.score_details["llm_usage"] = usage.as_details()
+    print(f"Scored article {req.article_id}: score={result.score} llm_usage={usage.as_details()}")
+
+    try:
+        resp = await client.post(
+            f"{API_BASE}/api/internal/articles/{req.article_id}/score",
+            json={
+                "score": result.score,
+                "tags": result.tags,
+                "summary_bullets": result.summary_bullets,
+                "reason": result.reason,
+                "score_details": result.score_details,
+            },
+            headers=INTERNAL_HEADERS,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Failed to post score to API: {e}")
+        raise
 
     return {"status": "ok", "score": result.score, "score_details": result.score_details}
 
