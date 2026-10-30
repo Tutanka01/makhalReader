@@ -241,6 +241,9 @@ SSL: Force SSL enabled
 
 See `DEPLOY.md` for the full local vs NPM explanation.
 
+Kubernetes (vanilla manifests, HTTP `LoadBalancer`) is supported too: see
+[`k8s/README.md`](k8s/README.md), including an ArgoCD deployment guide.
+
 ---
 
 ## Stack
