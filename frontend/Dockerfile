@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve
-FROM nginx:1.30.5-alpine3.24
+FROM nginx:1.31.8-alpine3.24
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
