@@ -1,9 +1,9 @@
-fastapi==0.162.0
+fastapi==0.162.2
 uvicorn[standard]==0.54.0
-sqlalchemy==2.1.6
+sqlalchemy==2.1.8
 feedparser==6.0.14
-pydantic==2.14.1
-python-multipart==0.0.32
+pydantic==2.14.3
+python-multipart==0.0.33
 httpx==0.28.1
 bcrypt==4.3.0
 pytest==8.4.2
